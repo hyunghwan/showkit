@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src https://showkit.sqncs.com; object-src 'none'; base-uri 'self'; form-action 'none'"
+    >
+    <meta name="description" content="Choose and explore three guided ShowKit HTML demos.">
+    <title>ShowKit demos</title>
+    <link rel="icon" href="./assets/showkit-logo.png">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="https://showkit.sqncs.com" aria-label="ShowKit website">
+          <img src="./assets/showkit-logo.png" alt="" width="48" height="48">
+          <span>ShowKit</span>
+        </a>
+        <a class="source-link" href="https://github.com/hyunghwan/showkit">View source</a>
+      </header>
+
+      <main>
+        <header class="intro">
+          <p class="eyebrow">Interactive HTML demos</p>
+          <h1>Choose a product demo</h1>
+          <p class="intro-copy">
+            Explore the same three published demos shown on the ShowKit website.
+          </p>
+        </header>
+
+        <section class="demo-stage" aria-labelledby="selected-demo-title">
+          <div class="demo-tabs" role="tablist" aria-label="Choose a product demo">
+            <button
+              id="tab-travel-search"
+              class="demo-tab"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="demo-panel"
+              tabindex="0"
+              data-demo="travel-search"
+            >
+              <span>Airbnb demo</span>
+              <span class="tab-detail">Travel search</span>
+            </button>
+            <button
+              id="tab-issue-priority"
+              class="demo-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="demo-panel"
+              tabindex="-1"
+              data-demo="issue-priority"
+            >
+              <span>Linear demo</span>
+              <span class="tab-detail">Issue priority</span>
+            </button>
+            <button
+              id="tab-product-options"
+              class="demo-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="demo-panel"
+              tabindex="-1"
+              data-demo="product-options"
+            >
+              <span>Shopify demo</span>
+              <span class="tab-detail">Product options</span>
+            </button>
+          </div>
+
+          <div id="demo-panel" class="demo-panel" role="tabpanel" aria-labelledby="tab-travel-search">
+            <div class="demo-heading">
+              <h2 id="selected-demo-title">Explore flexible travel dates</h2>
+              <a id="open-demo" href="https://showkit.sqncs.com/demos/travel-search/?release=2026-08-01-english-captures">
+                Open demo
+              </a>
+            </div>
+            <div class="demo-viewport">
+              <iframe
+                id="showkit-demo"
+                src="https://showkit.sqncs.com/demos/travel-search/?release=2026-08-01-english-captures"
+                title="Explore flexible travel dates interactive demo"
+                allow="clipboard-write"
+              ></iframe>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <p>Built with ShowKit. The demo files remain published at showkit.sqncs.com.</p>
+      </footer>
+    </div>
+    <script src="./gallery.js"></script>
+  </body>
+</html>
