@@ -218,14 +218,17 @@ try {
     .trim();
   for (const requirement of [
     "npx skills add hyunghwan/showkit",
-    "Using ShowKit",
+    "installed ShowKit `SKILL.md`",
     "interactive HTML demo",
     "number of steps",
     "private content",
-    "Build and preview",
-    "Do not publish",
     "@showkit/cli",
-    "optional Playwright"
+    "new output folder",
+    "changing an existing project's dependencies",
+    "installing Playwright or a browser",
+    "Build, check, and preview",
+    "Do not publish",
+    "local preview path"
   ]) {
     if (!quickStartContract.includes(requirement)) {
       throw new Error(
