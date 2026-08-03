@@ -28,3 +28,9 @@ Apply `references/visual-fidelity.md` to every supported source. Use its general
 preflight, acceptance budget, and recovery ladder. Do not patch a generated
 scene, add a site-specific rule, or substitute assets to make one comparison
 pass. Report visual fidelity as `checked`, `incomplete`, or `blocked`.
+
+Follow the model and reasoning budget in `SKILL.md`. Prefer a fast or balanced
+model for deterministic CLI work and routine demo assembly. Reserve the most
+capable model and high reasoning for ambiguous evidence, security decisions,
+architecture changes, or unresolved fidelity failures; do not inherit an
+extra-high default for every subtask.

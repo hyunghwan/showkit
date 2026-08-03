@@ -9,3 +9,9 @@ When a person supplies an HTTP or HTTPS product URL, read
 Chrome. The same installed-host gate applies in a ChatGPT or Codex app.
 Browser selection and interaction remain host-owned. The ShowKit CLI never
 controls the browser.
+
+Follow the model and reasoning budget in `SKILL.md`. Prefer a fast or balanced
+model for deterministic CLI work and routine demo assembly. Reserve the most
+capable model and high reasoning for ambiguous evidence, security decisions,
+architecture changes, or unresolved fidelity failures; do not inherit an
+extra-high default for every subtask.

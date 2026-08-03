@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +25,22 @@ const requiredFiles = [
 
 await Promise.all(requiredFiles.map((file) => access(path.join(skillRoot, file))));
 const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+const portableTextFiles = (await readdir(skillRoot, { recursive: true })).filter(
+  (file) => file.endsWith(".md") || file.endsWith(".json")
+);
+for (const file of portableTextFiles) {
+  const text = await readFile(path.join(skillRoot, file), "utf8");
+  for (const forbiddenPath of [
+    /\/Users\/[^\s`"']+/,
+    /\/home\/[^\s`"']+/,
+    /file:\/\/\/(?:Users|home)\//,
+    /[A-Za-z]:\\Users\\/
+  ]) {
+    if (forbiddenPath.test(text)) {
+      throw new Error(`${file} contains a user-specific absolute path.`);
+    }
+  }
+}
 const requiredCommands = [
   "doctor",
   "init",
@@ -52,6 +68,19 @@ for (const guidance of [
 ]) {
   if (!skill.includes(guidance)) {
     throw new Error(`SKILL.md is missing player theme guidance: ${guidance}`);
+  }
+}
+for (const guidance of [
+  "Model selection belongs to the host agent",
+  "Do not pin a provider-specific model name",
+  "fast or lightweight model",
+  "balanced model with medium reasoning",
+  "most capable available model with high reasoning",
+  "Use extra-high reasoning only",
+  "Never lower the model or reasoning budget to bypass a stop condition"
+]) {
+  if (!skill.replace(/\s+/g, " ").includes(guidance)) {
+    throw new Error(`SKILL.md is missing model-routing guidance: ${guidance}`);
   }
 }
 for (const guidance of [
