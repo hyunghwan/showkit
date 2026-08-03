@@ -6,8 +6,7 @@ semantic HTML and local assets; it does not host an LLM or require an account.
 
 Requires Node.js 22 or 24.
 
-The `0.1.0` source candidate is public before the first npm release. The install
-command below becomes available when `@showkit/cli@0.1.0` is published.
+Version `0.1.0` is the first public npm release.
 
 ## Install
 

@@ -23,10 +23,9 @@ HTML, text, styles, and local assets, then builds a portable demo with hotspots
 and tooltips. The result is interactive HTML, not a screenshot tour.
 
 > [!NOTE]
-> The source and checked examples are public. `@showkit/cli@0.1.0` has not been
-> published to npm yet, so package and skill installation commands become
-> available with the first npm release. You can build and test the source now
-> with the [development workflow](#development).
+> The first npm release is `@showkit/cli@0.1.0`. The ShowKit skill and CLI are
+> separate installs: adding the skill does not change project dependencies,
+> and the skill asks before it adds the CLI to an existing project.
 
 <p align="center">
   <a href="https://showkit.sqncs.com">

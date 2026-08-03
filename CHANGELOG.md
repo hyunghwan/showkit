@@ -3,7 +3,7 @@
 All notable ShowKit changes are recorded here. Published versions are immutable;
 fixes ship as a new version.
 
-## 0.1.0 (unreleased)
+## 0.1.0 - 2026-08-03
 
 - Added the deterministic `@showkit/cli` command and JSON/exit-code contracts.
 - Added verified OpenAI Browser and Chrome session capture for Codex and
