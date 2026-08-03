@@ -37,16 +37,16 @@
       "sha256": "3c41d092214cb27849f10a952322f68731543f07a21c35d832b5b46847e215b8"
     },
     {
-      "bytes": 24646,
+      "bytes": 24658,
       "mediaType": "text/javascript; charset=utf-8",
       "path": "player.js",
-      "sha256": "a29243d24b48103c477cfc28252a79f31b128f5d528136f35ebe9a0271f54fea"
+      "sha256": "8729acf127f04cfa32dd98ccf96cdbf2120181cc0fdb69f657d32561432fa193"
     },
     {
       "bytes": 1523,
       "mediaType": "application/json; charset=utf-8",
       "path": "quality.json",
-      "sha256": "e85fb99993ff2edadd23dc621a93a784c17019ffde5aa5c1ca4706cef9cedb75"
+      "sha256": "a4344fc12cbfedf5a3772f7d8bee73cbcbcbbc998d0f519edac1f27fb895a727"
     },
     {
       "bytes": 368,
@@ -110,5 +110,5 @@
   "sourceCaptureHash": "a828ae01751ae9067a5451270f4d2ec2e89b387548f7098923b66e1633abbbf3",
   "state": "BUILT",
   "storyHash": "f8e2ca3aa422025fcd9a310f2ef8f1d2a526976ffa0d227f1d4d0b24891f8a37",
-  "version": "66d3d4b942f602f0e3432af8dd188692dd336535749945db4ccd7300c64d01bf"
+  "version": "94133036f3901a43d14355768b0bcfe40672247562970eb0b8c70ba7ccfde7b8"
 }

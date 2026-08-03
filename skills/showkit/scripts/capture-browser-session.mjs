@@ -2143,7 +2143,7 @@ export function createCodexPageAssetProvider({ tab, approvals = [] }) {
                         ? display
                         : "block",
                       ...(unicodeRange &&
-                      /^U\+[0-9A-F?*-]+(?:\s*-\s*[0-9A-F?*-]+)?(?:\s*,\s*U\+[0-9A-F?*-]+(?:\s*-\s*[0-9A-F?*-]+)?)*$/i.test(
+                      /^U\+[0-9A-F?*]{1,6}(?:\s*-\s*[0-9A-F?*]{1,6})?(?:\s*,\s*U\+[0-9A-F?*]{1,6}(?:\s*-\s*[0-9A-F?*]{1,6})?)*$/i.test(
                         unicodeRange
                       )
                         ? { unicodeRange }

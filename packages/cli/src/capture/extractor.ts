@@ -668,7 +668,11 @@ export async function extractSceneKernel(
   const decodeBase64 = (value: string): number[] | null => {
     const alphabet =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    const normalized = value.replace(/=+$/, "");
+    let payloadLength = value.length;
+    while (payloadLength > 0 && value.charCodeAt(payloadLength - 1) === 61) {
+      payloadLength -= 1;
+    }
+    const normalized = value.slice(0, payloadLength);
     const output: number[] = [];
     let buffer = 0;
     let bits = 0;

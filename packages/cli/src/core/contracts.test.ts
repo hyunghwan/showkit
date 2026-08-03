@@ -3,6 +3,7 @@ import { canonicalJson, contentHash } from "./json.js";
 import {
   CaptureSourceSchema,
   SCHEMA_VERSION,
+  SceneFontFaceSchema,
   StorySpecSchema,
   type CaptureSource
 } from "./schemas.js";
@@ -448,6 +449,7 @@ describe("data contracts", () => {
       weight: "400",
       stretch: "normal",
       display: "block" as const,
+      unicodeRange: "U+0000-00FF, U+4??",
       src: `./assets/${assetHash}.woff2`
     };
     capture.assets = [
@@ -466,7 +468,38 @@ describe("data contracts", () => {
     expect(validateStory(capture, story).verification.passed).toBe(true);
     expect(files["story.js"]).toContain(`./assets/${assetHash}.woff2`);
     expect(files["player.js"]).toContain("@font-face");
+    expect(files["player.js"]).toContain("unicode-range");
     expect(files["player.js"]).toContain("document.fonts.ready");
+  });
+
+  it("rejects ambiguous or oversized font unicode ranges", () => {
+    const fontFace = {
+      family: "Captured Sans",
+      style: "normal",
+      weight: "400",
+      stretch: "normal",
+      display: "block",
+      src: `./assets/${"d".repeat(64)}.woff2`
+    };
+
+    expect(
+      SceneFontFaceSchema.parse({
+        ...fontFace,
+        unicodeRange: "U+0000-00FF, U+4??"
+      }).unicodeRange
+    ).toBe("U+0000-00FF, U+4??");
+    expect(() =>
+      SceneFontFaceSchema.parse({
+        ...fontFace,
+        unicodeRange: "U+0--0"
+      })
+    ).toThrow();
+    expect(() =>
+      SceneFontFaceSchema.parse({
+        ...fontFace,
+        unicodeRange: `U+${"-".repeat(4_000)}`
+      })
+    ).toThrow();
   });
 
   it("rejects unknown contract fields", () => {

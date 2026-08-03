@@ -442,7 +442,7 @@ export const SceneFontFaceSchema = z
       .string()
       .min(1)
       .max(4_000)
-      .regex(/^U\+[0-9A-F?*-]+(?:\s*-\s*[0-9A-F?*-]+)?(?:\s*,\s*U\+[0-9A-F?*-]+(?:\s*-\s*[0-9A-F?*-]+)?)*$/i)
+      .regex(/^U\+[0-9A-F?*]{1,6}(?:\s*-\s*[0-9A-F?*]{1,6})?(?:\s*,\s*U\+[0-9A-F?*]{1,6}(?:\s*-\s*[0-9A-F?*]{1,6})?)*$/i)
       .optional(),
     src: z
       .string()
