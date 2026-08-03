@@ -53,6 +53,12 @@ folder, source access, private-content choice, and any external permission.
 
 - Installing this skill installs agent instructions only. It does not install or
   update `@showkit/cli`, `@playwright/test`, or browser binaries.
+- Never embed or guess a maintainer's or person's absolute filesystem path.
+  Resolve referenced skill files relative to this installed `SKILL.md`, resolve
+  project files from the output folder the person selected, and resolve the CLI
+  through that project's package manager. When an API requires an absolute
+  path, derive it from the current installed skill or selected project at
+  runtime instead of copying a location from documentation or another machine.
 - Do not make the person install the CLI manually. After they choose a separate
   output folder, inspect its package manager and dependency state. In a new or
   empty output folder, initialize npm only when needed and install
@@ -73,6 +79,28 @@ folder, source access, private-content choice, and any external permission.
 - Do not install Playwright for the primary setup. Explain why it is needed and
   ask before adding `@playwright/test` or a browser binary for an optional
   headed-browser or CI route.
+
+## Model and reasoning budget
+
+Model selection belongs to the host agent; ShowKit itself never calls an LLM.
+Do not pin a provider-specific model name or use the largest model and highest
+reasoning setting for every step. Honor an explicit model request and the
+host's safety policy. If the host cannot choose models per task, use its default
+without blocking the workflow.
+
+- Use a fast or lightweight model with low to medium reasoning for mechanical,
+  reversible work: locating files, checking installed versions, running exact
+  CLI commands, formatting known data, and rerunning deterministic checks.
+- Use a balanced model with medium reasoning for the normal ShowKit workflow:
+  source routing with clear evidence, evidence-bound demo copy, routine code or
+  theme changes, and preview review against an established acceptance budget.
+- Escalate to the most capable available model with high reasoning only for
+  security or privacy decisions, ambiguous or conflicting evidence, architecture
+  changes, unexplained fidelity failures, or recovery after a smaller model has
+  failed. Use extra-high reasoning only when that complexity remains material.
+- Return to a faster tier once the uncertain decision is resolved. Never lower
+  the model or reasoning budget to bypass a stop condition, consent prompt,
+  security check, or required human confirmation.
 
 ## Route the source
 

@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +25,53 @@ const requiredFiles = [
 
 await Promise.all(requiredFiles.map((file) => access(path.join(skillRoot, file))));
 const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+const portableTextFiles = (await readdir(skillRoot, { recursive: true })).filter(
+  (file) => file.endsWith(".md") || file.endsWith(".json")
+);
+
+function containsUserSpecificAbsolutePath(text) {
+  if (
+    /file:\/\/\/(?:Users|home)\//.test(text) ||
+    /file:\/\/\/[A-Za-z]:\/Users\//.test(text)
+  ) {
+    return true;
+  }
+
+  const withoutWebUrls = text.replace(
+    /https?:\/\/[^\s`"'<>)}\]]+/g,
+    ""
+  );
+  return [
+    /\/Users\/[^\s`"']+/,
+    /\/home\/[^\s`"']+/,
+    /[A-Za-z]:\\+Users\\+/
+  ].some((pattern) => pattern.test(withoutWebUrls));
+}
+
+for (const fixture of [
+  { text: "/Users/alice/project/SKILL.md", expected: true },
+  { text: "/home/alice/project/SKILL.md", expected: true },
+  { text: String.raw`C:\Users\alice\project\SKILL.md`, expected: true },
+  {
+    text: String.raw`{"path":"C:\\Users\\alice\\project\\SKILL.md"}`,
+    expected: true
+  },
+  { text: "file:///Users/alice/project/SKILL.md", expected: true },
+  { text: "file:///C:/Users/alice/project/SKILL.md", expected: true },
+  { text: "https://app.example.test/home/dashboard", expected: false },
+  { text: "https://app.example.test/Users/alice", expected: false }
+]) {
+  if (containsUserSpecificAbsolutePath(fixture.text) !== fixture.expected) {
+    throw new Error(`The portable-path policy misclassified: ${fixture.text}`);
+  }
+}
+
+for (const file of portableTextFiles) {
+  const text = await readFile(path.join(skillRoot, file), "utf8");
+  if (containsUserSpecificAbsolutePath(text)) {
+    throw new Error(`${file} contains a user-specific absolute path.`);
+  }
+}
 const requiredCommands = [
   "doctor",
   "init",
@@ -52,6 +99,19 @@ for (const guidance of [
 ]) {
   if (!skill.includes(guidance)) {
     throw new Error(`SKILL.md is missing player theme guidance: ${guidance}`);
+  }
+}
+for (const guidance of [
+  "Model selection belongs to the host agent",
+  "Do not pin a provider-specific model name",
+  "fast or lightweight model",
+  "balanced model with medium reasoning",
+  "most capable available model with high reasoning",
+  "Use extra-high reasoning only",
+  "Never lower the model or reasoning budget to bypass a stop condition"
+]) {
+  if (!skill.replace(/\s+/g, " ").includes(guidance)) {
+    throw new Error(`SKILL.md is missing model-routing guidance: ${guidance}`);
   }
 }
 for (const guidance of [
