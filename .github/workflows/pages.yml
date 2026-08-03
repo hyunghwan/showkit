@@ -5,7 +5,9 @@ on:
     branches:
       - main
     paths:
-      - "examples/product-insights/**"
+      - "assets/showkit-logo.png"
+      - "examples/gallery/**"
+      - "scripts/assemble-pages.mjs"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -20,7 +22,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Publish the synthetic product-insights demo
+    name: Publish the public demo gallery
     if: github.repository == 'hyunghwan/showkit' && github.event.repository.private == false
     runs-on: ubuntu-latest
     environment:
@@ -29,9 +31,11 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Assemble the public demo gallery
+        run: node scripts/assemble-pages.mjs output/pages
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
-          path: examples/product-insights
+          path: output/pages
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

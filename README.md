@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/hyunghwan/showkit/actions/workflows/ci.yml"><img src="https://github.com/hyunghwan/showkit/actions/workflows/ci.yml/badge.svg" alt="CI"></a> ·
   <a href="https://showkit.sqncs.com">Website</a> ·
+  <a href="https://hyunghwan.github.io/showkit/">Live demos</a> ·
   <a href="GETTING_STARTED.md">Getting started</a> ·
   <a href="ARCHITECTURE.md">Architecture</a> ·
   <a href="SECURITY.md">Security</a> ·
@@ -33,11 +34,13 @@ and tooltips. The result is interactive HTML, not a screenshot tour.
   </a>
 </p>
 
-<p align="center"><em>Explore interactive examples at <a href="https://showkit.sqncs.com">showkit.sqncs.com</a>.</em></p>
+<p align="center"><em>Explore the Airbnb, Linear, and Shopify demos on the <a href="https://hyunghwan.github.io/showkit/">public demo gallery</a>.</em></p>
 
 The [checked product-insights example](examples/product-insights/) uses only
-synthetic content. The public repository's Pages workflow publishes that
-directory as a separately checked demo.
+synthetic content. The public repository's Pages workflow publishes a gallery
+that presents the same three demos as the ShowKit website. Those published
+demos stay on `showkit.sqncs.com`, so their captured third-party assets are not
+vendored under this repository's MIT license.
 
 ## Quick start
 
