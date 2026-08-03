@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser realm isolation assurance</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #f4f5f7;
+        color: #17211b;
+      }
+
+      main {
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+      }
+
+      button {
+        min-width: 180px;
+        min-height: 48px;
+        border: 1px solid #315746;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #17211b;
+        font: inherit;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+    <script>
+      (() => {
+        const canary = "SHOWKIT_HOSTILE_PAGE_CANARY_71A4";
+        const nativeStringify = JSON.stringify.bind(JSON);
+        const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+        const nativeGetPropertyValue =
+          CSSStyleDeclaration.prototype.getPropertyValue;
+        const nativeGetBoundingClientRect =
+          Element.prototype.getBoundingClientRect;
+        const nativeQuerySelectorAll =
+          Document.prototype.querySelectorAll;
+
+        JSON.stringify = () => canary;
+        Intl.DateTimeFormat = function HostileDateTimeFormat() {
+          return {
+            resolvedOptions() {
+              return {
+                locale: canary,
+                timeZone: canary
+              };
+            }
+          };
+        };
+        Object.defineProperty(Navigator.prototype, "language", {
+          configurable: true,
+          get() {
+            return canary;
+          }
+        });
+        Object.defineProperty(Navigator.prototype, "languages", {
+          configurable: true,
+          get() {
+            return [canary];
+          }
+        });
+        CSSStyleDeclaration.prototype.getPropertyValue = function (name) {
+          if (name === "color" || name === "content") return canary;
+          return nativeGetPropertyValue.call(this, name);
+        };
+        window.getComputedStyle = function (element, pseudo) {
+          const style = nativeGetComputedStyle(element, pseudo);
+          return new Proxy(style, {
+            get(target, property, receiver) {
+              if (
+                property === "color" ||
+                property === "content" ||
+                property === "fontFamily"
+              ) {
+                return canary;
+              }
+              return Reflect.get(target, property, receiver);
+            }
+          });
+        };
+        Element.prototype.getBoundingClientRect = function () {
+          const rect = nativeGetBoundingClientRect.call(this);
+          if (this.matches?.("[hidden]")) {
+            return {
+              bottom: 40,
+              height: 40,
+              left: 0,
+              right: 240,
+              top: 0,
+              width: 240,
+              x: 0,
+              y: 0,
+              toJSON() {
+                return { canary };
+              }
+            };
+          }
+          return rect;
+        };
+        Document.prototype.querySelectorAll = function (selector) {
+          if (selector === "*" || selector === "body *") {
+            return nativeQuerySelectorAll.call(
+              this,
+              `${selector}, [data-hostile-secret]`
+            );
+          }
+          return nativeQuerySelectorAll.call(this, selector);
+        };
+
+        window.__showkitHostilePageEvidence = {
+          canary,
+          nativeStringify
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <main>
+      <button type="button">Open assurance</button>
+      <p data-hostile-secret hidden>SHOWKIT_HOSTILE_PAGE_CANARY_71A4</p>
+    </main>
+  </body>
+</html>

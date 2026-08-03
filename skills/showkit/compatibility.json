@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "0.1",
+  "cli": ">=0.1.0 <0.2.0",
+  "playwright": ">=1.60.0 <2",
+  "playwrightRequired": false,
+  "node": ">=22 <25",
+  "hosts": [
+    "codex",
+    "chatgpt",
+    "claude-code",
+    "claude-app"
+  ]
+}

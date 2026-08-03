@@ -1,0 +1,114 @@
+{
+  "builderVersion": "0.1.0",
+  "buildMetadata": {
+    "createdAt": "2026-07-31T06:59:52.033Z"
+  },
+  "dependencies": {
+    "captureRuntime": {
+      "kind": "playwright-test",
+      "version": "1.62.0"
+    },
+    "node": {
+      "supported": ">=22 <25"
+    },
+    "playwright": {
+      "capturedWith": "1.62.0",
+      "supported": ">=1.60.0 <2"
+    }
+  },
+  "environment": {
+    "browser": "chromium",
+    "viewport": {
+      "height": 720,
+      "width": 1280
+    }
+  },
+  "files": [
+    {
+      "bytes": 68,
+      "mediaType": "image/png",
+      "path": "assets/431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460.png",
+      "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+    },
+    {
+      "bytes": 4819,
+      "mediaType": "text/html; charset=utf-8",
+      "path": "index.html",
+      "sha256": "3c41d092214cb27849f10a952322f68731543f07a21c35d832b5b46847e215b8"
+    },
+    {
+      "bytes": 24646,
+      "mediaType": "text/javascript; charset=utf-8",
+      "path": "player.js",
+      "sha256": "a29243d24b48103c477cfc28252a79f31b128f5d528136f35ebe9a0271f54fea"
+    },
+    {
+      "bytes": 1523,
+      "mediaType": "application/json; charset=utf-8",
+      "path": "quality.json",
+      "sha256": "e85fb99993ff2edadd23dc621a93a784c17019ffde5aa5c1ca4706cef9cedb75"
+    },
+    {
+      "bytes": 368,
+      "mediaType": "text/markdown; charset=utf-8",
+      "path": "release-notes.md",
+      "sha256": "5ec23fce54087960b7e041a0e37f92ef75ccfbe331610e9506f8d81a61544b30"
+    },
+    {
+      "bytes": 883179,
+      "mediaType": "text/javascript; charset=utf-8",
+      "path": "story.js",
+      "sha256": "698d313f124c54550efbac265cfcea336e67944a6203b5567daedf9601414c14"
+    },
+    {
+      "bytes": 16313,
+      "mediaType": "text/css; charset=utf-8",
+      "path": "styles.css",
+      "sha256": "01550f539b0cbcd97e3358f8dbaca94750ffb7f1e71474927d75156619998faa"
+    },
+    {
+      "bytes": 2667,
+      "mediaType": "application/json; charset=utf-8",
+      "path": "verification.json",
+      "sha256": "439746ee6c93ab5af34eb6161aa2ab786e60f36d4d5c36a330836a638ae4d50b"
+    }
+  ],
+  "provenance": {
+    "assets": [
+      {
+        "mimeType": "image/png",
+        "origin": "captured-product-flow",
+        "path": "assets/431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460.png",
+        "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+      }
+    ]
+  },
+  "publish": null,
+  "replayLevel": "ci-replayable",
+  "reports": {
+    "quality": "quality.json",
+    "verification": "verification.json"
+  },
+  "sanitization": {
+    "fullSceneRasterCount": 0,
+    "policyChecksPassed": true,
+    "remoteRequestCount": 0
+  },
+  "schemaVersion": "0.1",
+  "source": {
+    "captureSecurity": {
+      "browserEngine": "chromium",
+      "executionWorld": "chromium-cdp-isolated-readonly-v1",
+      "provider": "playwright-cdp"
+    },
+    "kind": "playwright-spec",
+    "replayLevel": "ci-replayable",
+    "runtime": "playwright-test",
+    "runtimeVersion": "1.62.0",
+    "specHash": "79509813cd5bd0c96a04f9559f96e592e292811347ccb94420e925e86ba6bb54"
+  },
+  "sourceCaptureHash": "a828ae01751ae9067a5451270f4d2ec2e89b387548f7098923b66e1633abbbf3",
+  "state": "BUILT",
+  "storyHash": "f8e2ca3aa422025fcd9a310f2ef8f1d2a526976ffa0d227f1d4d0b24891f8a37",
+  "version": "66d3d4b942f602f0e3432af8dd188692dd336535749945db4ccd7300c64d01bf"
+}

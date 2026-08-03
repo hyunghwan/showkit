@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose a focused improvement to the ShowKit workflow.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What product-demo workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should the person using ShowKit be able to do?
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Capture route
+      options:
+        - Static source
+        - Verified browser session
+        - Optional Playwright
+        - Player or exported files
+        - Agent skill
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Public evidence or workaround
+      description: Use public or synthetic examples only.

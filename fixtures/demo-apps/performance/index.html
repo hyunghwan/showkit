@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ShowKit capture performance</title>
+    <style>
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        background: #f3efe6;
+        color: #17211b;
+        font-family: system-ui, sans-serif;
+      }
+      main {
+        width: min(560px, calc(100% - 40px));
+        padding: 40px;
+        border: 1px solid currentColor;
+        background: white;
+      }
+      button {
+        min-height: 44px;
+        padding: 10px 18px;
+        border: 1px solid currentColor;
+        background: #ff5a36;
+        color: white;
+        font: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>Deterministic 25-step fixture</p>
+      <h1>Capture state 1</h1>
+      <button type="button">Advance 1 of 25</button>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

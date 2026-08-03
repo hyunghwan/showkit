@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signed-in dashboard</title>
+    <style>
+      :root { font-family: Inter, system-ui, sans-serif; color: #17211b; background: #f4f1e9; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; grid-template-columns: 240px 1fr; }
+      nav { padding: 28px 18px; background: #17211b; color: white; }
+      nav h1 { margin: 0 0 24px; font-size: 20px; }
+      nav button { width: 100%; margin: 4px 0; padding: 12px; border: 0; border-radius: 10px; color: inherit; background: transparent; text-align: left; font: inherit; }
+      nav button[aria-pressed="true"] { background: #ff6d46; }
+      main { padding: 52px; }
+      .eyebrow { text-transform: uppercase; letter-spacing: .12em; font-size: 12px; }
+      h2 { max-width: 720px; font-size: 48px; line-height: 1.05; margin: 12px 0; }
+      p { max-width: 600px; line-height: 1.6; }
+      .metric { display: inline-block; margin-top: 28px; padding: 18px 24px; border: 1px solid #c9c3b6; border-radius: 14px; background: white; }
+    </style>
+  </head>
+  <body>
+    <nav aria-label="Dashboard sections">
+      <h1>Northstar reports</h1>
+      <button type="button" aria-pressed="true">Overview</button>
+      <button type="button" aria-pressed="false">Reports</button>
+      <button type="button" aria-pressed="false">Filters</button>
+      <button type="button" aria-pressed="false">Activity</button>
+      <button type="button" aria-pressed="false">Settings</button>
+    </nav>
+    <main>
+      <p class="eyebrow">Workspace dashboard</p>
+      <h2>Overview is ready</h2>
+      <p>Review the current report state and choose a section to continue.</p>
+      <p class="metric"><strong>24</strong> reports checked this week</p>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

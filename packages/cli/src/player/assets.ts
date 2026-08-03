@@ -1,0 +1,1859 @@
+import {
+  inspectPlayerThemeContrast,
+  type CaptureSource,
+  type StorySpec
+} from "../core/schemas.js";
+
+export type PlayerFiles = {
+  "index.html": string;
+  "styles.css": string;
+  "story.js": string;
+  "player.js": string;
+};
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function safeScriptJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replaceAll("<", "\\u003c")
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
+}
+
+export function createPlayerFiles(capture: CaptureSource, story: StorySpec): PlayerFiles {
+  const captureSteps = new Map(capture.steps.map((step) => [step.id, step]));
+  const themeContrast = inspectPlayerThemeContrast(story.theme);
+  const steps = story.steps.map((storyStep) => {
+    const captureStep = captureSteps.get(storyStep.captureStepId);
+    if (!captureStep?.scene.target) {
+      throw new Error(`Missing capture step ${storyStep.captureStepId}`);
+    }
+    return {
+      id: storyStep.id,
+      nodes: captureStep.scene.nodes,
+      fontFaces: captureStep.scene.fontFaces ?? [],
+      viewport: captureStep.scene.viewport,
+      anchorId: storyStep.anchorId,
+      target: captureStep.scene.target,
+      tooltip: storyStep.tooltip,
+      advance: storyStep.advance
+    };
+  });
+  const payload = {
+    title: story.title,
+    goal: story.goal,
+    locale: story.locale,
+    welcome: story.welcome,
+    theme: {
+      ...story.theme,
+      accentText: themeContrast.accentText
+    },
+    player: story.player,
+    steps,
+    terminal: {
+      nodes: capture.terminalScene.nodes,
+      fontFaces: capture.terminalScene.fontFaces ?? [],
+      viewport: capture.terminalScene.viewport
+    },
+    cta: story.cta ?? null,
+    completion: story.completion ?? null
+  };
+
+  return {
+    "index.html": `<!doctype html>
+<html lang="${escapeHtml(story.locale)}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+    >
+    <title>${escapeHtml(story.title)}</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='${encodeURIComponent(story.theme.accent)}'/%3E%3Cpath d='M9 11h14M9 16h10M9 21h14' stroke='%23fffdf7' stroke-width='2.5'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="demo-frame">
+      <header class="frame-header" id="frame-header">
+        <div class="frame-header-main" id="frame-header-main"></div>
+        <div class="frame-header-meta" id="frame-header-meta"></div>
+      </header>
+      <main>
+        <section class="stage-card" id="stage-card" aria-label="Product demo">
+          <div class="scene-shell" id="scene-shell">
+            <div class="scene-viewport" id="scene-viewport"></div>
+            <div class="step-backdrop" id="step-backdrop" aria-hidden="true" hidden></div>
+            <button class="hotspot" id="hotspot" type="button"></button>
+            <aside class="tooltip" id="tooltip" aria-live="polite">
+              <div class="tooltip-meta" id="tooltip-meta"></div>
+              <h2 id="tooltip-title"></h2>
+              <p id="tooltip-body"></p>
+              <div class="tooltip-progress" id="tooltip-progress"></div>
+              <div class="tooltip-actions" id="tooltip-actions">
+                <div class="completion-actions" id="completion-actions" hidden></div>
+                <button class="tooltip-next" id="tooltip-next" type="button">Next</button>
+              </div>
+            </aside>
+          </div>
+          <div class="chrome-overlay" id="chrome-overlay" aria-label="Demo controls">
+            <div class="chrome-dock" data-position="top-left"></div>
+            <div class="chrome-dock" data-position="top"></div>
+            <div class="chrome-dock" data-position="top-right"></div>
+            <div class="chrome-dock" data-position="left"></div>
+            <div class="chrome-dock" data-position="center"></div>
+            <div class="chrome-dock" data-position="right"></div>
+            <div class="chrome-dock" data-position="bottom-left"></div>
+            <div class="chrome-dock" data-position="bottom"></div>
+            <div class="chrome-dock" data-position="bottom-right"></div>
+          </div>
+          <div
+            class="welcome-layer"
+            id="welcome-layer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="welcome-title"
+            aria-describedby="welcome-body"
+            hidden
+          >
+            <div class="welcome-card">
+              <p class="welcome-kicker">Interactive demo</p>
+              <h1 id="welcome-title"></h1>
+              <p id="welcome-body"></p>
+              <button class="welcome-action" id="welcome-action" type="button"></button>
+            </div>
+          </div>
+        </section>
+      </main>
+      <footer class="frame-footer" id="frame-footer">
+        <div class="frame-footer-progress" id="frame-footer-progress"></div>
+        <div class="frame-footer-actions" id="frame-footer-actions"></div>
+      </footer>
+      <div class="chrome-parts" id="chrome-parts" hidden>
+        <h1 class="demo-title chrome-part" id="demo-title" data-chrome-part="title">${escapeHtml(story.title)}</h1>
+        <p class="demo-goal chrome-part" id="demo-goal" data-chrome-part="goal">${escapeHtml(story.goal)}</p>
+        <div class="step-count chrome-part" id="step-count" data-chrome-part="stepCount" aria-live="polite"></div>
+        <div class="progress-control chrome-part" id="progress-control" data-chrome-part="progress">
+          <span class="visually-hidden">Demo progress</span>
+          <span class="progress-track" aria-hidden="true"><span id="progress-bar"></span></span>
+        </div>
+        <button class="control-button chrome-part" id="back" data-chrome-part="back" type="button">Back</button>
+        <button class="control-button chrome-part" id="restart" data-chrome-part="restart" type="button">Restart demo</button>
+        <a class="cta chrome-part" id="cta" data-chrome-part="cta" hidden>Open product</a>
+      </div>
+      <p class="visually-hidden" id="announcer" aria-live="polite"></p>
+    </div>
+    <script src="./story.js"></script>
+    <script src="./player.js"></script>
+  </body>
+</html>
+`,
+    "story.js": `window.__SHOWKIT_DEMO__ = ${safeScriptJson(payload)};\n`,
+    "styles.css": PLAYER_CSS_MODERN,
+    "player.js": PLAYER_JS
+  };
+}
+
+const PLAYER_CSS = `:root {
+  color-scheme: light;
+  --accent: #ff5a36;
+  --ink: #17211b;
+  --paper: #f3efe6;
+  --cream: #fffdf7;
+  --font-heading: "Avenir Next", Avenir, "Gill Sans", sans-serif;
+  --font-body: "Avenir Next", Avenir, "Gill Sans", sans-serif;
+  --line: rgba(23, 33, 27, 0.2);
+  --shadow: 0 26px 70px rgba(23, 33, 27, 0.2);
+}
+
+* { box-sizing: border-box; }
+
+html { min-width: 320px; background: var(--paper); }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    linear-gradient(115deg, transparent 0 66%, rgba(255, 90, 54, 0.09) 66% 67%, transparent 67%),
+    repeating-linear-gradient(0deg, rgba(23, 33, 27, 0.028) 0 1px, transparent 1px 7px),
+    var(--paper);
+  font-family: var(--font-body);
+}
+
+button, a { font: inherit; }
+
+button:focus-visible, a:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.demo-frame {
+  width: min(1520px, 100%);
+  margin: 0 auto;
+  padding: clamp(18px, 3vw, 44px);
+}
+
+.demo-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 28px;
+  align-items: end;
+  margin-bottom: 22px;
+}
+
+.eyebrow, .tooltip-kicker {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+h1 {
+  max-width: 980px;
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: clamp(34px, 4.5vw, 62px);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  line-height: 0.96;
+}
+
+.demo-goal {
+  max-width: 700px;
+  margin: 14px 0 0;
+  color: rgba(23, 33, 27, 0.72);
+  font-size: clamp(15px, 1.5vw, 19px);
+  line-height: 1.45;
+}
+
+.step-count {
+  min-width: 94px;
+  padding: 10px 14px;
+  border: 1px solid var(--ink);
+  background: var(--cream);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.stage-card {
+  width: 100%;
+  margin-inline: auto;
+  padding: clamp(7px, 1vw, 13px);
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.scene-shell {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  overflow: clip;
+  background: white;
+  isolation: isolate;
+}
+
+.scene-viewport {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  user-select: text;
+}
+
+.scene-viewport * {
+  animation: none !important;
+  margin: 0;
+  padding: 0;
+  transition: none !important;
+}
+
+.hotspot {
+  position: absolute;
+  z-index: 4;
+  display: block;
+  min-width: 24px;
+  min-height: 24px;
+  border: 3px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(255, 90, 54, 0.16);
+  box-shadow: 0 0 0 5px rgba(255, 253, 247, 0.78), 0 8px 24px rgba(23, 33, 27, 0.24);
+  cursor: pointer;
+}
+
+.hotspot[hidden],
+.tooltip[hidden],
+.step-backdrop[hidden] {
+  display: none !important;
+}
+
+.hotspot::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  border: 1px solid rgba(255, 90, 54, 0.65);
+  border-radius: 13px;
+  animation: hotspot-pulse 1.8s ease-out infinite;
+}
+
+@keyframes hotspot-pulse {
+  0% { opacity: 0.9; transform: scale(0.92); }
+  85%, 100% { opacity: 0; transform: scale(1.2); }
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 6;
+  width: min(320px, calc(100% - 24px));
+  padding: 20px;
+  border: 1px solid var(--ink);
+  background: var(--cream);
+  box-shadow: 8px 8px 0 var(--accent);
+}
+
+.tooltip h2 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 25px;
+  line-height: 1.05;
+}
+
+.tooltip p:not(.tooltip-kicker) {
+  margin: 11px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.tooltip-next {
+  width: 100%;
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+.demo-controls {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto;
+  gap: 24px;
+  align-items: center;
+  margin-top: 24px;
+}
+
+.progress-track {
+  height: 4px;
+  overflow: hidden;
+  background: rgba(23, 33, 27, 0.16);
+}
+
+.progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+
+.control-actions { display: flex; gap: 10px; align-items: center; }
+
+.control-button, .cta {
+  min-height: 42px;
+  padding: 10px 16px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.control-button:hover { background: rgba(23, 33, 27, 0.07); }
+.control-button:disabled { cursor: not-allowed; opacity: 0.38; }
+.cta { background: var(--accent); font-weight: 700; }
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+@media (max-width: 720px) {
+  .demo-frame { padding: 14px; }
+  .demo-header { grid-template-columns: 1fr; gap: 14px; }
+  .step-count { justify-self: start; }
+  .demo-controls { grid-template-columns: 1fr; }
+  .control-actions { flex-wrap: wrap; }
+  .tooltip { padding: 15px; box-shadow: 5px 5px 0 var(--accent); }
+  .tooltip h2 { font-size: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+`;
+
+const PLAYER_CSS_MODERN = `:root {
+  color-scheme: light;
+  --accent: #ff5a36;
+  --accent-contrast: #17211b;
+  --ink: #17211b;
+  --paper: #f3efe6;
+  --font-heading: "Avenir Next", Avenir, "Gill Sans", sans-serif;
+  --font-body: "Avenir Next", Avenir, "Gill Sans", sans-serif;
+  --container-radius: 18px;
+  --chrome-surface: color-mix(in srgb, var(--ink) 88%, transparent);
+  --chrome-ink: color-mix(in srgb, var(--paper) 8%, white);
+  --chrome-line: rgba(255, 255, 255, 0.14);
+  --container-shadow: 0 18px 48px color-mix(in srgb, var(--ink) 15%, transparent);
+}
+
+* { box-sizing: border-box; }
+
+html {
+  width: 100%;
+  height: 100%;
+  min-width: 320px;
+  background: var(--paper);
+}
+
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-body);
+}
+
+button, a { font: inherit; }
+
+button:focus-visible, a:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px var(--paper);
+}
+
+.demo-frame {
+  display: grid;
+  width: 100%;
+  height: 100svh;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 0;
+}
+
+main {
+  min-width: 0;
+  min-height: 0;
+}
+
+.frame-header,
+.frame-footer {
+  display: none;
+  width: 100%;
+  margin-inline: auto;
+}
+
+.stage-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #111413;
+  box-shadow: none;
+  isolation: isolate;
+}
+
+.scene-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overflow: clip;
+  border-radius: 0;
+  background: white;
+  isolation: isolate;
+}
+
+.scene-viewport {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  user-select: text;
+}
+
+.step-backdrop {
+  --step-backdrop-color: transparent;
+  position: absolute;
+  z-index: 3;
+  width: 0;
+  height: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: 0 0 0 200vmax var(--step-backdrop-color);
+  pointer-events: none;
+}
+
+.step-backdrop[data-strength="light"] {
+  --step-backdrop-color: rgba(6, 10, 9, 0.08);
+}
+
+.step-backdrop[data-strength="medium"] {
+  --step-backdrop-color: rgba(6, 10, 9, 0.18);
+}
+
+.step-backdrop[data-strength="heavy"] {
+  --step-backdrop-color: rgba(6, 10, 9, 0.34);
+}
+
+.welcome-layer {
+  position: absolute;
+  z-index: 12;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: clamp(18px, 4vw, 56px);
+}
+
+.welcome-layer[hidden] {
+  display: none !important;
+}
+
+.welcome-layer[data-backdrop="off"] {
+  background: transparent;
+}
+
+.welcome-layer[data-backdrop="light"] {
+  background: rgba(4, 8, 7, 0.24);
+  backdrop-filter: blur(1px);
+}
+
+.welcome-layer[data-backdrop="medium"] {
+  background: rgba(4, 8, 7, 0.48);
+  backdrop-filter: blur(2px);
+}
+
+.welcome-layer[data-backdrop="heavy"] {
+  background: rgba(4, 8, 7, 0.7);
+  backdrop-filter: blur(4px);
+}
+
+.welcome-card {
+  width: min(520px, 100%);
+  padding: clamp(24px, 4vw, 40px);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, rgba(255, 255, 255, 0.55));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--paper) 7%, white);
+  color: var(--ink);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.32);
+}
+
+.welcome-kicker {
+  margin: 0 0 10px;
+  color: color-mix(in srgb, var(--accent) 78%, var(--ink));
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.welcome-card h1 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: clamp(26px, 4vw, 42px);
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+
+.welcome-card > p:not(.welcome-kicker) {
+  max-width: 44ch;
+  margin: 16px 0 0;
+  color: color-mix(in srgb, var(--ink) 72%, transparent);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.welcome-action {
+  min-height: 42px;
+  margin-top: 26px;
+  padding: 10px 16px;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  background: var(--ink);
+  color: color-mix(in srgb, var(--paper) 8%, white);
+  font-size: 13px;
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.welcome-action:hover {
+  background: color-mix(in srgb, var(--ink) 90%, var(--accent));
+}
+
+.scene-viewport * {
+  animation: none !important;
+  margin: 0;
+  padding: 0;
+  transition: none !important;
+}
+
+.hotspot {
+  position: absolute;
+  z-index: 4;
+  display: block;
+  min-width: 24px;
+  min-height: 24px;
+  border: 2px solid var(--accent);
+  border-radius: 7px;
+  background: transparent;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.66),
+    0 6px 16px rgba(16, 20, 18, 0.15);
+  animation: hotspot-attention 1.65s cubic-bezier(0.2, 0.75, 0.25, 1) infinite;
+  cursor: pointer;
+}
+
+.hotspot[hidden],
+.tooltip[hidden],
+.step-backdrop[hidden] {
+  display: none !important;
+}
+
+.hotspot::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 54%, transparent);
+  border-radius: inherit;
+  animation: hotspot-pulse 1.8s ease-out infinite;
+}
+
+@keyframes hotspot-pulse {
+  0% { opacity: 0.82; transform: scale(0.94); }
+  86%, 100% { opacity: 0; transform: scale(1.16); }
+}
+
+@keyframes hotspot-attention {
+  0%, 100% {
+    filter: drop-shadow(0 3px 5px rgba(16, 20, 18, 0.16));
+  }
+  46% {
+    filter: drop-shadow(
+      0 9px 13px color-mix(in srgb, var(--accent) 34%, transparent)
+    );
+  }
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 6;
+  width: min(332px, calc(100% - 24px));
+  overflow: hidden;
+  padding: 21px 18px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, #d7d9d7);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paper) 8%, white);
+  color: var(--ink);
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--ink) 17%, transparent);
+}
+
+.tooltip-meta {
+  display: flex;
+  min-height: 16px;
+  align-items: center;
+  margin: 0 0 7px;
+  color: color-mix(in srgb, var(--accent) 78%, #272b29);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.tooltip-meta:empty,
+.tooltip-progress:empty,
+.tooltip-progress[hidden],
+.tooltip-actions[hidden] {
+  display: none !important;
+}
+
+.tooltip h2 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+
+.tooltip p:not(.tooltip-kicker) {
+  margin: 10px 0 0;
+  color: color-mix(in srgb, var(--ink) 74%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.tooltip-progress {
+  position: absolute;
+  inset: 0 0 auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.tooltip-actions {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--ink) 11%, transparent);
+}
+
+.tooltip-next {
+  order: 3;
+  display: block;
+  min-height: 34px;
+  margin: 0 0 0 auto;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ink);
+  color: color-mix(in srgb, var(--paper) 8%, white);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.tooltip-next[hidden] {
+  display: none !important;
+}
+
+.completion-actions {
+  display: flex;
+  order: 3;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.completion-actions[hidden] {
+  display: none !important;
+}
+
+.completion-action {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 13px;
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: 9px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.completion-action[data-style="primary"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: color-mix(in srgb, var(--paper) 8%, white);
+}
+
+.completion-action[data-style="secondary"] {
+  background: color-mix(in srgb, var(--paper) 38%, white);
+}
+
+.chrome-overlay {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.chrome-overlay[hidden],
+.chrome-part[hidden] {
+  display: none !important;
+}
+
+.chrome-dock {
+  position: absolute;
+  display: none;
+  max-width: calc(100% - 24px);
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 12px;
+  background: var(--chrome-surface);
+  color: var(--chrome-ink);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(16px) saturate(1.18);
+  -webkit-backdrop-filter: blur(16px) saturate(1.18);
+  pointer-events: auto;
+}
+
+.chrome-dock[data-active="true"] { display: flex; }
+.chrome-dock[data-position="top-left"] { top: 12px; left: 12px; }
+.chrome-dock[data-position="top"] { top: 12px; left: 50%; transform: translateX(-50%); }
+.chrome-dock[data-position="top-right"] { top: 12px; right: 12px; }
+.chrome-dock[data-position="left"] { top: 50%; left: 12px; flex-direction: column; transform: translateY(-50%); }
+.chrome-dock[data-position="center"] { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.chrome-dock[data-position="right"] { top: 50%; right: 12px; flex-direction: column; transform: translateY(-50%); }
+.chrome-dock[data-position="bottom-left"] { bottom: 12px; left: 12px; }
+.chrome-dock[data-position="bottom"] { bottom: 12px; left: 50%; transform: translateX(-50%); }
+.chrome-dock[data-position="bottom-right"] { right: 12px; bottom: 12px; }
+
+.chrome-part { flex: 0 0 auto; }
+
+.demo-title {
+  max-width: min(420px, 52vw);
+  margin: 0;
+  padding: 4px 7px;
+  overflow: hidden;
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-goal {
+  max-width: min(440px, 58vw);
+  margin: 0;
+  padding: 4px 7px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.step-count {
+  min-width: 82px;
+  padding: 4px 7px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.progress-control {
+  display: flex;
+  width: clamp(128px, 16vw, 210px);
+  min-height: 24px;
+  align-items: center;
+  padding: 0 5px;
+}
+
+.progress-track {
+  display: block;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.progress-track > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+
+.control-button,
+.cta {
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.control-button:hover { background: rgba(255, 255, 255, 0.1); }
+.control-button:disabled { cursor: not-allowed; opacity: 0.36; }
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.tooltip .step-count {
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  font-size: 10px;
+  text-align: left;
+}
+
+.tooltip .progress-control {
+  width: 100%;
+  min-height: 4px;
+  padding: 0;
+}
+
+.tooltip .progress-track {
+  height: 4px;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--ink) 13%, transparent);
+}
+
+.tooltip .progress-track > span {
+  background: var(--ink);
+}
+
+.tooltip .control-button,
+.tooltip .cta {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--ink) 19%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--paper) 38%, white);
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.tooltip .control-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--ink));
+  background: color-mix(in srgb, var(--accent) 10%, white);
+}
+
+.tooltip #restart {
+  border-color: color-mix(in srgb, var(--accent) 66%, var(--ink));
+  background: color-mix(in srgb, var(--accent) 13%, white);
+  font-weight: 720;
+}
+
+.tooltip .control-button:disabled {
+  border-color: color-mix(in srgb, var(--ink) 10%, transparent);
+  background: color-mix(in srgb, var(--ink) 4%, white);
+  color: color-mix(in srgb, var(--ink) 46%, transparent);
+  opacity: 1;
+}
+
+.tooltip .cta {
+  order: 4;
+  margin-left: auto;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.tooltip[data-complete="true"] {
+  width: min(360px, calc(100% - 24px));
+}
+
+body[data-chrome-mode="overlay"] main {
+  height: 100%;
+}
+
+body[data-chrome-mode="frame"] .demo-frame {
+  align-content: center;
+  height: auto;
+  min-height: 100svh;
+  gap: 12px;
+  padding: clamp(8px, 1.5vw, 24px);
+}
+
+body[data-chrome-mode="frame"] .stage-card {
+  height: auto;
+  border: 1px solid rgba(23, 33, 27, 0.13);
+  border-radius: var(--container-radius);
+  box-shadow: var(--container-shadow);
+}
+
+body[data-chrome-mode="frame"] .frame-header,
+body[data-chrome-mode="frame"] .frame-footer {
+  display: flex;
+  max-width: var(--stage-max-width, 100%);
+  align-items: center;
+}
+
+body[data-chrome-mode="frame"] .frame-header {
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 4px;
+}
+
+.frame-header-main {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.frame-header-meta,
+.frame-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+body[data-chrome-mode="frame"] .frame-footer {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  gap: 14px;
+  padding: 0 4px;
+}
+
+.frame-footer-progress { min-width: 0; }
+
+body[data-chrome-mode="frame"] .demo-title {
+  max-width: min(540px, 54vw);
+  padding: 0;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+body[data-chrome-mode="frame"] .demo-goal {
+  max-width: 560px;
+  padding: 0;
+  color: color-mix(in srgb, var(--ink) 64%, transparent);
+}
+
+body[data-chrome-mode="frame"] .step-count {
+  color: color-mix(in srgb, var(--ink) 72%, transparent);
+}
+
+body[data-chrome-mode="frame"] .progress-control {
+  width: 100%;
+  padding: 0;
+}
+
+body[data-chrome-mode="frame"] .progress-track {
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+
+body[data-chrome-mode="frame"] .control-button,
+body[data-chrome-mode="frame"] .cta {
+  color: var(--ink);
+}
+
+body[data-chrome-mode="frame"] .control-button:hover {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+@media (max-width: 720px) {
+  :root { --container-radius: 13px; }
+  body[data-chrome-mode="frame"] .demo-frame { padding: 6px; }
+  .chrome-dock {
+    min-height: 32px;
+    gap: 3px;
+    padding: 3px;
+    border-radius: 10px;
+  }
+  .chrome-dock[data-position="top-left"] { top: 8px; left: 8px; }
+  .chrome-dock[data-position="top"] { top: 8px; }
+  .chrome-dock[data-position="top-right"] { top: 8px; right: 8px; }
+  .chrome-dock[data-position="left"] { left: 8px; }
+  .chrome-dock[data-position="right"] { right: 8px; }
+  .chrome-dock[data-position="bottom-left"] { bottom: 8px; left: 8px; }
+  .chrome-dock[data-position="bottom"] { bottom: 8px; }
+  .chrome-dock[data-position="bottom-right"] { right: 8px; bottom: 8px; }
+  .demo-title {
+    max-width: 50vw;
+    padding: 3px 6px;
+    font-size: 11px;
+  }
+  .step-count {
+    min-width: 72px;
+    padding: 3px 6px;
+    font-size: 9px;
+  }
+  .progress-control {
+    width: 42px;
+    min-height: 22px;
+    padding: 0 4px;
+  }
+  .control-button,
+  .cta {
+    min-height: 26px;
+    padding: 5px 7px;
+    font-size: 10px;
+  }
+  .tooltip { width: min(280px, calc(100% - 16px)); padding: 15px; }
+  body[data-chrome-mode="frame"] .frame-header-main {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+  body[data-chrome-mode="frame"] .frame-footer {
+    grid-template-columns: 1fr;
+  }
+  .frame-footer-actions { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+`;
+
+const PLAYER_JS = `(() => {
+  "use strict";
+  const demo = window.__SHOWKIT_DEMO__;
+  const elements = {
+    frame: document.querySelector(".demo-frame"),
+    frameHeader: document.getElementById("frame-header"),
+    frameHeaderMain: document.getElementById("frame-header-main"),
+    frameHeaderMeta: document.getElementById("frame-header-meta"),
+    frameFooter: document.getElementById("frame-footer"),
+    frameFooterProgress: document.getElementById("frame-footer-progress"),
+    frameFooterActions: document.getElementById("frame-footer-actions"),
+    stage: document.querySelector(".stage-card"),
+    chromeOverlay: document.getElementById("chrome-overlay"),
+    chromeParts: document.getElementById("chrome-parts"),
+    shell: document.getElementById("scene-shell"),
+    viewport: document.getElementById("scene-viewport"),
+    stepBackdrop: document.getElementById("step-backdrop"),
+    hotspot: document.getElementById("hotspot"),
+    tooltip: document.getElementById("tooltip"),
+    tooltipMeta: document.getElementById("tooltip-meta"),
+    tooltipProgress: document.getElementById("tooltip-progress"),
+    tooltipActions: document.getElementById("tooltip-actions"),
+    completionActions: document.getElementById("completion-actions"),
+    title: document.getElementById("tooltip-title"),
+    body: document.getElementById("tooltip-body"),
+    next: document.getElementById("tooltip-next"),
+    demoTitle: document.getElementById("demo-title"),
+    demoGoal: document.getElementById("demo-goal"),
+    count: document.getElementById("step-count"),
+    progressControl: document.getElementById("progress-control"),
+    progress: document.getElementById("progress-bar"),
+    back: document.getElementById("back"),
+    restart: document.getElementById("restart"),
+    cta: document.getElementById("cta"),
+    welcome: document.getElementById("welcome-layer"),
+    welcomeTitle: document.getElementById("welcome-title"),
+    welcomeBody: document.getElementById("welcome-body"),
+    welcomeAction: document.getElementById("welcome-action"),
+    announcer: document.getElementById("announcer")
+  };
+  const sceneFontStyle = document.createElement("style");
+  sceneFontStyle.id = "scene-font-faces";
+  document.head.append(sceneFontStyle);
+  let current = -1;
+  let renderedViewport = { width: 1280, height: 720 };
+  let renderedScale = 1;
+  let overlayFrame = 0;
+  let overlayTimer = 0;
+  const defaultChrome = {
+    mode: "overlay",
+    placements: {
+      title: "hidden",
+      goal: "hidden",
+      stepCount: "tooltip",
+      progress: "tooltip",
+      back: "tooltip",
+      restart: "tooltip",
+      cta: "tooltip"
+    }
+  };
+  const chrome = demo.player?.chrome ?? defaultChrome;
+  const navigation = demo.player?.navigation ?? "controls";
+  const chromePartElements = {
+    title: elements.demoTitle,
+    goal: elements.demoGoal,
+    stepCount: elements.count,
+    progress: elements.progressControl,
+    back: elements.back,
+    restart: elements.restart,
+    cta: elements.cta
+  };
+  const sceneLayoutObserver = new ResizeObserver(() => {
+    requestAnimationFrame(positionOverlay);
+  });
+
+  document.documentElement.style.setProperty("--accent", demo.theme.accent);
+  document.documentElement.style.setProperty("--accent-contrast", demo.theme.accentText);
+  document.documentElement.style.setProperty("--ink", demo.theme.ink);
+  document.documentElement.style.setProperty("--paper", demo.theme.paper);
+  document.documentElement.style.setProperty("--font-heading", demo.theme.fonts.heading);
+  document.documentElement.style.setProperty("--font-body", demo.theme.fonts.body);
+  elements.welcome.dataset.backdrop = demo.welcome.backdrop;
+  elements.welcomeTitle.textContent = demo.welcome.title;
+  elements.welcomeBody.textContent = demo.welcome.body;
+  elements.welcomeAction.textContent = demo.welcome.actionLabel;
+
+  function configureChrome() {
+    const overlayMode = chrome.mode === "overlay";
+    document.body.dataset.chromeMode = overlayMode ? "overlay" : "frame";
+    elements.chromeOverlay.hidden = !overlayMode;
+    const docks = new Map(
+      Array.from(elements.chromeOverlay.querySelectorAll(".chrome-dock")).map((dock) => [
+        dock.dataset.position,
+        dock
+      ])
+    );
+    const frameDestinations = {
+      title: elements.frameHeaderMain,
+      goal: elements.frameHeaderMain,
+      stepCount: elements.frameHeaderMeta,
+      progress: elements.frameFooterProgress,
+      back: elements.frameFooterActions,
+      restart: elements.frameFooterActions,
+      cta: elements.frameFooterActions
+    };
+    const tooltipDestinations = {
+      stepCount: elements.tooltipMeta,
+      progress: elements.tooltipProgress,
+      back: elements.tooltipActions,
+      restart: elements.tooltipActions,
+      cta: elements.tooltipActions
+    };
+
+    for (const [kind, part] of Object.entries(chromePartElements)) {
+      const placement = chrome.placements[kind];
+      part.dataset.chromeHidden = placement === "hidden" ? "true" : "false";
+      if (placement === "hidden") {
+        part.hidden = true;
+        elements.chromeParts.append(part);
+        continue;
+      }
+      if (kind !== "cta") part.hidden = false;
+      const destination = placement === "tooltip"
+        ? tooltipDestinations[kind]
+        : overlayMode
+          ? docks.get(placement)
+          : frameDestinations[kind];
+      destination.append(part);
+    }
+    for (const dock of docks.values()) {
+      dock.dataset.active = dock.childElementCount > 0 ? "true" : "false";
+    }
+  }
+
+  configureChrome();
+
+  function updateTooltipControlVisibility() {
+    elements.tooltipProgress.hidden = elements.tooltipProgress.childElementCount === 0;
+    elements.tooltipActions.hidden = Array.from(elements.tooltipActions.children).every(
+      (element) => element.hidden
+    );
+  }
+
+  function clamp(value, minimum, maximum) {
+    return Math.min(Math.max(value, minimum), maximum);
+  }
+
+  const allowedAttributes = new Set([
+    "alt",
+    "aria-current",
+    "aria-describedby",
+    "aria-disabled",
+    "aria-expanded",
+    "aria-haspopup",
+    "aria-hidden",
+    "aria-label",
+    "aria-labelledby",
+    "aria-live",
+    "aria-pressed",
+    "aria-selected",
+    "checked",
+    "clip-path",
+    "clip-rule",
+    "clipPathUnits",
+    "cx",
+    "cy",
+    "d",
+    "disabled",
+    "dir",
+    "fill",
+    "fill-opacity",
+    "fill-rule",
+    "focusable",
+    "height",
+    "href",
+    "id",
+    "lang",
+    "multiple",
+    "opacity",
+    "points",
+    "placeholder",
+    "preserveAspectRatio",
+    "r",
+    "readonly",
+    "role",
+    "rx",
+    "ry",
+    "src",
+    "stroke",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-opacity",
+    "stroke-width",
+    "selected",
+    "tabindex",
+    "title",
+    "transform",
+    "type",
+    "viewBox",
+    "width",
+    "x",
+    "x1",
+    "x2",
+    "y",
+    "y1",
+    "y2",
+    "data-showkit-anchor",
+    "data-showkit-pseudo",
+    "data-showkit-text",
+    "data-showkit-scene-root"
+  ]);
+  const allowedStyleName = /^[a-z-]+$/;
+  const svgTags = new Set([
+    "circle",
+    "clippath",
+    "defs",
+    "ellipse",
+    "g",
+    "image",
+    "line",
+    "path",
+    "polygon",
+    "polyline",
+    "rect",
+    "symbol",
+    "use",
+    "svg"
+  ]);
+  const svgTagNames = new Map([
+    ["clippath", "clipPath"]
+  ]);
+
+  function safeSceneStyleValue(value) {
+    return (
+      !/@import|expression\\s*\\(/i.test(value) &&
+      !/url\\s*\\(/i.test(
+        value.replace(
+          /url\\s*\\(\\s*["']?\\.\\/assets\\/[a-f0-9]{64}\\.(?:png|jpg|webp|avif|gif|svg)["']?\\s*\\)/gi,
+          ""
+        )
+      )
+    );
+  }
+
+  function createSceneNode(node) {
+    if (node.type === "text") {
+      return document.createTextNode(node.text);
+    }
+    const element = svgTags.has(node.tag)
+      ? document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          svgTagNames.get(node.tag) ?? node.tag
+        )
+      : document.createElement(node.tag);
+    for (const [name, value] of Object.entries(node.attributes)) {
+      if (!allowedAttributes.has(name) && !/^aria-[a-z][a-z-]*$/.test(name)) continue;
+      if (
+        name === "src" &&
+        !/^\\.\\/assets\\/[a-f0-9]{64}\\.(?:png|jpg|webp|avif|gif|svg)$/.test(value)
+      ) continue;
+      if (
+        name === "href" &&
+        !/^\\.\\/assets\\/[a-f0-9]{64}\\.(?:png|jpg|webp|avif|gif|svg)$/.test(value) &&
+        !/^#[A-Za-z][A-Za-z0-9_.:-]*$/.test(value)
+      ) {
+        continue;
+      }
+      element.setAttribute(name, value);
+    }
+    for (const [name, value] of Object.entries(node.styles)) {
+      if (allowedStyleName.test(name) && safeSceneStyleValue(value)) {
+        element.style.setProperty(name, value);
+      }
+    }
+    for (const child of node.children) {
+      element.append(createSceneNode(child));
+    }
+    return element;
+  }
+
+  function replaceScene(scene) {
+    sceneFontStyle.textContent = (scene.fontFaces ?? [])
+      .filter(
+        (face) =>
+          /^[^{};@<>"'\\\\\\r\\n]{1,120}$/.test(face.family) &&
+          /^(?:normal|italic|oblique)$/.test(face.style) &&
+          /^(?:normal|bold|[1-9]00(?: [1-9]00)?)$/.test(face.weight) &&
+          /^(?:normal|(?:ultra-|extra-|semi-)?(?:condensed|expanded)|\\d{1,3}%)$/.test(
+            face.stretch
+          ) &&
+          /^(?:auto|block|swap|fallback|optional)$/.test(face.display) &&
+          /^\\.\\/assets\\/[a-f0-9]{64}\\.woff2$/.test(face.src) &&
+          (!face.unicodeRange ||
+            /^U\\+[0-9A-F?*-]+(?:\\s*-\\s*[0-9A-F?*-]+)?(?:\\s*,\\s*U\\+[0-9A-F?*-]+(?:\\s*-\\s*[0-9A-F?*-]+)?)*$/i.test(
+              face.unicodeRange
+            ))
+      )
+      .map(
+        (face) =>
+          "@font-face{" +
+          "font-family:" + JSON.stringify(face.family) + ";" +
+          "font-style:" + face.style + ";" +
+          "font-weight:" + face.weight + ";" +
+          "font-stretch:" + face.stretch + ";" +
+          "font-display:" + face.display + ";" +
+          (face.unicodeRange ? "unicode-range:" + face.unicodeRange + ";" : "") +
+          "src:url(" + JSON.stringify(face.src) + ") format(\\"woff2\\");" +
+          "}"
+      )
+      .join("\\n");
+    elements.viewport.replaceChildren(...scene.nodes.map(createSceneNode));
+    sceneLayoutObserver.disconnect();
+    for (const element of elements.viewport.querySelectorAll("*")) {
+      sceneLayoutObserver.observe(element);
+    }
+    if (document.fonts) {
+      document.fonts.ready.then(() => {
+        scaleScene();
+        positionOverlay();
+      });
+    }
+  }
+
+  function positionOverlay() {
+    const shellRect = elements.shell.getBoundingClientRect();
+    if (current < 0) {
+      elements.stepBackdrop.hidden = true;
+      elements.hotspot.hidden = true;
+      elements.tooltip.hidden = true;
+      return;
+    }
+    const step = demo.steps[current];
+    if (!step) {
+      elements.stepBackdrop.hidden = true;
+      elements.tooltip.hidden = false;
+      elements.tooltip.style.visibility = "hidden";
+      elements.tooltip.dataset.placement = "center";
+      elements.tooltip.dataset.complete = "true";
+      const tooltipRect = elements.tooltip.getBoundingClientRect();
+      elements.tooltip.style.left =
+        Math.max(12, (shellRect.width - tooltipRect.width) / 2) + "px";
+      elements.tooltip.style.top =
+        Math.max(12, (shellRect.height - tooltipRect.height) / 2) + "px";
+      elements.tooltip.style.visibility = "visible";
+      return;
+    }
+    elements.tooltip.dataset.complete = "false";
+    const anchor = elements.viewport.querySelector('[data-showkit-anchor="' + CSS.escape(step.anchorId) + '"]');
+    if (!anchor) {
+      elements.stepBackdrop.hidden = true;
+      elements.hotspot.hidden = true;
+      elements.tooltip.hidden = true;
+      return;
+    }
+    const anchorRect = anchor.getBoundingClientRect();
+    const left = anchorRect.left - shellRect.left;
+    const top = anchorRect.top - shellRect.top;
+    elements.hotspot.style.left = left + "px";
+    elements.hotspot.style.top = top + "px";
+    elements.hotspot.style.width = anchorRect.width + "px";
+    elements.hotspot.style.height = anchorRect.height + "px";
+    const anchorRadius = Number.parseFloat(
+      getComputedStyle(anchor).borderTopLeftRadius
+    );
+    const renderedRadius = Number.isFinite(anchorRadius)
+      ? Math.min(
+          anchorRect.width / 2,
+          anchorRect.height / 2,
+          anchorRadius * renderedScale
+        )
+      : 7;
+    elements.hotspot.style.borderRadius = Math.max(0, renderedRadius) + "px";
+    if (step.tooltip.backdrop !== "off") {
+      elements.stepBackdrop.style.left = left + "px";
+      elements.stepBackdrop.style.top = top + "px";
+      elements.stepBackdrop.style.width = anchorRect.width + "px";
+      elements.stepBackdrop.style.height = anchorRect.height + "px";
+      elements.stepBackdrop.style.borderRadius =
+        Math.max(0, renderedRadius) + "px";
+      elements.stepBackdrop.style.visibility = "visible";
+      elements.stepBackdrop.hidden = false;
+    } else {
+      elements.stepBackdrop.hidden = true;
+    }
+
+    elements.tooltip.style.visibility = "hidden";
+    elements.tooltip.hidden = false;
+    const tooltipRect = elements.tooltip.getBoundingClientRect();
+    const gap = 18;
+    const candidates = {
+      right: [left + anchorRect.width + gap, top + anchorRect.height / 2 - tooltipRect.height / 2],
+      left: [left - tooltipRect.width - gap, top + anchorRect.height / 2 - tooltipRect.height / 2],
+      bottom: [left + anchorRect.width / 2 - tooltipRect.width / 2, top + anchorRect.height + gap],
+      top: [left + anchorRect.width / 2 - tooltipRect.width / 2, top - tooltipRect.height - gap]
+    };
+    const preferred = step.tooltip.placement === "auto"
+      ? ["right", "left", "bottom", "top"]
+      : [step.tooltip.placement, "right", "left", "bottom", "top"];
+    const chromeObstacles = chrome.mode === "overlay"
+      ? Array.from(
+          elements.chromeOverlay.querySelectorAll('.chrome-dock[data-active="true"]')
+        ).map((dock) => dock.getBoundingClientRect())
+      : [];
+    let selected = { placement: "right", left: 12, top: 12, score: Number.POSITIVE_INFINITY };
+    for (const [preferenceIndex, placement] of [...new Set(preferred)].entries()) {
+      const candidate = candidates[placement];
+      const candidateLeft = clamp(candidate[0], 12, shellRect.width - tooltipRect.width - 12);
+      const candidateTop = clamp(candidate[1], 12, shellRect.height - tooltipRect.height - 12);
+      const overflow =
+        Math.max(0, 12 - candidate[0]) +
+        Math.max(0, 12 - candidate[1]) +
+        Math.max(0, candidate[0] + tooltipRect.width - shellRect.width + 12) +
+        Math.max(0, candidate[1] + tooltipRect.height - shellRect.height + 12);
+      const overlapWidth = Math.max(
+        0,
+        Math.min(candidateLeft + tooltipRect.width, left + anchorRect.width) -
+          Math.max(candidateLeft, left)
+      );
+      const overlapHeight = Math.max(
+        0,
+        Math.min(candidateTop + tooltipRect.height, top + anchorRect.height) -
+          Math.max(candidateTop, top)
+      );
+      const chromeOverlap = chromeObstacles.reduce((area, obstacle) => {
+        const obstacleLeft = obstacle.left - shellRect.left;
+        const obstacleTop = obstacle.top - shellRect.top;
+        const width = Math.max(
+          0,
+          Math.min(candidateLeft + tooltipRect.width, obstacleLeft + obstacle.width) -
+            Math.max(candidateLeft, obstacleLeft)
+        );
+        const height = Math.max(
+          0,
+          Math.min(candidateTop + tooltipRect.height, obstacleTop + obstacle.height) -
+            Math.max(candidateTop, obstacleTop)
+        );
+        return area + width * height;
+      }, 0);
+      const score =
+        overflow * 10_000 +
+        chromeOverlap * 200 +
+        overlapWidth * overlapHeight * 100 +
+        preferenceIndex;
+      if (score < selected.score) {
+        selected = {
+          placement,
+          left: candidateLeft,
+          top: candidateTop,
+          score
+        };
+      }
+    }
+    elements.tooltip.dataset.placement = selected.placement;
+    elements.tooltip.style.left = selected.left + "px";
+    elements.tooltip.style.top = selected.top + "px";
+    elements.tooltip.style.visibility = "visible";
+  }
+
+  function scheduleOverlayPosition() {
+    window.cancelAnimationFrame(overlayFrame);
+    window.clearTimeout(overlayTimer);
+    overlayFrame = window.requestAnimationFrame(() => {
+      positionOverlay();
+      overlayFrame = window.requestAnimationFrame(positionOverlay);
+    });
+    overlayTimer = window.setTimeout(positionOverlay, 120);
+  }
+
+  function scaleScene() {
+    const overlayMode = chrome.mode === "overlay";
+    elements.shell.scrollTop = 0;
+    elements.shell.scrollLeft = 0;
+    elements.viewport.style.width = renderedViewport.width + "px";
+    elements.viewport.style.height = renderedViewport.height + "px";
+    let scale;
+    if (overlayMode) {
+      elements.stage.style.maxWidth = "none";
+      elements.frame.style.removeProperty("--stage-max-width");
+      elements.shell.style.height = "100%";
+      const shellWidth = elements.shell.clientWidth;
+      const shellHeight = elements.shell.clientHeight;
+      scale = Math.min(shellWidth / renderedViewport.width, 1);
+      const contentHeight = renderedViewport.height * scale;
+      let top = contentHeight <= shellHeight
+        ? (shellHeight - contentHeight) / 2
+        : 0;
+      const step = current >= 0 && current < demo.steps.length
+        ? demo.steps[current]
+        : undefined;
+      if (step && contentHeight > shellHeight) {
+        const target = step.target.bounds;
+        const targetCenter = (target.y + target.height / 2) * contentHeight;
+        const desiredTop = shellHeight / 2 - targetCenter;
+        top = clamp(desiredTop, shellHeight - contentHeight, 0);
+      }
+      elements.viewport.style.left =
+        Math.round((shellWidth - renderedViewport.width * scale) / 2) + "px";
+      elements.viewport.style.top = Math.round(top) + "px";
+    } else {
+      const reservedHeight =
+        elements.frameHeader.getBoundingClientRect().height +
+        elements.frameFooter.getBoundingClientRect().height +
+        60;
+      const availableHeight = Math.max(280, window.innerHeight - reservedHeight);
+      const aspect = renderedViewport.width / renderedViewport.height;
+      const viewportLimitedWidth = Math.round(availableHeight * aspect);
+      const stageMaxWidth = Math.max(320, viewportLimitedWidth);
+      elements.stage.style.maxWidth = stageMaxWidth + "px";
+      elements.frame.style.setProperty("--stage-max-width", stageMaxWidth + "px");
+      scale = elements.shell.clientWidth / renderedViewport.width;
+      elements.shell.style.height = Math.round(renderedViewport.height * scale) + "px";
+      elements.viewport.style.left = "0px";
+      elements.viewport.style.top = "0px";
+    }
+    renderedScale = scale;
+    elements.viewport.style.transform = "scale(" + scale + ")";
+    scheduleOverlayPosition();
+  }
+
+  function renderCompletionActions() {
+    elements.completionActions.replaceChildren();
+    if (!demo.completion) {
+      elements.completionActions.hidden = true;
+      return;
+    }
+    for (const action of demo.completion.actions) {
+      const link = document.createElement("a");
+      link.className = "completion-action";
+      link.dataset.style = action.style;
+      link.textContent = action.label;
+      link.href = action.href;
+      link.rel = "noopener noreferrer";
+      elements.completionActions.append(link);
+    }
+    elements.completionActions.hidden = false;
+  }
+
+  function render() {
+    const welcome = current < 0;
+    const complete = current >= demo.steps.length;
+    const step = welcome
+      ? demo.steps[0]
+      : complete
+        ? demo.terminal
+        : demo.steps[current];
+    renderedViewport = step.viewport;
+    replaceScene(step);
+    document.body.dataset.playerState = welcome
+      ? "welcome"
+      : complete
+        ? "complete"
+        : "step";
+    elements.welcome.hidden = !welcome;
+    elements.completionActions.hidden = true;
+    elements.completionActions.replaceChildren();
+    elements.cta.hidden = true;
+    elements.stepBackdrop.hidden = true;
+    elements.restart.hidden =
+      !complete || elements.restart.dataset.chromeHidden === "true";
+
+    if (welcome) {
+      elements.hotspot.hidden = true;
+      elements.tooltip.hidden = true;
+      elements.back.hidden = true;
+      elements.next.hidden = true;
+      elements.announcer.textContent = demo.welcome.title;
+      updateTooltipControlVisibility();
+      scaleScene();
+      return;
+    }
+
+    elements.hotspot.hidden = complete;
+    elements.tooltip.hidden = false;
+    elements.next.hidden = complete || navigation !== "controls";
+    elements.back.hidden =
+      navigation !== "controls" || elements.back.dataset.chromeHidden === "true";
+    elements.back.disabled = false;
+    elements.count.textContent = complete
+      ? "Complete"
+      : "Step " + (current + 1) + " of " + demo.steps.length;
+    elements.progress.style.width =
+      ((complete ? demo.steps.length : current + 1) / demo.steps.length) * 100 + "%";
+
+    if (complete) {
+      elements.title.textContent = demo.completion?.title ?? "Demo complete";
+      elements.body.textContent =
+        demo.completion?.body ?? "You reached the end of this demo.";
+      elements.announcer.textContent =
+        demo.completion?.title ?? "Demo complete";
+      renderCompletionActions();
+      if (
+        !demo.completion &&
+        demo.cta &&
+        elements.cta.dataset.chromeHidden !== "true"
+      ) {
+        elements.cta.hidden = false;
+        elements.cta.textContent = demo.cta.label;
+        elements.cta.href = demo.cta.href;
+        elements.cta.rel = "noopener noreferrer";
+      }
+    } else {
+      elements.stepBackdrop.dataset.strength = step.tooltip.backdrop;
+      elements.stepBackdrop.hidden = step.tooltip.backdrop === "off";
+      elements.stepBackdrop.style.visibility = "hidden";
+      elements.title.textContent = step.tooltip.title;
+      elements.body.textContent = step.tooltip.body;
+      elements.hotspot.setAttribute(
+        "aria-label",
+        "Select " + step.target.name + ": " + step.tooltip.title
+      );
+      elements.hotspot.setAttribute("aria-describedby", "tooltip-body");
+      elements.announcer.textContent =
+        "Step " + (current + 1) + ": " + step.tooltip.title;
+    }
+    updateTooltipControlVisibility();
+    scaleScene();
+    if (
+      complete &&
+      (document.activeElement === elements.hotspot ||
+        document.activeElement === elements.next)
+    ) {
+      focusCompletionControl();
+    } else if (
+      !complete &&
+      document.activeElement === elements.next &&
+      elements.next.hidden
+    ) {
+      elements.hotspot.focus({ preventScroll: true });
+    }
+  }
+
+  function focusCompletionControl() {
+    const target = [
+      elements.completionActions.querySelector("a"),
+      elements.restart,
+      elements.back,
+      elements.cta
+    ].find(
+      (element) => element && !element.hidden && !element.disabled
+    );
+    target?.focus({ preventScroll: true });
+  }
+
+  function advance(moveFocus) {
+    if (current < 0) {
+      current = 0;
+      render();
+      if (moveFocus) elements.hotspot.focus({ preventScroll: true });
+      return;
+    }
+    if (current < demo.steps.length) {
+      current += 1;
+      render();
+      if (moveFocus) {
+        if (current >= demo.steps.length) {
+          focusCompletionControl();
+        } else {
+          elements.hotspot.focus({ preventScroll: true });
+        }
+      }
+    }
+  }
+
+  elements.hotspot.addEventListener("click", () => {
+    if (
+      navigation === "hotspots" ||
+      demo.steps[current]?.advance === "hotspot"
+    ) {
+      advance(true);
+    }
+  });
+  elements.next.addEventListener("click", () => advance(true));
+  elements.back.addEventListener("click", () => {
+    current = Math.max(-1, current - 1);
+    render();
+    if (current < 0) elements.welcomeAction.focus({ preventScroll: true });
+    else elements.hotspot.focus({ preventScroll: true });
+  });
+  elements.restart.addEventListener("click", () => {
+    current = -1;
+    render();
+    elements.welcomeAction.focus({ preventScroll: true });
+  });
+  elements.welcomeAction.addEventListener("click", () => advance(true));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowRight" && current < demo.steps.length) advance(false);
+    if (event.key === "ArrowLeft" && current >= 0) {
+      current = Math.max(-1, current - 1);
+      render();
+    }
+    if (event.key === "Home") {
+      current = -1;
+      render();
+    }
+  });
+  new ResizeObserver(scaleScene).observe(elements.shell);
+  if (document.fonts) {
+    document.fonts.ready.then(scaleScene);
+  }
+  render();
+})();\n`;

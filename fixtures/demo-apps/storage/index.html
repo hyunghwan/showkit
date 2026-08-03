@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Runtime-only storage state</title>
+  </head>
+  <body>
+    <main>
+      <h1>Authenticated fixture</h1>
+      <button type="button">Finish authenticated step</button>
+    </main>
+    <script>
+      document.querySelector("button").addEventListener("click", () => {
+        document.querySelector("h1").textContent = "Authenticated step complete";
+      });
+    </script>
+  </body>
+</html>

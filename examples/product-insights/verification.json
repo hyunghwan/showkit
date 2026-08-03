@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "0.1",
+  "passed": true,
+  "checks": [
+    {
+      "name": "source-capture",
+      "passed": true,
+      "detail": "Demo content matches the captured product flow."
+    },
+    {
+      "name": "unique-step-ids",
+      "passed": true,
+      "detail": "Every demo step ID is unique."
+    },
+    {
+      "name": "capture-step:open-session-filters",
+      "passed": true,
+      "detail": "The “Open session filters” step is present in the captured flow."
+    },
+    {
+      "name": "anchor:open-session-filters",
+      "passed": true,
+      "detail": "The “Open session filters” hotspot target is present."
+    },
+    {
+      "name": "evidence:open-session-filters",
+      "passed": true,
+      "detail": "The “Open session filters” tooltip is based on captured text."
+    },
+    {
+      "name": "bounds:open-session-filters",
+      "passed": true,
+      "detail": "The “Open session filters” hotspot stays inside the captured viewport."
+    },
+    {
+      "name": "capture-step:focus-engaged-visitors",
+      "passed": true,
+      "detail": "The “Focus on engaged visitors” step is present in the captured flow."
+    },
+    {
+      "name": "anchor:focus-engaged-visitors",
+      "passed": true,
+      "detail": "The “Focus on engaged visitors” hotspot target is present."
+    },
+    {
+      "name": "evidence:focus-engaged-visitors",
+      "passed": true,
+      "detail": "The “Focus on engaged visitors” tooltip is based on captured text."
+    },
+    {
+      "name": "bounds:focus-engaged-visitors",
+      "passed": true,
+      "detail": "The “Focus on engaged visitors” hotspot stays inside the captured viewport."
+    },
+    {
+      "name": "capture-step:review-friction-insight",
+      "passed": true,
+      "detail": "The “Review checkout friction” step is present in the captured flow."
+    },
+    {
+      "name": "anchor:review-friction-insight",
+      "passed": true,
+      "detail": "The “Review checkout friction” hotspot target is present."
+    },
+    {
+      "name": "evidence:review-friction-insight",
+      "passed": true,
+      "detail": "The “Review checkout friction” tooltip is based on captured text."
+    },
+    {
+      "name": "bounds:review-friction-insight",
+      "passed": true,
+      "detail": "The “Review checkout friction” hotspot stays inside the captured viewport."
+    },
+    {
+      "name": "html-policy",
+      "passed": true,
+      "detail": "Product scripts, forms, remote requests, and unsupported surfaces are absent."
+    },
+    {
+      "name": "screenshot-scene",
+      "passed": true,
+      "detail": "The demo contains 0 full-screen image scenes."
+    }
+  ]
+}

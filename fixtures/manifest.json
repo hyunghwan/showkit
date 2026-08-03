@@ -1,0 +1,264 @@
+{
+  "schemaVersion": "0.1",
+  "fixtures": [
+    {
+      "id": "product-insights",
+      "purpose": "showcase",
+      "spec": "demo-apps/public/public.demo.ts",
+      "expectedSignals": [
+        "3 flow-appropriate ordered steps",
+        "selectable HTML text",
+        "semantic button targets",
+        "single-tooltip control surface inside one demo container",
+        "0 full-screen image scenes"
+      ]
+    },
+    {
+      "id": "public-flow-proof",
+      "purpose": "proof",
+      "spec": "demo-apps/public/public.demo.ts",
+      "expectedSignals": [
+        "public Playwright APIs only",
+        "responsive hotspot geometry",
+        "configurable overlay and frame controls",
+        "terminal product state"
+      ]
+    },
+    {
+      "id": "capture-performance",
+      "purpose": "proof",
+      "spec": "demo-apps/performance/performance.demo.ts",
+      "expectedSignals": [
+        "25 ordered steps",
+        "capture under 30 seconds",
+        "page input latency at most 50ms"
+      ]
+    },
+    {
+      "id": "sensitive-data",
+      "purpose": "assurance",
+      "spec": "demo-apps/secret/secret.demo.ts",
+      "expectedSignals": [
+        "SensitiveDataDetected",
+        "0 persisted canary matches",
+        "0 publishable capture files"
+      ]
+    },
+    {
+      "id": "unsupported-canvas",
+      "purpose": "assurance",
+      "spec": "demo-apps/unsupported/unsupported.demo.ts",
+      "expectedSignals": [
+        "UnsupportedSurface",
+        "0 image fallback files"
+      ]
+    },
+    {
+      "id": "full-scene-raster",
+      "purpose": "assurance",
+      "spec": "demo-apps/screenshot/screenshot.demo.ts",
+      "expectedSignals": [
+        "UnsupportedSurface",
+        "0 screenshot fallback files"
+      ]
+    },
+    {
+      "id": "remote-asset",
+      "purpose": "assurance",
+      "spec": "demo-apps/remote-asset/remote-asset.demo.ts",
+      "expectedSignals": [
+        "UnsupportedSurface",
+        "0 persisted remote URLs"
+      ]
+    },
+    {
+      "id": "sanitizer-policy",
+      "purpose": "assurance",
+      "spec": "demo-apps/sanitizer/sanitizer.demo.ts",
+      "expectedSignals": [
+        "0 scripts or inline handlers",
+        "0 forms or input values",
+        "0 link destinations"
+      ]
+    },
+    {
+      "id": "runtime-only-storage",
+      "purpose": "assurance",
+      "spec": "demo-apps/storage/storage.demo.ts",
+      "expectedSignals": [
+        "successful authenticated fixture",
+        "0 persisted cookie or localStorage values"
+      ]
+    },
+    {
+      "id": "oversized-asset",
+      "purpose": "assurance",
+      "spec": "demo-apps/oversized/oversized.demo.ts",
+      "expectedSignals": [
+        "CaptureTooLarge",
+        "0 persisted assets"
+      ]
+    },
+    {
+      "id": "empty-flow",
+      "purpose": "assurance",
+      "spec": "demo-apps/empty/empty.demo.ts",
+      "expectedSignals": [
+        "CaptureSourceEmpty",
+        "0 publishable capture files"
+      ]
+    },
+    {
+      "id": "signed-in-url-session",
+      "purpose": "proof",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "5 ordered browser-session steps",
+        "0 cookie or browser storage values",
+        "0 URL query or fragment values"
+      ]
+    },
+    {
+      "id": "login-redirect",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "BrowserAuthenticationRequired",
+        "previous captured product flow unchanged"
+      ]
+    },
+    {
+      "id": "session-canary",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "cookie and storage canary output 0 matches",
+        "runtime-only authentication"
+      ]
+    },
+    {
+      "id": "query-secret-url",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "query and fragment output 0 matches",
+        "sanitized origin and path provenance"
+      ]
+    },
+    {
+      "id": "ambiguous-browser-target",
+      "purpose": "assurance",
+      "spec": "scripts/test-browser-adapter.mjs",
+      "expectedSignals": [
+        "BrowserTargetAmbiguous",
+        "action count 0"
+      ]
+    },
+    {
+      "id": "browser-action-side-effect",
+      "purpose": "assurance",
+      "spec": "scripts/test-browser-adapter.mjs",
+      "expectedSignals": [
+        "BrowserActionConfirmationRequired",
+        "mutation count 0 before confirmation"
+      ]
+    },
+    {
+      "id": "remote-decorative-asset",
+      "purpose": "proof",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "decorative asset excluded",
+        "semantic HTML scene preserved"
+      ]
+    },
+    {
+      "id": "remote-critical-asset",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "UnsupportedSurface",
+        "remote URL output 0 matches"
+      ]
+    },
+    {
+      "id": "approved-public-page-asset",
+      "purpose": "proof",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "critical image replaced by content-addressed local bytes",
+        "remote URL output 0 matches"
+      ]
+    },
+    {
+      "id": "private-page-asset",
+      "purpose": "assurance",
+      "spec": "scripts/test-browser-adapter.mjs",
+      "expectedSignals": [
+        "private image rejected before bundling",
+        "temporary bundle count 0"
+      ]
+    },
+    {
+      "id": "browser-interruption",
+      "purpose": "assurance",
+      "spec": "scripts/test-browser-adapter.mjs",
+      "expectedSignals": [
+        "BrowserSessionInterrupted",
+        "previous captured product flow unchanged",
+        "temporary envelope count 0"
+      ]
+    },
+    {
+      "id": "browser-realm-isolation",
+      "purpose": "assurance",
+      "spec": "demo-apps/assurance/browser-realm-attack.demo.ts",
+      "expectedSignals": [
+        "Playwright CDP isolated page world",
+        "page prototype overrides cannot alter an isolated scene",
+        "hidden hostile canary output 0 matches",
+        "unverified host fails before persistence"
+      ]
+    },
+    {
+      "id": "browser-isolation-unavailable",
+      "purpose": "assurance",
+      "spec": "demo-apps/assurance/nonisolated-browser.demo.ts",
+      "expectedSignals": [
+        "UnsupportedSurface",
+        "browser-isolation-unavailable",
+        "0 publishable capture files"
+      ]
+    },
+    {
+      "id": "sensitive-action-title",
+      "purpose": "assurance",
+      "spec": "demo-apps/assurance/sensitive-title.demo.ts",
+      "expectedSignals": [
+        "SensitiveDataDetected after the page action",
+        "0 persisted title canary matches",
+        "0 publishable capture files"
+      ]
+    },
+    {
+      "id": "action-capture-target-identity",
+      "purpose": "assurance",
+      "spec": "demo-apps/assurance/target-mismatch.demo.ts",
+      "expectedSignals": [
+        "TargetMissing before the page action",
+        "target-locator-mismatch",
+        "0 publishable capture files"
+      ]
+    },
+    {
+      "id": "static-source-clean-install",
+      "purpose": "proof",
+      "spec": "scripts/package-smoke.mjs",
+      "expectedSignals": [
+        "primary install has no Playwright package",
+        "project-relative source hashes verified",
+        "capture through preview succeeds from a clean HOME"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "name": "@showkit/cli",
+  "version": "0.1.0",
+  "description": "Build a guided interactive HTML demo from a safe browser session, static source, or optional Playwright flow.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hyunghwan/showkit.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://showkit.sqncs.com",
+  "bugs": {
+    "url": "https://github.com/hyunghwan/showkit/issues"
+  },
+  "keywords": [
+    "codex",
+    "claude-code",
+    "browser-session",
+    "playwright",
+    "interactive-demo",
+    "demo-as-code",
+    "agent-skill"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "bin": {
+    "showkit": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./playwright": {
+      "types": "./dist/playwright.d.ts",
+      "import": "./dist/playwright.js"
+    },
+    "./schema/*": "./dist/schema/*"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node dist/scripts/generate-schemas.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "sharp": "0.35.3",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.60.0 <2"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0",
+    "@types/node": "^24.0.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

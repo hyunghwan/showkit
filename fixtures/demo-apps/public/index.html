@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Product insights</title>
+    <link
+      rel="icon"
+      href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="Siftline home">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </span>
+          <span class="brand-name">
+            <strong>Siftline</strong>
+            <small>Product signals</small>
+          </span>
+        </a>
+
+        <nav class="primary-nav" aria-label="Product insights">
+          <button type="button" class="nav-item active" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">⌁</span>
+            <span>Overview</span>
+          </button>
+          <button type="button" class="nav-item">
+            <span class="nav-icon" aria-hidden="true">≋</span>
+            <span>Sessions</span>
+          </button>
+          <button type="button" class="nav-item">
+            <span class="nav-icon" aria-hidden="true">◇</span>
+            <span>Journeys</span>
+          </button>
+          <button type="button" class="nav-item">
+            <span class="nav-icon" aria-hidden="true">◎</span>
+            <span>Goals</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-section">
+          <p class="sidebar-label">Saved views</p>
+          <button type="button" class="saved-view">
+            <span class="view-dot mint" aria-hidden="true"></span>
+            <span>Activation watch</span>
+          </button>
+          <button type="button" class="saved-view">
+            <span class="view-dot coral" aria-hidden="true"></span>
+            <span>Checkout friction</span>
+          </button>
+        </div>
+
+        <div class="sidebar-footer">
+          <span class="avatar-shell">
+            <img
+              class="avatar"
+              src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+              alt="Demo operator"
+              width="34"
+              height="34"
+            >
+            <span aria-hidden="true">DO</span>
+          </span>
+          <span class="profile-copy">
+            <strong>Demo operator</strong>
+            <small>Cinder workspace</small>
+          </span>
+          <span class="profile-more" aria-hidden="true">•••</span>
+        </div>
+      </aside>
+
+      <main class="main-shell">
+        <header class="topbar">
+          <button type="button" class="project-switcher" aria-label="Open project menu">
+            <span class="project-glyph" aria-hidden="true">C</span>
+            <span>
+              <small>Project</small>
+              <strong>Cinder web</strong>
+            </span>
+            <span class="chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="topbar-context">
+            <span class="live-indicator" aria-hidden="true"></span>
+            <span>Collecting signals</span>
+            <span class="topbar-divider" aria-hidden="true"></span>
+            <button type="button" class="icon-button" aria-label="Open help">?</button>
+            <button type="button" class="icon-button" aria-label="Open notifications">○</button>
+          </div>
+        </header>
+
+        <section class="workspace" id="workspace" aria-live="polite"></section>
+      </main>
+    </div>
+    <script src="./app.js"></script>
+  </body>
+</html>

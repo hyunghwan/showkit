@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  publish:
+    name: Verify, attest, and publish
+    if: github.repository == 'hyunghwan/showkit' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Match package version to the tag
+        run: |
+          node --input-type=module -e '
+            import packageJson from "./packages/cli/package.json" with { type: "json" };
+            const tagVersion = process.env.GITHUB_REF_NAME.replace(/^v/, "");
+            if (packageJson.version !== tagVersion) {
+              throw new Error(`Tag ${tagVersion} does not match package ${packageJson.version}.`);
+            }
+          '
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit:prod
+      - run: pnpm docs:check
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm check
+      - run: pnpm build
+      - run: pnpm test:unit
+      - run: pnpm test:e2e
+      - run: pnpm test:performance
+      - run: pnpm test:release:browsers
+      - run: pnpm test:browser-adapter
+      - run: pnpm test:skills
+      - run: pnpm test:skills:global
+      - run: pnpm package:smoke
+      - run: mkdir -p release
+      - run: npm pack ./packages/cli --pack-destination release
+      - name: Run the rollback drill
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$version" = "0.1.0" ]; then
+            pnpm release:rollback -- --bootstrap --bad "$version" --fixed 0.1.1
+          else
+            prior=""
+            for tag in $(git tag --merged HEAD --sort=-version:refname --list "v*"); do
+              candidate="${tag#v}"
+              if [ "$candidate" != "$version" ]; then
+                prior="$candidate"
+                break
+              fi
+            done
+            if [ -z "$prior" ]; then
+              echo "No prior release tag is available for the rollback drill." >&2
+              exit 1
+            fi
+            pnpm release:rollback -- --bad "$version" --prior "$prior"
+          fi
+      - name: Generate release metadata
+        run: SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) pnpm release:metadata
+      - name: Verify release checksums
+        working-directory: release
+        run: sha256sum --check checksums.txt
+      - name: Attest the npm tarball and its SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: release/showkit-cli-*.tgz
+          sbom-path: release/sbom.spdx.json
+      - name: Publish with bootstrap token or trusted publishing
+        working-directory: packages/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          package_name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          tarballs=(../../release/showkit-cli-*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ] || [ ! -f "${tarballs[0]}" ]; then
+            echo "Expected exactly one packed ShowKit tarball." >&2
+            exit 1
+          fi
+          tarball="${tarballs[0]}"
+          local_integrity=$(node --input-type=module -e '
+            import { createHash } from "node:crypto";
+            import { readFileSync } from "node:fs";
+            const digest = createHash("sha512")
+              .update(readFileSync(process.argv[1]))
+              .digest("base64");
+            process.stdout.write(`sha512-${digest}`);
+          ' "$tarball")
+
+          set +e
+          registry_result=$(npm view "$package_name@$version" dist.integrity --json 2>&1)
+          registry_status=$?
+          set -e
+
+          if [ "$registry_status" -eq 0 ]; then
+            registry_integrity=$(node --input-type=module -e '
+              const value = JSON.parse(process.argv[1]);
+              if (typeof value !== "string") process.exit(1);
+              process.stdout.write(value);
+            ' "$registry_result")
+            if [ "$local_integrity" != "$registry_integrity" ]; then
+              echo "The published npm version has different tarball integrity." >&2
+              exit 1
+            fi
+            echo "$package_name@$version is already published with matching integrity."
+          else
+            if [[ "$registry_result" != *"E404"* ]]; then
+              printf '%s\n' "$registry_result" >&2
+              exit "$registry_status"
+            fi
+            if [ -z "$NODE_AUTH_TOKEN" ]; then
+              unset NODE_AUTH_TOKEN
+            fi
+            npm publish --provenance --access public
+          fi
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --verify-tag \
+              --generate-notes \
+              --title "ShowKit ${GITHUB_REF_NAME}"
+          fi

@@ -1,0 +1,2864 @@
+import { expect, test } from "@playwright/test";
+import {
+  DEFAULT_SECRET_PATTERN_SOURCES,
+  extractSceneKernel
+} from "@showkit/cli";
+import { createHash } from "node:crypto";
+import {
+  collectRenderedIconCandidatesInPage,
+  createCodexBrowserAdapter
+} from "../skills/showkit/scripts/capture-browser-session.mjs";
+
+const sessionCanary = "SHOWKIT_SECRET_CANARY_BROWSER_STORAGE_8C42";
+const queryCanary = "URL_QUERY_SECRET_BROWSER_5A17";
+
+const baseOptions = {
+  targetPresent: true,
+  scanOnly: false,
+  stepIndex: 0,
+  secretPatternSources: [...DEFAULT_SECRET_PATTERN_SOURCES],
+  sensitiveSelectors: [] as string[],
+  remoteAssetPolicy: "decorative-remove" as const,
+  targetErrorCode: "BrowserTargetAmbiguous" as const
+};
+
+test.use({
+  storageState: {
+    cookies: [
+      {
+        name: "session",
+        value: sessionCanary,
+        domain: "127.0.0.1",
+        path: "/",
+        expires: -1,
+        httpOnly: true,
+        secure: false,
+        sameSite: "Lax"
+      }
+    ],
+    origins: [
+      {
+        origin: "http://127.0.0.1:4173",
+        localStorage: [
+          {
+            name: "session",
+            value: sessionCanary
+          }
+        ]
+      }
+    ]
+  }
+});
+
+test("extracts 5 signed-in HTML steps without reading session values or URL secrets", async ({
+  page
+}) => {
+  await page.goto(
+    `http://127.0.0.1:4173/signed-in/index.html?token=${queryCanary}#private`
+  );
+  const names = ["Overview", "Reports", "Filters", "Activity", "Settings"];
+  const results: unknown[] = [];
+
+  for (const [stepIndex, name] of names.entries()) {
+    const target = page.getByRole("button", { name, exact: true });
+    await expect(target).toHaveCount(1);
+    const result = await target.evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: `sk-step-${stepIndex + 1}`,
+      stepIndex
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.scanOnly) continue;
+    expect(result.target).toEqual(
+      expect.objectContaining({
+        role: "button",
+        name
+      })
+    );
+    expect(result.html).not.toContain(sessionCanary);
+    expect(result.html).not.toContain(queryCanary);
+    expect(result.html).not.toMatch(/<script|<form|https?:\/\//i);
+    results.push(result);
+    await target.click();
+  }
+
+  expect(results).toHaveLength(5);
+  await expect(page.getByRole("heading", { name: "Settings is ready" })).toBeVisible();
+});
+
+test("does not mutate the live DOM while deriving a scene", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/signed-in/index.html");
+  await page.evaluate(() => {
+    const state = {
+      count: 0,
+      observer: new MutationObserver((records) => {
+        state.count += records.filter((record) => record.type === "attributes").length;
+      })
+    };
+    state.observer.observe(document.documentElement, {
+      attributes: true,
+      subtree: true
+    });
+    Object.defineProperty(globalThis, "__showkitMutationState", {
+      value: state,
+      configurable: true
+    });
+  });
+
+  const result = await page
+    .getByRole("button", { name: "Overview", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-overview"
+    });
+  expect(result.ok).toBe(true);
+  const mutationCount = await page.evaluate(() => {
+    const state = (
+      globalThis as typeof globalThis & {
+        __showkitMutationState: {
+          count: number;
+          observer: MutationObserver;
+        };
+      }
+    ).__showkitMutationState;
+    state.observer.disconnect();
+    return state.count;
+  });
+  expect(mutationCount).toBe(0);
+});
+
+test("rejects full-scene CSS and SVG image surfaces without a raster fallback", async ({
+  page
+}) => {
+  const raster =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  for (const markup of [
+    `
+      <style>
+        html, body, main { width: 100%; height: 100%; margin: 0; }
+        main { background: url("${raster}") center / cover no-repeat; }
+        button { position: fixed; z-index: 2; top: 20px; left: 20px; }
+      </style>
+      <main><button type="button">Continue</button></main>
+    `,
+    `
+      <style>
+        html, body, main, svg { width: 100%; height: 100%; margin: 0; }
+        svg { position: fixed; inset: 0; }
+        button { position: fixed; z-index: 2; top: 20px; left: 20px; }
+      </style>
+      <main>
+        <svg aria-label="Captured product image">
+          <image href="${raster}" width="100%" height="100%"></image>
+        </svg>
+        <button type="button">Continue</button>
+      </main>
+    `,
+    `
+      <style>
+        html, body, main { width: 100%; height: 100%; margin: 0; }
+        main::before {
+          background: url("${raster}") center / cover no-repeat;
+          content: "";
+          height: 100vh;
+          inset: 0;
+          position: fixed;
+          width: 100vw;
+        }
+        button { position: fixed; z-index: 2; top: 20px; left: 20px; }
+      </style>
+      <main><button type="button">Continue</button></main>
+    `
+  ]) {
+    await page.setContent(markup);
+    const result = await page
+      .getByRole("button", { name: "Continue", exact: true })
+      .evaluate(extractSceneKernel, {
+        ...baseOptions,
+        anchorId: "sk-continue"
+      });
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        blocker: expect.objectContaining({
+          code: "UnsupportedSurface",
+          category: "full-scene-raster"
+        })
+      })
+    );
+  }
+});
+
+test("keeps a full-viewport CSS gradient as semantic styling", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      html, body, main { width: 100%; height: 100%; margin: 0; }
+      main { background: linear-gradient(135deg, #ffffff, #e8eefc); }
+    </style>
+    <main><button type="button">Continue</button></main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue"
+    });
+  expect(result.ok).toBe(true);
+});
+
+test("builds evidence only from captured visible semantic nodes", async ({
+  page
+}) => {
+  const hiddenCanary = "SHOWKIT_HIDDEN_EVIDENCE_CANARY_3D91";
+  await page.setContent(`
+    <main>
+      <button type="button">Open assurance</button>
+      <p hidden>${hiddenCanary}</p>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Open assurance", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-open-assurance"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.evidenceTexts).toEqual(["Open assurance"]);
+  expect(JSON.stringify(result)).not.toContain(hiddenCanary);
+});
+
+test("resolves every browser-session target strategy in page scope", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <a href="/docs">Open docs</a>
+      <button type="button" data-testid="filters-trigger">Open filters</button>
+      <button type="button" aria-label="Account menu"></button>
+      <label for="project-query">Project query</label>
+      <input id="project-query" type="search">
+      <label for="zoom-level">Zoom level</label>
+      <input id="zoom-level" type="range">
+      <a href="#install" title="Install CLI">Install CLI</a>
+      <button type="button"><span>Review activity</span></button>
+      <button type="button">
+        <span hidden>SHOWKIT_HOSTILE_HIDDEN_TARGET</span>
+        <span>Open safe target</span>
+      </button>
+      <button type="button">
+        <span aria-hidden="true">+</span>
+        <span>Add filter</span>
+      </button>
+      <button type="button">
+        <span>Date</span>
+        <span>Add dates</span>
+      </button>
+      <span id="hidden-option-label" aria-hidden="true">
+        <img alt="Full Pink">
+        <span hidden>with savings</span>
+        <span>$31.99</span>
+      </span>
+      <input type="submit" role="radio" aria-labelledby="hidden-option-label">
+    </main>
+  `);
+  const targets = [
+    {
+      scopeTarget: {
+        strategy: "href" as const,
+        path: "/docs",
+        name: "Open docs"
+      },
+      expectedName: "Open docs"
+    },
+    {
+      scopeTarget: {
+        strategy: "test-id" as const,
+        testId: "filters-trigger",
+        name: "Open filters"
+      },
+      expectedName: "Open filters"
+    },
+    {
+      scopeTarget: {
+        strategy: "label" as const,
+        name: "Account menu"
+      },
+      expectedName: "Account menu"
+    },
+    {
+      scopeTarget: {
+        strategy: "label" as const,
+        name: "Project query"
+      },
+      expectedName: "Project query"
+    },
+    {
+      scopeTarget: {
+        strategy: "role" as const,
+        role: "slider",
+        name: "Zoom level"
+      },
+      expectedName: "Zoom level"
+    },
+    {
+      scopeTarget: {
+        strategy: "title" as const,
+        name: "Install CLI"
+      },
+      expectedName: "Install CLI"
+    },
+    {
+      scopeTarget: {
+        strategy: "visible-text" as const,
+        name: "Review activity"
+      },
+      expectedName: "Review activity"
+    },
+    {
+      scopeTarget: {
+        strategy: "role" as const,
+        role: "button",
+        name: "Open safe target"
+      },
+      expectedName: "Open safe target"
+    },
+    {
+      scopeTarget: {
+        strategy: "role" as const,
+        role: "button",
+        name: "Add filter"
+      },
+      expectedName: "Add filter"
+    },
+    {
+      scopeTarget: {
+        strategy: "role" as const,
+        role: "button",
+        name: "Date Add dates"
+      },
+      expectedName: "Date Add dates"
+    },
+    {
+      scopeTarget: {
+        strategy: "role" as const,
+        role: "radio",
+        name: "Full Pink with savings $31.99"
+      },
+      expectedName: "Full Pink with savings $31.99"
+    }
+  ];
+
+  for (const [index, target] of targets.entries()) {
+    const result = await page.evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: `sk-browser-target-${index + 1}`,
+      scopeTarget: target.scopeTarget
+    });
+    expect(
+      result.ok,
+      JSON.stringify({ index, result })
+    ).toBe(true);
+    if (!result.ok || result.scanOnly) continue;
+    expect(result.target?.name).toBe(target.expectedName);
+  }
+});
+
+test("resolves the viewport target when an offscreen duplicate has the same role and name", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="min-height:1600px">
+      <a href="#details">Details</a>
+      <a href="#details" style="position:absolute;top:1200px">Details</a>
+    </main>
+  `);
+  const result = await page.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-details",
+    scopeTarget: {
+      strategy: "role",
+      role: "link",
+      name: "Details"
+    }
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.target).toEqual(
+    expect.objectContaining({
+      role: "link",
+      name: "Details",
+      bounds: expect.objectContaining({
+        y: expect.any(Number)
+      })
+    })
+  );
+  expect(result.target?.bounds.y).toBeLessThan(0.2);
+});
+
+test("detects a portal state appended after a large application tree", async ({
+  page
+}) => {
+  const filler = Array.from(
+    { length: 2_100 },
+    (_, index) => `<span>Application item ${index + 1}</span>`
+  ).join("");
+  await page.setContent(`
+    <button type="button" id="priority">Priority</button>
+    <main>${filler}</main>
+    <label><input type="checkbox">Keep composer open</label>
+    <script>
+      document.querySelector("#priority").addEventListener("click", () => {
+        const portal = document.createElement("div");
+        portal.setAttribute("role", "dialog");
+        portal.textContent = "Priority options";
+        document.body.append(portal);
+      });
+    </script>
+  `);
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        domSnapshot: () => Promise.resolve(""),
+        evaluate: (pageFunction: unknown, argument?: unknown) =>
+          page.evaluate(pageFunction as never, argument),
+        waitForTimeout: (milliseconds: number) => page.waitForTimeout(milliseconds),
+        locator: (selector: string) => page.locator(selector),
+        getByRole: (role: string, options: { name: string; exact: boolean }) =>
+          page.getByRole(role as never, options)
+      },
+      url: () => Promise.resolve(page.url())
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+
+  await adapter.performAction(
+    {
+      strategy: "role",
+      role: "button",
+      name: "Priority"
+    },
+    "disclose"
+  );
+
+  await expect(page.getByRole("dialog")).toHaveText("Priority options");
+
+  await adapter.performAction(
+    {
+      strategy: "role",
+      role: "checkbox",
+      name: "Keep composer open"
+    },
+    "toggle"
+  );
+
+  await expect(
+    page.getByRole("checkbox", { name: "Keep composer open" })
+  ).toBeChecked();
+});
+
+test("preserves zero-height flex spacers that affect sibling geometry", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <div style="display:flex;align-items:center">
+        <span>Contact</span>
+        <span aria-hidden="true" style="display:block;height:0;width:12px"></span>
+        <span>Docs</span>
+      </div>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.nodesJson).toContain('"height":"0px"');
+  expect(result.nodesJson).toContain('"width":"12px"');
+});
+
+test("keeps non-payment long numeric public identifiers", async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <a href="/listing/home/1234567890123456789">View public listing</a>
+      <button type="button">Filter homes</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Filter homes", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-filter-homes"
+    });
+  expect(result.ok).toBe(true);
+});
+
+test("blocks Luhn-valid payment card numbers", async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <p>Payment card 4111 1111 1111 1111</p>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue"
+    });
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "SensitiveDataDetected"
+      })
+    })
+  );
+});
+
+test("does not treat asset names or SVG geometry as private text", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <div data-image-name="listing-card@2x.png"></div>
+      <svg aria-hidden="true">
+        <path d="4111111111111111"></path>
+      </svg>
+      <button type="button">Filter homes</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Filter homes", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-filter-homes"
+    });
+  expect(result.ok).toBe(true);
+});
+
+test("drops nonvisual unsupported surfaces but blocks visible ones", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <h1>Compose a message</h1>
+      <button type="button">Compose</button>
+      <iframe aria-hidden="true" style="position:fixed;top:-1000px;width:100px;height:100px"></iframe>
+      <iframe style="display:none"></iframe>
+    </main>
+  `);
+  const target = page.getByRole("button", { name: "Compose", exact: true });
+  const safeResult = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-compose"
+  });
+  expect(safeResult.ok).toBe(true);
+  if (safeResult.ok && !safeResult.scanOnly) {
+    expect(safeResult.excludedSurfaces).toContain(
+      "nonvisual-unsupported-surfaces"
+    );
+    expect(safeResult.html).not.toContain("<iframe");
+    expect(safeResult.html).toContain("Compose");
+  }
+
+  await page.locator("main").evaluate((main) => {
+    const frame = main.ownerDocument.createElement("iframe");
+    frame.title = "Visible embedded content";
+    frame.style.cssText = "display:block;width:240px;height:120px";
+    main.append(frame);
+  });
+  const blockedResult = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-compose"
+  });
+  expect(blockedResult).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "iframe"
+      })
+    })
+  );
+});
+
+test("preserves transparent custom containers and text-only open shadow roots", async ({
+  page
+}) => {
+  await page.setContent(`
+    <capture-shell style="display:block;padding:12px">
+      <main>
+        <h1>Capture readiness</h1>
+        <status-label style="display:inline"></status-label>
+        <button type="button">Review capture</button>
+      </main>
+    </capture-shell>
+  `);
+  await page.locator("status-label").evaluate((host) => {
+    const root = host.attachShadow({ mode: "open" });
+    const label = host.ownerDocument.createElement("span");
+    label.textContent = "Updated recently";
+    root.append(label);
+  });
+
+  const target = page.getByRole("button", {
+    name: "Review capture",
+    exact: true
+  });
+  const result = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-review-capture"
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain("Capture readiness");
+  expect(result.html).toContain("Updated recently");
+  expect(result.html).not.toContain("<capture-shell");
+  expect(result.html).not.toContain("<status-label");
+  expect(result.excludedSurfaces).toContain("transparent-custom-elements");
+  expect(result.excludedSurfaces).toContain("text-only-open-shadow-roots");
+
+  const redacted = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-review-capture",
+    sensitiveTextRedaction: {
+      mode: "text-only",
+      consent: "confirmed",
+      selectors: ["body"]
+    }
+  });
+  expect(redacted.ok).toBe(true);
+  if (!redacted.ok || redacted.scanOnly) return;
+  expect(redacted.html).not.toContain("Updated recently");
+  expect(redacted.sensitiveText?.redactedTextNodeCount).toBeGreaterThan(0);
+});
+
+test("blocks interactive content inside an open shadow root", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <h1>Capture readiness</h1>
+      <interactive-shell style="display:block;width:200px;height:40px"></interactive-shell>
+      <button type="button">Review capture</button>
+    </main>
+  `);
+  await page.locator("interactive-shell").evaluate((host) => {
+    const root = host.attachShadow({ mode: "open" });
+    const action = host.ownerDocument.createElement("button");
+    action.textContent = "Shadow action";
+    root.append(action);
+  });
+
+  const result = await page
+    .getByRole("button", { name: "Review capture", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-review-capture"
+    });
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "shadow-root"
+      })
+    })
+  );
+});
+
+test("keeps implicit form-control semantics for exact hotspots", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <label for="subject">Subject</label>
+      <input id="subject" aria-label="Subject">
+    </main>
+  `);
+  const result = await page
+    .getByRole("textbox", { name: "Subject", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-subject"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.target).toEqual(
+    expect.objectContaining({
+      role: "textbox",
+      name: "Subject"
+    })
+  );
+});
+
+test("marks only the exact role target when a same-size wrapper shares its bounds", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <div style="width: 84px; height: 42px">
+        <div role="button" tabindex="0" style="width: 84px; height: 42px">Price</div>
+      </div>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Price", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-price"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(
+    result.html.match(/data-showkit-anchor="sk-price"/g) ?? []
+  ).toHaveLength(1);
+});
+
+test("transfers a deep semantic tree as JSON without flattening it", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main><section><article><div><div><div><button>Compose</button></div></div></div></article></section></main>
+  `);
+  const target = page.getByRole("button", { name: "Compose", exact: true });
+  const result = await target.evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-compose",
+      nodeMode: "json",
+      transferChunkSize: 64
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.nodes).toEqual([]);
+  expect(result.transfer).toEqual(
+    expect.objectContaining({
+      mode: "chunked-json",
+      offset: 0,
+      chunkSize: 64
+    })
+  );
+  let html = result.html;
+  let nodesJson = result.nodesJson ?? "";
+  const totalLength = Math.max(
+    result.transfer?.htmlLength ?? 0,
+    result.transfer?.nodesJsonLength ?? 0
+  );
+  for (let offset = 64; offset < totalLength; offset += 64) {
+    const segment = await target.evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-compose",
+      nodeMode: "json",
+      transferOffset: offset,
+      transferChunkSize: 64
+    });
+    expect(segment.ok).toBe(true);
+    if (!segment.ok || segment.scanOnly) continue;
+    html += segment.html;
+    nodesJson += segment.nodesJson ?? "";
+  }
+  expect(html).toContain("Compose");
+  const transferred = JSON.parse(nodesJson);
+  expect(transferred).toHaveLength(1);
+  const serialized = JSON.stringify(transferred);
+  expect(serialized).toContain('"data-showkit-anchor":"sk-compose"');
+  expect(serialized).toMatch(
+    /"tag":"main".*"tag":"section".*"tag":"article".*"tag":"button"/
+  );
+});
+
+test("removes captured margins from positioned nodes to prevent coordinate drift", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="position:relative;width:900px;height:120px">
+      <section style="position:absolute;left:100px;top:20px;width:700px;height:80px">
+        <button
+          type="button"
+          style="display:block;margin-left:68px;width:160px;height:40px"
+        >
+          Compose
+        </button>
+      </section>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Compose", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-compose",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]");
+  const findButton = (
+    node: {
+      type: string;
+      tag?: string;
+      styles?: Record<string, string>;
+      children?: Array<{
+        type: string;
+        tag?: string;
+        styles?: Record<string, string>;
+        children?: unknown[];
+      }>;
+    }
+  ): typeof node | undefined => {
+    if (node.type === "element" && node.tag === "button") return node;
+    for (const child of node.children ?? []) {
+      const match = findButton(child);
+      if (match) return match;
+    }
+    return undefined;
+  };
+  const button = findButton(transferred[0]);
+  expect(button).toBeDefined();
+  expect(button?.styles).toEqual(
+    expect.objectContaining({
+      left: "68px",
+      "margin-bottom": "0px",
+      "margin-left": "0px",
+      "margin-right": "0px",
+      "margin-top": "0px"
+    })
+  );
+  expect(button?.styles?.margin).toBeUndefined();
+});
+
+test("positions visible virtual-list content independently of its live scroll offset", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <div
+        id="virtual-scroll"
+        style="height:120px;overflow-y:auto;position:relative;width:500px"
+      >
+        <div
+          style="
+            height:800px;
+            position:relative;
+            transform:matrix(1, 0, 0, 1, 0, 0);
+            transform-origin:0 0
+          "
+        >
+          <button
+            id="visible-row"
+            style="height:40px;left:20px;position:absolute;top:680px;width:140px"
+            type="button"
+          >
+            Visible row
+          </button>
+        </div>
+      </div>
+    </main>
+  `);
+  await page.locator("#virtual-scroll").evaluate((element) => {
+    element.scrollTop = 640;
+  });
+  const targetTop = await page
+    .getByRole("button", { name: "Visible row", exact: true })
+    .evaluate((element) => element.getBoundingClientRect().top);
+  const result = await page
+    .getByRole("button", { name: "Visible row", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-visible-row",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const [root] = JSON.parse(result.nodesJson ?? "[]") as Array<{
+    type: "element";
+    styles: Record<string, string>;
+    attributes: Record<string, string>;
+    children: unknown[];
+  }>;
+  const anchoredTop = (
+    node: {
+      type: string;
+      styles?: Record<string, string>;
+      attributes?: Record<string, string>;
+      children?: unknown[];
+    },
+    accumulatedTop = 0
+  ): number | undefined => {
+    const top =
+      accumulatedTop + Number.parseFloat(node.styles?.top ?? "0");
+    if (node.attributes?.["data-showkit-anchor"] === "sk-visible-row") {
+      return top;
+    }
+    for (const child of node.children ?? []) {
+      if (
+        typeof child !== "object" ||
+        child === null ||
+        !("type" in child)
+      ) {
+        continue;
+      }
+      const match = anchoredTop(
+        child as {
+          type: string;
+          styles?: Record<string, string>;
+          attributes?: Record<string, string>;
+          children?: unknown[];
+        },
+        top
+      );
+      if (match !== undefined) return match;
+    }
+    return undefined;
+  };
+  expect(anchoredTop(root!)).toBeCloseTo(targetTop, 0);
+});
+
+test("preserves named grid placement when replaying a captured scene", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main
+      style="
+        display:grid;
+        grid-template-columns:
+          [full-start] 120px
+          [content-start] 360px
+          [content-end] 120px
+          [full-end];
+        grid-template-rows:40px 80px;
+        height:120px;
+        width:600px
+      "
+    >
+      <div
+        style="
+          grid-column:full-start / full-end;
+          grid-row:1;
+          height:40px
+        "
+      >
+        Full-width header
+      </div>
+      <button
+        id="grid-target"
+        style="
+          grid-column:content-start / content-end;
+          grid-row:2;
+          height:80px;
+          width:360px
+        "
+        type="button"
+      >
+        Grid target
+      </button>
+    </main>
+  `);
+  const target = page.getByRole("button", {
+    name: "Grid target",
+    exact: true
+  });
+  const sourceBounds = await target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    const rootRectangle = document.body.getBoundingClientRect();
+    return {
+      x: rectangle.x - rootRectangle.x,
+      y: rectangle.y - rootRectangle.y,
+      width: rectangle.width,
+      height: rectangle.height
+    };
+  });
+  const result = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-grid-target"
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain("grid-column-start:content-start");
+  expect(result.html).toContain("grid-column-end:content-end");
+  expect(result.html).toContain("grid-row-start:2");
+
+  await page.setContent(result.html);
+  const replayBounds = await page
+    .locator('[data-showkit-anchor="sk-grid-target"]')
+    .evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      const root = element.closest("[data-showkit-scene-root]");
+      if (!(root instanceof HTMLElement)) {
+        throw new Error("Expected captured scene root.");
+      }
+      const rootRectangle = root.getBoundingClientRect();
+      return {
+        x: rectangle.x - rootRectangle.x,
+        y: rectangle.y - rootRectangle.y,
+        width: rectangle.width,
+        height: rectangle.height
+      };
+    });
+  expect(replayBounds).toEqual(sourceBounds);
+});
+
+test("removes named grid areas after fixing a JSON scene to absolute coordinates", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main
+      id="area-grid"
+      style="
+        display:grid;
+        grid-template-areas:'scroller';
+        grid-template-columns:600px;
+        grid-template-rows:120px;
+        height:120px;
+        width:600px
+      "
+    >
+      <button
+        id="area-target"
+        style="
+          grid-area:scroller;
+          height:120px;
+          width:600px
+        "
+        type="button"
+      >
+        Area target
+      </button>
+    </main>
+  `);
+  const target = page.getByRole("button", {
+    name: "Area target",
+    exact: true
+  });
+  const sourceBounds = await target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    const grid = document.querySelector("#area-grid");
+    if (!(grid instanceof HTMLElement)) {
+      throw new Error("Expected source area grid.");
+    }
+    const gridComputed = getComputedStyle(grid);
+    const targetComputed = getComputedStyle(element);
+    return {
+      bounds: {
+        x: rectangle.x,
+        y: rectangle.y,
+        width: rectangle.width,
+        height: rectangle.height
+      },
+      gridTemplateColumns: gridComputed.gridTemplateColumns,
+      columnStart: targetComputed.gridColumnStart,
+      rowStart: targetComputed.gridRowStart
+    };
+  });
+  expect(sourceBounds.gridTemplateColumns).toBe("600px");
+  expect(sourceBounds.columnStart).toBe("scroller");
+  expect(sourceBounds.rowStart).toBe("scroller");
+
+  const result = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-area-target",
+    nodeMode: "json"
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).not.toContain("grid-column-start:scroller");
+  expect(result.html).not.toContain("grid-column-end:scroller");
+  expect(result.html).not.toContain("grid-row-start:scroller");
+  expect(result.html).not.toContain("grid-row-end:scroller");
+
+  await page.setContent(result.html);
+  const replayBounds = await page
+    .locator('[data-showkit-anchor="sk-area-target"]')
+    .evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      const root = element.closest("[data-showkit-scene-root]");
+      if (!(root instanceof HTMLElement)) {
+        throw new Error("Expected captured scene root.");
+      }
+      const rootRectangle = root.getBoundingClientRect();
+      return {
+        x: rectangle.x - rootRectangle.x,
+        y: rectangle.y - rootRectangle.y,
+        width: rectangle.width,
+        height: rectangle.height
+      };
+    });
+  expect(replayBounds).toEqual(sourceBounds.bounds);
+});
+
+test("preserves named grid areas inside transformed coordinate spaces", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>body { margin: 0 }</style>
+    <section
+      style="
+        height:120px;
+        transform:matrix(1, 0, 0, 1, 0, 0);
+        transform-origin:0 0;
+        width:600px
+      "
+    >
+      <main
+        style="
+          display:grid;
+          grid-template-areas:'scroller';
+          grid-template-columns:600px;
+          grid-template-rows:120px;
+          height:120px;
+          width:600px
+        "
+      >
+        <button
+          style="
+            grid-area:scroller;
+            height:120px;
+            width:600px
+          "
+          type="button"
+        >
+          Transformed area target
+        </button>
+      </main>
+    </section>
+  `);
+  const target = page.getByRole("button", {
+    name: "Transformed area target",
+    exact: true
+  });
+  const sourceBounds = await target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    return {
+      x: rectangle.x,
+      y: rectangle.y,
+      width: rectangle.width,
+      height: rectangle.height
+    };
+  });
+  const result = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-transformed-area-target",
+    nodeMode: "json"
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain(
+    "grid-template-areas:&quot;scroller&quot;"
+  );
+
+  await page.setContent(result.html);
+  const replayBounds = await page
+    .locator('[data-showkit-anchor="sk-transformed-area-target"]')
+    .evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      const root = element.closest("[data-showkit-scene-root]");
+      if (!(root instanceof HTMLElement)) {
+        throw new Error("Expected captured scene root.");
+      }
+      const rootRectangle = root.getBoundingClientRect();
+      return {
+        x: rectangle.x - rootRectangle.x,
+        y: rectangle.y - rootRectangle.y,
+        width: rectangle.width,
+        height: rectangle.height
+      };
+    });
+  expect(replayBounds).toEqual(sourceBounds);
+});
+
+test("positions text fragments under a no-op transform", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>body { margin: 0 }</style>
+    <section
+      style="
+        font-size:0;
+        height:60px;
+        transform:matrix(1, 0, 0, 1, 0, 0);
+        transform-origin:110px 30px;
+        width:220px
+      "
+    >
+      <span style="font-size:14px">Fee</span><span style="font-size:14px"> included</span>
+      <button
+        style="height:24px;left:0;position:absolute;top:30px;width:80px"
+        type="button"
+      >
+        Continue
+      </button>
+    </section>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-no-op-transform",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const [root] = JSON.parse(result.nodesJson ?? "[]") as Array<{
+    type: "element";
+    attributes: Record<string, string>;
+    styles: Record<string, string>;
+    children: unknown[];
+  }>;
+  const textFragments: Array<Record<string, string>> = [];
+  const visit = (node: unknown): void => {
+    if (typeof node !== "object" || node === null || !("type" in node)) {
+      return;
+    }
+    const candidate = node as {
+      type: string;
+      attributes?: Record<string, string>;
+      styles?: Record<string, string>;
+      children?: unknown[];
+    };
+    if (candidate.attributes?.["data-showkit-text"] !== undefined) {
+      textFragments.push(candidate.styles ?? {});
+    }
+    for (const child of candidate.children ?? []) visit(child);
+  };
+  visit(root);
+  expect(textFragments.length).toBeGreaterThanOrEqual(3);
+  expect(textFragments.every((styles) => styles.position === "absolute")).toBe(
+    true
+  );
+});
+
+test("preserves an empty generated grid item that controls auto-placement", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      #layout-grid {
+        display: grid;
+        grid-template-columns:
+          [full-start] 100px
+          [content-start] 300px
+          [content-end] 100px
+          [full-end];
+        grid-template-rows: 0px 80px 40px;
+        height: 120px;
+        width: 500px;
+      }
+      #layout-ghost {
+        display: contents;
+      }
+      #layout-ghost::after {
+        content: "" / "";
+        display: block;
+        grid-column: full;
+        height: 0;
+        width: 500px;
+      }
+      #layout-title {
+        grid-column: content;
+        height: 80px;
+      }
+      #layout-target {
+        grid-column: content;
+        height: 40px;
+        width: 300px;
+      }
+    </style>
+    <main id="layout-grid">
+      <div id="layout-ghost"></div>
+      <h1 id="layout-title">Layout title</h1>
+      <button id="layout-target" type="button">Layout target</button>
+    </main>
+  `);
+  const target = page.getByRole("button", {
+    name: "Layout target",
+    exact: true
+  });
+  const sourceTop = await target.evaluate((element) => {
+    const grid = document.querySelector("#layout-grid");
+    if (!(grid instanceof HTMLElement)) {
+      throw new Error("Expected source grid.");
+    }
+    return (
+      element.getBoundingClientRect().top -
+      grid.getBoundingClientRect().top
+    );
+  });
+  expect(sourceTop).toBe(80);
+  const result = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-layout-target"
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain('data-showkit-pseudo="after"');
+  expect(result.html).not.toContain('"" / ""');
+
+  await page.setContent(result.html);
+  const replayLayout = await page
+    .locator('[data-showkit-anchor="sk-layout-target"]')
+    .evaluate((element) => {
+      let grid = element.parentElement;
+      while (
+        grid &&
+        !["grid", "inline-grid"].includes(getComputedStyle(grid).display)
+      ) {
+        grid = grid.parentElement;
+      }
+      if (!(grid instanceof HTMLElement)) {
+        throw new Error("Expected replay grid.");
+      }
+      return {
+        top:
+          element.getBoundingClientRect().top -
+          grid.getBoundingClientRect().top,
+        children: Array.from(grid.children).map((child) => {
+          const computed = getComputedStyle(child);
+          const rectangle = child.getBoundingClientRect();
+          return {
+            display: computed.display,
+            columnStart: computed.gridColumnStart,
+            columnEnd: computed.gridColumnEnd,
+            rowStart: computed.gridRowStart,
+            rowEnd: computed.gridRowEnd,
+            top: rectangle.top - grid.getBoundingClientRect().top,
+            width: rectangle.width,
+            height: rectangle.height,
+            pseudoCount: child.querySelectorAll(
+              "[data-showkit-pseudo]"
+            ).length
+          };
+        })
+      };
+    });
+  expect(replayLayout).toEqual({
+    top: sourceTop,
+    children: expect.any(Array)
+  });
+});
+
+test("transfers one immutable positioned scene as bounded compressed JSON", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font:5px/5px Arial, sans-serif">
+      ${Array.from(
+        { length: 120 },
+        (_, index) =>
+          `<p style="margin:0">Repeated product row ${index + 1}</p>`
+      ).join("")}
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json",
+      transferEncoding: "lzss-json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.transfer?.mode).toBe("lzss-json");
+  expect(result.html).toBe("");
+  expect(result.nodes).toEqual([]);
+  expect(result.nodesJson?.length).toBeLessThanOrEqual(48_000);
+  expect(result.transfer?.compressedLength).toBeGreaterThan(0);
+  expect(result.transfer?.nodesJsonLength).toBeGreaterThan(
+    result.nodesJson?.length ?? 0
+  );
+
+  const chunkedFallback = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json",
+      transferEncoding: "lzss-json",
+      transferChunkSize: 64
+    });
+  expect(chunkedFallback.ok).toBe(true);
+  if (!chunkedFallback.ok || chunkedFallback.scanOnly) return;
+  expect(chunkedFallback.transfer).toEqual(
+    expect.objectContaining({
+      mode: "chunked-json",
+      offset: 0,
+      chunkSize: 64
+    })
+  );
+});
+
+test("preserves inherited text styles and inline SVG structure in positioned transfer", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font-family: Georgia, serif; font-size: 18px; line-height: 27px; color: rgb(12, 34, 56); overflow-x: hidden">
+      <button type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <g fill="none" stroke="currentColor">
+            <path d="M4 4h16v16H4z"></path>
+          </g>
+        </svg>
+        <span>Compose</span>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Compose", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-compose",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]");
+  const serialized = JSON.stringify(transferred);
+  expect(serialized).toContain('"font-family":"Georgia, serif"');
+  expect(serialized).toContain('"font-size":"18px"');
+  expect(serialized).toContain('"line-height":"27px"');
+  expect(serialized).toContain('"overflow-x":"hidden"');
+  expect(serialized).toContain('"data-showkit-text":""');
+  const findElement = (
+    node: {
+      type: string;
+      tag?: string;
+      children?: Array<{
+        type: string;
+        tag?: string;
+        children?: unknown[];
+      }>;
+    },
+    tag: string
+  ): typeof node | undefined => {
+    if (node.type === "element" && node.tag === tag) return node;
+    for (const child of node.children ?? []) {
+      const match = findElement(child, tag);
+      if (match) return match;
+    }
+    return undefined;
+  };
+  const svg = findElement(transferred[0], "svg");
+  expect(svg).toBeDefined();
+  expect(JSON.stringify(svg?.children)).toContain('"tag":"g"');
+  expect(JSON.stringify(svg?.children)).toContain('"tag":"path"');
+  expect(serialized.match(/"tag":"path"/g)).toHaveLength(1);
+});
+
+test("preserves inline icon and text baselines inside bordered controls", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      * { box-sizing: border-box; }
+    </style>
+    <main style="padding: 32px">
+      <button
+        type="button"
+        style="
+          align-items: center;
+          background: white;
+          border: 1px solid rgb(0, 120, 130);
+          border-radius: 21px;
+          display: inline-flex;
+          font-family: Arial, sans-serif;
+          font-size: 14px;
+          gap: 8px;
+          height: 42px;
+          line-height: 24px;
+          padding: 0 14px;
+        "
+      >
+        <svg
+          aria-hidden="true"
+          height="20"
+          style="display: block"
+          viewBox="0 0 20 20"
+          width="20"
+        >
+          <path d="M3 6h14M6 10h8M8 14h4" fill="none" stroke="currentColor"></path>
+        </svg>
+        <span>Filters • 3</span>
+      </button>
+    </main>
+  `);
+  const target = page.getByRole("button", {
+    name: "Filters • 3",
+    exact: true
+  });
+  const sourceMetrics = await target.evaluate((button) => {
+    const buttonRectangle = button.getBoundingClientRect();
+    const iconRectangle = button.querySelector("svg")!.getBoundingClientRect();
+    const label = button.querySelector("span")!;
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const textRectangle = range.getBoundingClientRect();
+    return {
+      iconCenter:
+        iconRectangle.top +
+        iconRectangle.height / 2 -
+        (buttonRectangle.top + buttonRectangle.height / 2),
+      textTop: textRectangle.top - buttonRectangle.top
+    };
+  });
+  const result = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-filters",
+    nodeMode: "json"
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]");
+
+  await page.setContent("<main id=\"captured-scene\"></main>");
+  await page.locator("#captured-scene").evaluate((mount, nodes) => {
+    const svgTags = new Set([
+      "circle",
+      "defs",
+      "ellipse",
+      "g",
+      "image",
+      "line",
+      "path",
+      "polygon",
+      "polyline",
+      "rect",
+      "svg"
+    ]);
+    const createNode = (
+      node:
+        | { type: "text"; text: string }
+        | {
+            type: "element";
+            tag: string;
+            attributes: Record<string, string>;
+            styles: Record<string, string>;
+            children: unknown[];
+          }
+    ): Node => {
+      if (node.type === "text") return document.createTextNode(node.text);
+      const element = svgTags.has(node.tag)
+        ? document.createElementNS("http://www.w3.org/2000/svg", node.tag)
+        : document.createElement(node.tag);
+      for (const [name, value] of Object.entries(node.attributes)) {
+        element.setAttribute(name, value);
+      }
+      for (const [name, value] of Object.entries(node.styles)) {
+        (element as HTMLElement).style.setProperty(name, value);
+      }
+      for (const child of node.children) {
+        element.append(createNode(child as Parameters<typeof createNode>[0]));
+      }
+      return element;
+    };
+    mount.replaceChildren(
+      ...(nodes as Parameters<typeof createNode>[0][]).map(createNode)
+    );
+  }, transferred);
+
+  const capturedMetrics = await page
+    .locator('[data-showkit-anchor="sk-filters"]')
+    .evaluate((button) => {
+      const buttonRectangle = button.getBoundingClientRect();
+      const iconRectangle = button.querySelector("svg")!.getBoundingClientRect();
+      const textWrapper = button.querySelector<HTMLElement>(
+        "[data-showkit-text]"
+      )!;
+      const range = document.createRange();
+      range.selectNodeContents(textWrapper);
+      const textRectangle = range.getBoundingClientRect();
+      return {
+        iconCenter:
+          iconRectangle.top +
+          iconRectangle.height / 2 -
+          (buttonRectangle.top + buttonRectangle.height / 2),
+        textTop: textRectangle.top - buttonRectangle.top
+      };
+    });
+
+  expect(capturedMetrics.iconCenter).toBeCloseTo(
+    sourceMetrics.iconCenter,
+    1
+  );
+  expect(capturedMetrics.textTop).toBeCloseTo(sourceMetrics.textTop, 1);
+});
+
+test("does not replace a wrapping text node's per-line rhythm with its total height", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font: 14px/20px Arial, sans-serif">
+      <p style="width: 90px">Wrapping text keeps each captured line aligned.</p>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]") as Array<{
+    type: string;
+    attributes?: Record<string, string>;
+    styles?: Record<string, string>;
+    children?: unknown[];
+  }>;
+  const textWrappers: typeof transferred = [];
+  const visit = (node: (typeof transferred)[number]): void => {
+    if (node.attributes?.["data-showkit-text"] !== undefined) {
+      textWrappers.push(node);
+    }
+    for (const child of node.children ?? []) {
+      if (typeof child === "object" && child !== null) {
+        visit(child as (typeof transferred)[number]);
+      }
+    }
+  };
+  transferred.forEach(visit);
+  const wrappingText = textWrappers.find((node) =>
+    JSON.stringify(node.children).includes("Wrapping text")
+  );
+  expect(wrappingText).toBeDefined();
+  expect(wrappingText?.styles?.["line-height"]).toBeUndefined();
+  expect(wrappingText?.styles?.["white-space"]).toBe("normal");
+});
+
+test("keeps a captured single-line text node on one line", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font: 14px/20px Arial, sans-serif">
+      <p>What’s new</p>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]") as Array<{
+    type: string;
+    attributes?: Record<string, string>;
+    styles?: Record<string, string>;
+    children?: unknown[];
+  }>;
+  const textWrappers: typeof transferred = [];
+  const visit = (node: (typeof transferred)[number]): void => {
+    if (node.attributes?.["data-showkit-text"] !== undefined) {
+      textWrappers.push(node);
+    }
+    for (const child of node.children ?? []) {
+      if (typeof child === "object" && child !== null) {
+        visit(child as (typeof transferred)[number]);
+      }
+    }
+  };
+  transferred.forEach(visit);
+  const singleLineText = textWrappers.find((node) =>
+    JSON.stringify(node.children).includes("What’s new")
+  );
+  expect(singleLineText?.styles?.["white-space"]).toBe("nowrap");
+});
+
+test("keeps a declared font stack when no matching font face loaded", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font-family: 'Declared but unloaded', Arial, sans-serif">
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.nodesJson).toContain(
+    '"font-family":"\\"Declared but unloaded\\", Arial, sans-serif"'
+  );
+});
+
+test("fails closed when visible text uses an unbundled loaded font face", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font-family:'Demo Face', sans-serif">
+      <p>Visible product text</p>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: [
+        {
+          family: "Demo Face",
+          status: "loaded"
+        }
+      ]
+    });
+  });
+  const target = page.getByRole("button", {
+    name: "Continue",
+    exact: true
+  });
+  const blocked = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json"
+  });
+  expect(blocked).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "font-asset-required"
+      })
+    })
+  );
+
+  const bundled = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    fontFaces: [
+      {
+        family: "Demo Face",
+        style: "normal",
+        weight: "400",
+        stretch: "normal",
+        display: "block",
+        src: `./assets/${"a".repeat(64)}.woff2`
+      }
+    ]
+  });
+  expect(bundled.ok).toBe(true);
+});
+
+test("preserves visible filter, clip path, and mask geometry", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button type="button" aria-label="Ask Gemini">
+        <span
+          style="
+            display:block;
+            filter:blur(1.75px);
+            height:22px;
+            mask-image:linear-gradient(to bottom right, black, transparent);
+            mask-position:0% 0%;
+            mask-repeat:repeat;
+            mask-size:auto;
+            width:22px;
+          "
+        >
+          <span
+            style="
+              background:rgb(168, 199, 250);
+              clip-path:path('M 0 11 L 11 0 L 22 11 L 11 22 Z');
+              display:block;
+              height:22px;
+              width:22px;
+            "
+          ></span>
+        </span>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Ask Gemini", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-gemini",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const serialized = result.nodesJson ?? "";
+  expect(serialized).toContain('"filter":"blur(1.75px)"');
+  expect(serialized).toContain('"clip-path":"path(');
+  expect(serialized).toContain(
+    '"mask-image":"linear-gradient(to right bottom, rgb(0, 0, 0), rgba(0, 0, 0, 0))"'
+  );
+});
+
+test("preserves a scaled coordinate space for clipped source artwork", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button type="button" aria-label="Ask Gemini">
+        <span
+          data-testid="scaled-artwork"
+          style="
+            display:block;
+            height:192px;
+            position:absolute;
+            transform:matrix(0.114583, 0, 0, 0.114583, 0, 0);
+            transform-origin:0 0;
+            width:192px;
+          "
+        >
+          <span
+            style="
+              background:rgb(168, 199, 250);
+              clip-path:path('M 0 96 L 96 0 L 192 96 L 96 192 Z');
+              display:block;
+              height:192px;
+              width:192px;
+            "
+          ></span>
+        </span>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Ask Gemini", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-scaled-gemini",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]");
+  const serialized = JSON.stringify(transferred);
+  expect(serialized).toContain('"width":"192px"');
+  expect(serialized).toContain('"height":"192px"');
+  expect(serialized).toContain(
+    '"transform":"matrix(0.114583, 0, 0, 0.114583, 0, 0)"'
+  );
+  expect(serialized).toContain('"clip-path":"path(');
+});
+
+test("preserves a box-stable rotation used by disclosure icons", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button type="button">
+        Workspace
+        <svg
+          aria-hidden="true"
+          height="16"
+          style="transform:matrix(0, 1, -1, 0, 0, 0);transform-origin:8px 8px"
+          viewBox="0 0 16 16"
+          width="16"
+        >
+          <path d="M6 4l5 4-5 4z"></path>
+        </svg>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Workspace", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-workspace",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.nodesJson).toContain(
+    '"transform":"matrix(0, 1, -1, 0, 0, 0)"'
+  );
+  expect(result.nodesJson).toContain('"transform-origin":"8px 8px"');
+});
+
+test("preserves visible pseudo-element icons as local semantic children", async ({
+  page
+}) => {
+  const base64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const bytes = Buffer.from(base64, "base64");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  await page.setContent(`
+    <style>
+      #compose {
+        align-items: center;
+        display: flex;
+        gap: 12px;
+      }
+      #compose::before {
+        background-image: url("data:image/png;base64,${base64}");
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: 24px 24px;
+        content: "";
+        display: block;
+        height: 24px;
+        width: 52px;
+      }
+      #compose::after {
+        content: "›" / "More actions";
+        display: inline-block;
+      }
+    </style>
+    <main><button id="compose" type="button" aria-label="Compose">Compose</button></main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Compose", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-compose",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const serialized = result.nodesJson ?? "";
+  expect(serialized).toContain('"data-showkit-pseudo":"before"');
+  expect(serialized).toContain('"data-showkit-pseudo":"after"');
+  expect(serialized).toContain(`./assets/${sha256}.png`);
+  expect(serialized).toContain('"text":"›"');
+  expect(serialized).not.toContain("More actions");
+  expect(result.assetPayloads).toEqual([
+    expect.objectContaining({
+      sha256,
+      mimeType: "image/png",
+      byteLength: bytes.byteLength
+    })
+  ]);
+});
+
+test("ignores empty image-set content while preserving its rendered background icon", async ({
+  page
+}) => {
+  const base64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const bytes = Buffer.from(base64, "base64");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  await page.setContent(`
+    <style>
+      #star {
+        align-items: center;
+        display: flex;
+        height: 20px;
+        justify-content: center;
+        width: 20px;
+      }
+      #star::before {
+        background-color: transparent;
+        background-image: url("data:image/png;base64,${base64}");
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: 20px 20px;
+        content: image-set(url("") 1dppx, url("") 2dppx);
+        display: block;
+        height: 20px;
+        position: static;
+        width: 20px;
+      }
+    </style>
+    <main>
+      <button type="button" aria-label="Not starred">
+        <span id="star"></span>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Not starred", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-star",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const serialized = result.nodesJson ?? "";
+  expect(serialized).toContain('"data-showkit-pseudo":"before"');
+  expect(serialized).toContain(`./assets/${sha256}.png`);
+  expect(serialized).not.toContain('url("")');
+});
+
+test("preserves visible form controls without persisting their values or UA chrome", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      #search {
+        appearance: none;
+        background-color: transparent;
+        border: 0;
+        color: rgb(32, 33, 36);
+        height: 48px;
+        padding: 0;
+        width: 420px;
+      }
+      #icon {
+        background-color: transparent;
+        border: 0;
+        height: 40px;
+        padding: 0;
+        width: 40px;
+      }
+    </style>
+    <main>
+      <input
+        id="search"
+        aria-label="Search mail"
+        type="search"
+        placeholder="Ask Gmail"
+        value="must-not-persist"
+      >
+      <button id="icon" type="button" aria-label="Search options"></button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("searchbox", { name: "Search mail", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-search",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const serialized = result.nodesJson ?? "";
+  expect(serialized).toContain('"tag":"input"');
+  expect(serialized).toContain('"placeholder":"Ask Gmail"');
+  expect(serialized).toContain('"type":"search"');
+  expect(serialized).toContain('"appearance":"none"');
+  expect(serialized).not.toContain("must-not-persist");
+  expect(serialized).toContain(
+    '"background-color":"rgba(0, 0, 0, 0)"'
+  );
+  expect(serialized).toContain('"border-top":"0px none');
+  expect(serialized).toContain('"padding-left":"0px"');
+});
+
+test("selects only isolated text-free control icons for rendered asset capture", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button aria-label="Attach files" type="button">
+        <span
+          id="safe-icon"
+          style="
+            background-color: transparent;
+            background-image: url('https://cdn.example.test/attach.png');
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: 20px;
+            display: block;
+            height: 20px;
+            width: 20px;
+          "
+        ></span>
+      </button>
+      <button aria-label="Text icon" type="button">
+        <span
+          style="
+            background-image: url('https://cdn.example.test/text.png');
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: 20px;
+            display: block;
+            height: 20px;
+            width: 20px;
+          "
+        >A</span>
+      </button>
+      <button aria-label="Input tools" type="button">
+        <span
+          style="
+            background-image: url('https://cdn.example.test/sprite.png');
+            background-position: -14px -17px;
+            background-repeat: repeat;
+            background-size: 850px 250px;
+            display: block;
+            height: 16px;
+            width: 20px;
+          "
+        ></span>
+      </button>
+      <button
+        aria-label="Transparent gradient"
+        type="button"
+        style="background-image:-webkit-linear-gradient(top, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0))"
+      >
+        <span
+          style="
+            background-color: transparent;
+            background-image: url('https://cdn.example.test/gradient-icon.png');
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: 20px;
+            display: block;
+            height: 20px;
+            width: 20px;
+          "
+        ></span>
+      </button>
+      <button aria-label="Large icon" type="button">
+        <span
+          style="
+            background-image: url('https://cdn.example.test/large.png');
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: 80px;
+            display: block;
+            height: 80px;
+            width: 80px;
+          "
+        ></span>
+      </button>
+      <span
+        style="
+          background-image: url('https://cdn.example.test/noninteractive.png');
+          background-position: center;
+          background-repeat: no-repeat;
+          background-size: 20px;
+          display: block;
+          height: 20px;
+          width: 20px;
+        "
+      ></span>
+    </main>
+  `);
+  const candidates = await page.evaluate(
+    collectRenderedIconCandidatesInPage,
+    []
+  );
+  expect(candidates).toEqual([
+    expect.objectContaining({
+      source: "https://cdn.example.test/attach.png",
+      width: 20,
+      height: 20
+    }),
+    expect.objectContaining({
+      source: "https://cdn.example.test/sprite.png",
+      width: 20,
+      height: 16
+    }),
+    expect.objectContaining({
+      source: "https://cdn.example.test/gradient-icon.png",
+      width: 20,
+      height: 20
+    })
+  ]);
+  expect(
+    await page.evaluate(collectRenderedIconCandidatesInPage, [
+      "https://cdn.example.test/attach.png",
+      "https://cdn.example.test/sprite.png",
+      "https://cdn.example.test/gradient-icon.png"
+    ])
+  ).toEqual([]);
+});
+
+test("selects pseudo icons whose computed content contains only empty image-set URLs", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      #star {
+        align-items: center;
+        display: flex;
+        height: 20px;
+        justify-content: flex-start;
+        width: 20px;
+      }
+      #star::before {
+        background-color: transparent;
+        background-image: url("https://cdn.example.test/star.png");
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: 20px 20px;
+        content: image-set(url("") 1dppx, url("") 2dppx);
+        display: block;
+        height: 20px;
+        position: static;
+        width: 20px;
+      }
+    </style>
+    <main>
+      <button type="button" aria-label="Not starred">
+        <span id="star"></span>
+      </button>
+    </main>
+  `);
+  const candidates = await page.evaluate(
+    collectRenderedIconCandidatesInPage,
+    []
+  );
+  expect(candidates).toEqual([
+    expect.objectContaining({
+      source: "https://cdn.example.test/star.png",
+      width: 20,
+      height: 20,
+      match: expect.objectContaining({
+        pseudo: "before"
+      })
+    })
+  ]);
+});
+
+test("does not rasterize a bounded content image as a rendered fallback", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button type="button" aria-label="Property at 1 Example Way">
+        <img
+          alt=""
+          src="https://cdn.example.test/property.webp"
+          style="display:block;height:279px;width:418px"
+        >
+        <span>1 Example Way</span>
+      </button>
+    </main>
+  `);
+  const candidates = await page.evaluate(
+    collectRenderedIconCandidatesInPage,
+    []
+  );
+  expect(candidates).toEqual([]);
+});
+
+test("does not rasterize transformed image elements as icon fallbacks", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="padding:80px">
+      <div role="button" aria-label="Assistant" style="height:40px;position:relative;width:40px">
+        <img
+          alt="Decorative accessory"
+          src="https://cdn.example.test/accessory.webp"
+          style="
+            height:40px;
+            left:0;
+            pointer-events:none;
+            position:absolute;
+            top:0;
+            transform:rotate(45deg);
+            width:40px
+          "
+        >
+      </div>
+      <div role="button" aria-label="Unsafe transformed image" style="height:40px;position:relative;width:40px">
+        <img
+          alt=""
+          src="https://cdn.example.test/interactive.webp"
+          style="
+            height:40px;
+            pointer-events:auto;
+            transform:rotate(45deg);
+            width:40px
+          "
+        >
+      </div>
+    </main>
+  `);
+  const candidates = await page.evaluate(
+    collectRenderedIconCandidatesInPage,
+    []
+  );
+  expect(candidates).toEqual([]);
+});
+
+test("replays one bounded canvas icon while preserving its semantic control", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="padding:80px">
+      <a
+        aria-label="Connected app"
+        href="#connected-app"
+        role="button"
+        style="display:block;height:32px;padding:8px;width:32px"
+      >
+        <canvas
+          height="32"
+          style="display:block;height:16px;width:16px"
+          width="32"
+        ></canvas>
+      </a>
+    </main>
+  `);
+  const [candidate] = await page.evaluate(
+    collectRenderedIconCandidatesInPage,
+    []
+  );
+  expect(candidate).toEqual(
+    expect.objectContaining({
+      source: expect.stringMatching(/^showkit:rendered-canvas:/),
+      width: 16,
+      height: 16,
+      match: expect.objectContaining({
+        canvasElement: true,
+        intrinsicDimensions: {
+          width: 32,
+          height: 32
+        }
+      })
+    })
+  );
+  const base64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const bytes = Buffer.from(base64, "base64");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const result = await page
+    .getByRole("button", { name: "Connected app", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-connected-app",
+      remoteAssetReplacements: [
+        {
+          source: candidate!.source,
+          captureKind: "isolated-rendered-canvas",
+          match: candidate!.match,
+          payload: {
+            sha256,
+            mimeType: "image/png",
+            byteLength: bytes.byteLength,
+            base64
+          }
+        }
+      ]
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).not.toContain("<canvas");
+  expect(result.html).toContain(`./assets/${sha256}.png`);
+  expect(result.html).toContain('aria-label="Connected app"');
+  expect(result.html).toContain('role="button"');
+  expect(result.html).toContain('aria-hidden="true"');
+});
+
+test("continues to block a canvas that is not an isolated icon", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button type="button">Open report</button>
+      <canvas style="display:block;height:240px;width:480px"></canvas>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Open report", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-open-report"
+    });
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "canvas"
+      })
+    })
+  );
+});
+
+test("keeps the viewport scene and omits offscreen-only content", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button type="button">Compose</button>
+      <section style="position:absolute;top:2000px">Offscreen private row</section>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Compose", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-compose",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain("Compose");
+  expect(result.html).not.toContain("Offscreen private row");
+});
+
+test("requires explicit consent and then changes only captured text", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="display:grid;gap:16px;padding:24px">
+      <section
+        data-private-message
+        aria-label="Message from demo-user@example.invalid"
+        style="border:1px solid #ccd2cc;padding:12px"
+      >
+        <strong>Demo sender</strong>
+        <p>Quarterly plan for demo-user@example.invalid</p>
+      </section>
+      <button type="button">Compose email</button>
+      <input type="hidden" value="runtime-only">
+    </main>
+  `);
+  const target = page.getByRole("button", {
+    name: "Compose email",
+    exact: true
+  });
+  const liveHtmlBefore = await page.locator("body").evaluate((body) => body.innerHTML);
+
+  const blocked = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-compose-email"
+  });
+  expect(blocked).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "SensitiveDataDetected"
+      })
+    })
+  );
+
+  const baseline = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-compose-email",
+    secretPatternSources: [],
+    sensitiveTextRedaction: {
+      mode: "text-only",
+      consent: "confirmed",
+      selectors: []
+    }
+  });
+  const redacted = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-compose-email",
+    sensitiveTextRedaction: {
+      mode: "text-only",
+      consent: "confirmed",
+      selectors: ["[data-private-message]"]
+    }
+  });
+  expect(baseline.ok).toBe(true);
+  expect(redacted.ok).toBe(true);
+  if (
+    !baseline.ok ||
+    baseline.scanOnly ||
+    !redacted.ok ||
+    redacted.scanOnly
+  ) {
+    return;
+  }
+
+  const structureWithoutText = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(structureWithoutText);
+    if (!value || typeof value !== "object") return value;
+    const record = value as Record<string, unknown>;
+    if (record.type === "text") return { type: "text" };
+    const attributes =
+      record.attributes && typeof record.attributes === "object"
+        ? Object.fromEntries(
+            Object.entries(record.attributes as Record<string, string>).map(
+              ([name, content]) => [
+                name,
+                ["alt", "aria-description", "aria-label", "aria-placeholder", "title"].includes(
+                  name
+                )
+                  ? "<text>"
+                  : content
+              ]
+            )
+          )
+        : record.attributes;
+    return {
+      ...record,
+      ...(attributes ? { attributes } : {}),
+      children: structureWithoutText(record.children)
+    };
+  };
+
+  expect(structureWithoutText(redacted.nodes)).toEqual(
+    structureWithoutText(baseline.nodes)
+  );
+  expect(redacted.target?.bounds).toEqual(baseline.target?.bounds);
+  expect(redacted.target?.name).toBe("Compose email");
+  expect(redacted.html).toContain("Compose email");
+  expect(redacted.html).toContain("••••");
+  expect(redacted.nodes[0]).toEqual(
+    expect.objectContaining({
+      type: "element",
+      children: expect.arrayContaining([
+        expect.objectContaining({
+          type: "element",
+          tag: "main",
+          children: expect.arrayContaining([
+            expect.objectContaining({
+              type: "element",
+              tag: "section",
+              children: expect.arrayContaining([
+                expect.objectContaining({
+                  type: "element",
+                  tag: "strong"
+                })
+              ])
+            })
+          ])
+        })
+      ])
+    })
+  );
+  expect(JSON.stringify(redacted)).not.toMatch(
+    /Demo sender|Quarterly plan|demo-user@example\.invalid|runtime-only/
+  );
+  expect(redacted.sensitiveText).toEqual(
+    expect.objectContaining({
+      mode: "text-only",
+      redactedTextNodeCount: 2,
+      redactedAttributeCount: 1,
+      regionCount: 1
+    })
+  );
+  expect(await page.locator("body").evaluate((body) => body.innerHTML)).toBe(
+    liveHtmlBefore
+  );
+});
+
+test("keeps visible private text only after explicit local-session consent", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <p>Signed in as demo-user@example.invalid</p>
+      <button type="button">Compose</button>
+      <input type="hidden" value="hidden-runtime-value">
+    </main>
+  `);
+  const target = page.getByRole("button", { name: "Compose", exact: true });
+  const blocked = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-compose"
+  });
+  expect(blocked).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "SensitiveDataDetected"
+      })
+    })
+  );
+
+  const consented = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-compose",
+    nodeMode: "json",
+    privateContentConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(consented.ok).toBe(true);
+  if (!consented.ok || consented.scanOnly) return;
+  expect(consented.html).toContain("demo-user@example.invalid");
+  expect(consented.nodesJson).toContain("demo-user@example.invalid");
+  expect(JSON.stringify(consented)).not.toContain("hidden-runtime-value");
+});
+
+test("removes a decorative remote asset and keeps the semantic HTML state", async ({
+  page
+}) => {
+  await page.goto("http://127.0.0.1:4173/remote-decorative/index.html");
+  const result = await page
+    .getByRole("button", { name: "Open report", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-open-report"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.excludedSurfaces).toContain("remote-decorative-assets");
+  expect(result.html).not.toContain("decorative-image.png");
+  expect(result.html).toContain("Open report");
+  expect(result.target?.role).toBe("button");
+});
+
+test("keeps safe same-document SVG fragment references local", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button aria-label="Open home" type="button">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <defs>
+            <clipPath id="logo-clip">
+              <rect x="0" y="0" width="24" height="24"></rect>
+            </clipPath>
+          </defs>
+          <g clip-path="url(#logo-clip)">
+            <circle cx="12" cy="12" r="12"></circle>
+          </g>
+        </svg>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Open home", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-open-home"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain("logo-clip");
+  expect(result.html).toContain("clippath");
+  expect(result.html).not.toContain("https:");
+  expect(result.target?.role).toBe("button");
+});
+
+test("copies safe external SVG symbols used by visible icons", async ({
+  page
+}) => {
+  await page.setContent(`
+    <svg aria-hidden="true" style="display:none">
+      <symbol id="project-icon" viewBox="0 0 16 16">
+        <path d="M2 2h12v12H2z"></path>
+        <path d="M5 5h6v6H5z" fill="white"></path>
+      </symbol>
+    </svg>
+    <main>
+      <button type="button">
+        <svg aria-hidden="true" height="16" viewBox="0 0 16 16" width="16">
+          <use href="#project-icon"></use>
+        </svg>
+        Projects
+      </button>
+    </main>
+  `);
+  const target = page.getByRole("button", {
+    name: "Projects",
+    exact: true
+  });
+  const sourceBounds = await target.locator("use").evaluate((use) => {
+    const bounds = (use as SVGGraphicsElement).getBBox();
+    return {
+      width: bounds.width,
+      height: bounds.height
+    };
+  });
+  const result = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-projects",
+    nodeMode: "json"
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]");
+  const serialized = JSON.stringify(transferred);
+  expect(serialized).toContain('"tag":"symbol"');
+  expect(serialized).toContain('"tag":"use"');
+  expect(serialized).toContain('"href":"#project-icon"');
+  expect(serialized.match(/"tag":"path"/g)).toHaveLength(2);
+
+  await page.setContent("<main id=\"captured-scene\"></main>");
+  await page.locator("#captured-scene").evaluate((mount, nodes) => {
+    const svgTagNames = new Map([
+      ["clippath", "clipPath"]
+    ]);
+    const svgTags = new Set([
+      "circle",
+      "clippath",
+      "defs",
+      "ellipse",
+      "g",
+      "image",
+      "line",
+      "path",
+      "polygon",
+      "polyline",
+      "rect",
+      "svg",
+      "symbol",
+      "use"
+    ]);
+    const createNode = (
+      node:
+        | { type: "text"; text: string }
+        | {
+            type: "element";
+            tag: string;
+            attributes: Record<string, string>;
+            styles: Record<string, string>;
+            children: unknown[];
+          }
+    ): Node => {
+      if (node.type === "text") return document.createTextNode(node.text);
+      const element = svgTags.has(node.tag)
+        ? document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            svgTagNames.get(node.tag) ?? node.tag
+          )
+        : document.createElement(node.tag);
+      for (const [name, value] of Object.entries(node.attributes)) {
+        element.setAttribute(name, value);
+      }
+      for (const [name, value] of Object.entries(node.styles)) {
+        (element as HTMLElement).style.setProperty(name, value);
+      }
+      for (const child of node.children) {
+        element.append(createNode(child as Parameters<typeof createNode>[0]));
+      }
+      return element;
+    };
+    mount.replaceChildren(
+      ...(nodes as Parameters<typeof createNode>[0][]).map(createNode)
+    );
+  }, transferred);
+
+  const capturedBounds = await page
+    .locator('[data-showkit-anchor="sk-projects"] use')
+    .evaluate((use) => {
+      const bounds = (use as SVGGraphicsElement).getBBox();
+      return {
+        width: bounds.width,
+        height: bounds.height
+      };
+    });
+  expect(capturedBounds.width).toBeCloseTo(sourceBounds.width, 3);
+  expect(capturedBounds.height).toBeCloseTo(sourceBounds.height, 3);
+});
+
+test("blocks a visible interactive icon when the browser cannot bundle it", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button id="compose" type="button">Compose</button>
+      <button aria-label="Attach files" type="button">
+        <span
+          style="
+            background-image: url('https://cdn.example.test/attach.png');
+            display: block;
+            height: 20px;
+            width: 20px;
+          "
+        ></span>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Compose", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-compose"
+    });
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "remote-asset"
+      })
+    })
+  );
+  expect(JSON.stringify(result)).not.toContain("attach.png");
+});
+
+test("blocks a target that depends on a remote asset", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/remote-critical/index.html");
+  const result = await page
+    .getByRole("button", { name: "Open document", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-open-document"
+    });
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "remote-asset"
+      })
+    })
+  );
+  expect(JSON.stringify(result)).not.toContain("critical-illustration.png");
+});
+
+test("uses an explicitly approved local bundle for a critical public asset", async ({
+  page
+}) => {
+  await page.goto("http://127.0.0.1:4173/remote-critical/index.html");
+  const base64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const bytes = Buffer.from(base64, "base64");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const result = await page
+    .getByRole("button", { name: "Open document", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-open-document",
+      remoteAssetReplacements: [
+        {
+          source:
+            "http://127.0.0.1:4173/remote-critical/critical-illustration.png",
+          payload: {
+            sha256,
+            mimeType: "image/png",
+            byteLength: bytes.byteLength,
+            base64
+          }
+        }
+      ]
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain(`./assets/${sha256}.png`);
+  expect(result.html).not.toContain("critical-illustration.png");
+  expect(result.html).toContain("<svg");
+  expect(result.html).toContain('<circle cx="12" cy="12" r="10"');
+  expect(result.html).toContain('<path d="M8 12h8M12 8v8"');
+  expect(
+    JSON.stringify(result.nodes)
+  ).toContain(`url(\\"./assets/${sha256}.png\\")`);
+  expect(result.assetPayloads).toEqual([
+    expect.objectContaining({
+      sha256,
+      mimeType: "image/png",
+      byteLength: bytes.byteLength
+    })
+  ]);
+});
+
+test("exposes the failure fixtures without performing an external action", async ({
+  page
+}) => {
+  await page.goto("http://127.0.0.1:4173/login-redirect/index.html");
+  await expect(page.getByRole("heading", { name: "Sign in to continue" })).toBeVisible();
+
+  await page.goto("http://127.0.0.1:4173/ambiguous-target/index.html");
+  await expect(page.getByRole("button", { name: "Open report" })).toHaveCount(2);
+
+  await page.goto("http://127.0.0.1:4173/browser-side-effect/index.html");
+  await expect(page.getByRole("status")).toHaveText(
+    "The report has not been published."
+  );
+  expect(
+    await page.evaluate(() => {
+      return (
+        globalThis as typeof globalThis & {
+          browserSideEffectCount: number;
+        }
+      ).browserSideEffectCount;
+    })
+  ).toBe(0);
+});

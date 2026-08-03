@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Critical remote asset</title>
+    <style>
+      button {
+        background-image: url("/remote-critical/critical-illustration.png");
+        background-position: right 8px center;
+        background-repeat: no-repeat;
+        background-size: 24px 24px;
+        padding-right: 40px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Document preview</h1>
+      <button type="button" aria-label="Open document">
+        <img
+          src="/remote-critical/critical-illustration.png"
+          alt="Open document"
+          width="80"
+          height="80"
+          data-showkit-critical-asset
+        />
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="24" height="24">
+          <circle cx="12" cy="12" r="10" fill="#126b5c" />
+          <path d="M8 12h8M12 8v8" stroke="#ffffff" stroke-width="2" />
+        </svg>
+        Open document
+      </button>
+    </main>
+  </body>
+</html>

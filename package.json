@@ -1,0 +1,34 @@
+{
+  "name": "showkit-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "build": "pnpm --filter @showkit/cli build",
+    "check": "pnpm --filter @showkit/cli check",
+    "docs:check": "node scripts/check-docs.mjs",
+    "test": "pnpm run build && pnpm run test:unit && pnpm run test:e2e",
+    "test:unit": "pnpm --filter @showkit/cli test",
+    "test:e2e": "playwright test tests/player.spec.ts tests/url-session.spec.ts tests/url-browser.spec.ts",
+    "test:performance": "playwright test tests/performance.spec.ts",
+    "test:skills": "node scripts/test-skill-lifecycle.mjs",
+    "test:skills:global": "node scripts/test-global-skill-lifecycle.mjs",
+    "test:browser-adapter": "node scripts/test-browser-adapter.mjs",
+    "audit:prod": "pnpm audit --prod --audit-level=high",
+    "package:smoke": "node scripts/package-smoke.mjs",
+    "release:metadata": "node scripts/generate-release-metadata.mjs --output release",
+    "release:rollback": "node scripts/rollback-drill.mjs --output release/rollback-plan.json",
+    "test:release:browsers": "playwright test --config playwright.release.config.ts",
+    "test:capture": "playwright test fixtures/demo-apps/public/public.demo.ts"
+  },
+  "devDependencies": {
+    "@showkit/cli": "workspace:*",
+    "@playwright/test": "1.62.0",
+    "@types/node": "^24.0.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "0.1",
+  "example": "static-source.md",
+  "examples": [
+    "static-source.md",
+    "headed-chrome-live.md",
+    "launch-onboarding.md",
+    "url-to-playwright.md"
+  ],
+  "expectedCommands": [
+    "showkit doctor --json",
+    "showkit capture static safe-static-envelope.json --json",
+    "showkit validate --json",
+    "showkit build web,markdown --json",
+    "showkit preview --json"
+  ]
+}

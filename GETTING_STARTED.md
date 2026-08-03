@@ -1,0 +1,119 @@
+# Getting started
+
+This guide takes you from a product flow to a checked local interactive HTML
+demo. Nothing in this workflow publishes or uploads the result.
+
+## Requirements
+
+- Node.js 22 or 24
+- a coding agent that can use the ShowKit skill, or a project where you can
+  install `@showkit/cli`
+- public or synthetic content for a first run
+
+Do not begin with credentials, customer data, private product captures, or an
+authenticated flow that you are not allowed to reproduce.
+
+## Release status
+
+The source repository and checked examples are public before the first npm
+release. Until `@showkit/cli@0.1.0` appears on npm, evaluate the current source
+candidate directly:
+
+```bash
+git clone https://github.com/hyunghwan/showkit.git
+cd showkit
+corepack pnpm install --frozen-lockfile
+pnpm build
+node packages/cli/dist/bin.js doctor --json
+```
+
+The package and skill installation commands below apply after the first npm
+release. Publishing the GitHub repository does not publish the npm package.
+
+## Use ShowKit with a coding agent
+
+1. Install the ShowKit skill:
+
+   ```bash
+   npx skills add hyunghwan/showkit
+   ```
+
+   This installs the skill instructions. It does not install or update your
+   project's dependencies.
+
+2. Open a public or synthetic product flow and give your agent this request:
+
+   > Using ShowKit, create a checked local interactive HTML demo of this
+   > product flow. Choose the number of steps needed to explain it. Preserve
+   > supported visible text and styling, do not use screenshots, and stop
+   > before saving if private content needs my choice. Build and preview it
+   > locally. Do not publish anything.
+
+3. Review the first preview. Confirm the default colors and local font stacks,
+   and keep, change, or remove the default completion email link. Check every
+   step, Back and Next navigation, keyboard focus, and the final Restart demo
+   action.
+
+The skill selects the safest available capture route, asks before adding an
+optional Playwright dependency or browser binary, and reports the local output
+path. If its browser host cannot prove an isolated read-only page world, it
+must use static source or a separately approved Playwright flow.
+
+## Use the CLI directly
+
+Install and initialize ShowKit in a project:
+
+```bash
+npm install -D @showkit/cli
+npx showkit doctor --json
+npx showkit init --json
+```
+
+Then choose one source route:
+
+```bash
+# Import a sanitized envelope created from bound static source.
+npx showkit capture static ./safe-envelope.json --json
+
+# Or run a repeatable Playwright flow after installing the optional peer.
+npm install -D @playwright/test
+npx playwright install chromium
+npx showkit doctor --capability playwright --json
+npx showkit capture ./demo.spec.ts --json
+```
+
+Complete the local lifecycle:
+
+```bash
+npx showkit validate --json
+npx showkit build web,markdown --json
+npx showkit preview --json
+```
+
+`preview` serves the latest built demo on `127.0.0.1`. Stop it with
+<kbd>Control</kbd>+<kbd>C</kbd>. Copy the complete artifact directory to a
+static host only after you have reviewed it and chosen to publish separately.
+
+## Know what ShowKit proved
+
+| State | What it means | What it does not mean |
+| --- | --- | --- |
+| Captured | Supported product states were sanitized and saved locally | The demo was built or approved |
+| Built | Portable HTML and local assets were generated | The result passed every check |
+| Checked | ShowKit's verification and player checks passed | Source content is secure, compliant, or WCAG conformant |
+| Previewed | A local server displayed the built files | The demo is public |
+| Published | You separately copied the reviewed files to a host | ShowKit uploaded them for you |
+
+ShowKit `0.1.x` is local-only. `showkit publish` verifies the local publish gate
+and then reports that Cloud publishing is unavailable; it uploads nothing.
+
+## Troubleshooting
+
+- Exit code `2`: fix the reported input or validation rule and retry.
+- Exit code `3`: install or select the dependency named in the recovery action.
+- Exit code `4`: an external capability is unavailable; the output remains local.
+- Exit code `70`: preserve the secret-free error code and open a bug report.
+
+Run `npx showkit doctor --json` after changing Node.js, updating the skill, or
+changing capture routes. See [`SUPPORT.md`](SUPPORT.md) before sharing logs or
+reproductions.

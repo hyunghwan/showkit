@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sanitizer assurance</title>
+  </head>
+  <body>
+    <main>
+      <h1>Prepare a safe product state</h1>
+      <form action="/submit" method="post">
+        <label>Draft label <input type="text" value="unpublished"></label>
+      </form>
+      <a href="https://example.test/private-path?token=not-a-real-token">Product details</a>
+      <button type="button" onclick="return false">Continue safely</button>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

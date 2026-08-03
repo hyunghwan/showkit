@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Action confirmation</title>
+  </head>
+  <body>
+    <main>
+      <h1>Release report</h1>
+      <p id="effect-status" role="status">The report has not been published.</p>
+      <button type="button" id="publish-report">Publish report</button>
+    </main>
+    <script>
+      globalThis.browserSideEffectCount = 0;
+      document.querySelector("#publish-report").addEventListener("click", () => {
+        globalThis.browserSideEffectCount += 1;
+        document.querySelector("#effect-status").textContent = "The report was published.";
+      });
+    </script>
+  </body>
+</html>

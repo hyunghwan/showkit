@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Oversized asset</title>
+  </head>
+  <body>
+    <main>
+      <h1>Oversized asset assurance</h1>
+      <img alt="Oversized product asset" width="32" height="32">
+      <button type="button">Continue</button>
+    </main>
+    <script>
+      document.querySelector("img").src =
+        `data:image/png;base64,${btoa("A".repeat(1_048_577))}`;
+    </script>
+  </body>
+</html>

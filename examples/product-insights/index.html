@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+    >
+    <title>Product insights walkthrough</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff5a36'/%3E%3Cpath d='M9 11h14M9 16h10M9 21h14' stroke='%23fffdf7' stroke-width='2.5'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="demo-frame">
+      <header class="frame-header" id="frame-header">
+        <div class="frame-header-main" id="frame-header-main"></div>
+        <div class="frame-header-meta" id="frame-header-meta"></div>
+      </header>
+      <main>
+        <section class="stage-card" id="stage-card" aria-label="Product demo">
+          <div class="scene-shell" id="scene-shell">
+            <div class="scene-viewport" id="scene-viewport"></div>
+            <div class="step-backdrop" id="step-backdrop" aria-hidden="true" hidden></div>
+            <button class="hotspot" id="hotspot" type="button"></button>
+            <aside class="tooltip" id="tooltip" aria-live="polite">
+              <div class="tooltip-meta" id="tooltip-meta"></div>
+              <h2 id="tooltip-title"></h2>
+              <p id="tooltip-body"></p>
+              <div class="tooltip-progress" id="tooltip-progress"></div>
+              <div class="tooltip-actions" id="tooltip-actions">
+                <div class="completion-actions" id="completion-actions" hidden></div>
+                <button class="tooltip-next" id="tooltip-next" type="button">Next</button>
+              </div>
+            </aside>
+          </div>
+          <div class="chrome-overlay" id="chrome-overlay" aria-label="Demo controls">
+            <div class="chrome-dock" data-position="top-left"></div>
+            <div class="chrome-dock" data-position="top"></div>
+            <div class="chrome-dock" data-position="top-right"></div>
+            <div class="chrome-dock" data-position="left"></div>
+            <div class="chrome-dock" data-position="center"></div>
+            <div class="chrome-dock" data-position="right"></div>
+            <div class="chrome-dock" data-position="bottom-left"></div>
+            <div class="chrome-dock" data-position="bottom"></div>
+            <div class="chrome-dock" data-position="bottom-right"></div>
+          </div>
+          <div
+            class="welcome-layer"
+            id="welcome-layer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="welcome-title"
+            aria-describedby="welcome-body"
+            hidden
+          >
+            <div class="welcome-card">
+              <p class="welcome-kicker">Interactive demo</p>
+              <h1 id="welcome-title"></h1>
+              <p id="welcome-body"></p>
+              <button class="welcome-action" id="welcome-action" type="button"></button>
+            </div>
+          </div>
+        </section>
+      </main>
+      <footer class="frame-footer" id="frame-footer">
+        <div class="frame-footer-progress" id="frame-footer-progress"></div>
+        <div class="frame-footer-actions" id="frame-footer-actions"></div>
+      </footer>
+      <div class="chrome-parts" id="chrome-parts" hidden>
+        <h1 class="demo-title chrome-part" id="demo-title" data-chrome-part="title">Product insights walkthrough</h1>
+        <p class="demo-goal chrome-part" id="demo-goal" data-chrome-part="goal">Explore the verified product flow at your own pace.</p>
+        <div class="step-count chrome-part" id="step-count" data-chrome-part="stepCount" aria-live="polite"></div>
+        <div class="progress-control chrome-part" id="progress-control" data-chrome-part="progress">
+          <span class="visually-hidden">Demo progress</span>
+          <span class="progress-track" aria-hidden="true"><span id="progress-bar"></span></span>
+        </div>
+        <button class="control-button chrome-part" id="back" data-chrome-part="back" type="button">Back</button>
+        <button class="control-button chrome-part" id="restart" data-chrome-part="restart" type="button">Restart demo</button>
+        <a class="cta chrome-part" id="cta" data-chrome-part="cta" hidden>Open product</a>
+      </div>
+      <p class="visually-hidden" id="announcer" aria-live="polite"></p>
+    </div>
+    <script src="./story.js"></script>
+    <script src="./player.js"></script>
+  </body>
+</html>

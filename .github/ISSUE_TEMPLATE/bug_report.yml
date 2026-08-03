@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible ShowKit problem with public sample content.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, customer data, private captures, raw DOM,
+        cookies, storage values, or authenticated network data. Use private
+        vulnerability reporting for security issues.
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened?
+      description: Describe the observed result and the result you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Public reproduction
+      description: Provide minimal steps using public or synthetic content.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ShowKit version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, operating system, and capture route.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Secret-free diagnostics
+      description: Paste only diagnostics you have reviewed and sanitized.
