@@ -28,17 +28,48 @@ const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
 const portableTextFiles = (await readdir(skillRoot, { recursive: true })).filter(
   (file) => file.endsWith(".md") || file.endsWith(".json")
 );
-for (const file of portableTextFiles) {
-  const text = await readFile(path.join(skillRoot, file), "utf8");
-  for (const forbiddenPath of [
+
+function containsUserSpecificAbsolutePath(text) {
+  if (
+    /file:\/\/\/(?:Users|home)\//.test(text) ||
+    /file:\/\/\/[A-Za-z]:\/Users\//.test(text)
+  ) {
+    return true;
+  }
+
+  const withoutWebUrls = text.replace(
+    /https?:\/\/[^\s`"'<>)}\]]+/g,
+    ""
+  );
+  return [
     /\/Users\/[^\s`"']+/,
     /\/home\/[^\s`"']+/,
-    /file:\/\/\/(?:Users|home)\//,
-    /[A-Za-z]:\\Users\\/
-  ]) {
-    if (forbiddenPath.test(text)) {
-      throw new Error(`${file} contains a user-specific absolute path.`);
-    }
+    /[A-Za-z]:\\+Users\\+/
+  ].some((pattern) => pattern.test(withoutWebUrls));
+}
+
+for (const fixture of [
+  { text: "/Users/alice/project/SKILL.md", expected: true },
+  { text: "/home/alice/project/SKILL.md", expected: true },
+  { text: String.raw`C:\Users\alice\project\SKILL.md`, expected: true },
+  {
+    text: String.raw`{"path":"C:\\Users\\alice\\project\\SKILL.md"}`,
+    expected: true
+  },
+  { text: "file:///Users/alice/project/SKILL.md", expected: true },
+  { text: "file:///C:/Users/alice/project/SKILL.md", expected: true },
+  { text: "https://app.example.test/home/dashboard", expected: false },
+  { text: "https://app.example.test/Users/alice", expected: false }
+]) {
+  if (containsUserSpecificAbsolutePath(fixture.text) !== fixture.expected) {
+    throw new Error(`The portable-path policy misclassified: ${fixture.text}`);
+  }
+}
+
+for (const file of portableTextFiles) {
+  const text = await readFile(path.join(skillRoot, file), "utf8");
+  if (containsUserSpecificAbsolutePath(text)) {
+    throw new Error(`${file} contains a user-specific absolute path.`);
   }
 }
 const requiredCommands = [
