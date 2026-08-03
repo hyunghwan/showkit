@@ -42,7 +42,7 @@
     {
       "name": "player-javascript-budget",
       "passed": true,
-      "detail": "Player JavaScript is 5824 gzip bytes; the limit is 81920."
+      "detail": "Player JavaScript is 5826 gzip bytes; the limit is 81920."
     },
     {
       "name": "single-asset-budget",

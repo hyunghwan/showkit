@@ -291,7 +291,7 @@
           /^(?:auto|block|swap|fallback|optional)$/.test(face.display) &&
           /^\.\/assets\/[a-f0-9]{64}\.woff2$/.test(face.src) &&
           (!face.unicodeRange ||
-            /^U\+[0-9A-F?*-]+(?:\s*-\s*[0-9A-F?*-]+)?(?:\s*,\s*U\+[0-9A-F?*-]+(?:\s*-\s*[0-9A-F?*-]+)?)*$/i.test(
+            /^U\+[0-9A-F?*]{1,6}(?:\s*-\s*[0-9A-F?*]{1,6})?(?:\s*,\s*U\+[0-9A-F?*]{1,6}(?:\s*-\s*[0-9A-F?*]{1,6})?)*$/i.test(
               face.unicodeRange
             ))
       )
