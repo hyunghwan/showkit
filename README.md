@@ -43,23 +43,22 @@ vendored under this repository's MIT license.
 
 ## Quick start
 
-### With an AI coding agent
+### Install and create your first demo
 
 Requirements: Node.js 22 or 24.
 
-Install the ShowKit skill:
+Open Claude Code or Codex and paste this. Your coding agent does the rest.
 
-```bash
-npx skills add hyunghwan/showkit
-```
-
-Then describe the product flow you want:
-
-> Using ShowKit, create a checked local interactive HTML demo of the product
-> flow I opened. Choose the number of steps needed to explain the flow. Preserve
-> supported visible text and styling, do not use screenshots, and stop before
-> saving if private content needs my choice. Build and preview it locally. Do
-> not publish anything.
+> Install ShowKit and create a checked local interactive HTML demo of the
+> product flow I have open. First run `npx skills add hyunghwan/showkit`, then
+> find and read the installed ShowKit `SKILL.md` and follow it. Choose the number
+> of steps this flow needs. Preserve supported visible HTML, text, styles, and
+> local assets. Never use screenshots. Stop before saving if private content
+> needs my choice. Set up a compatible `@showkit/cli` in a new output folder.
+> Ask before changing an existing project's dependencies or installing
+> Playwright or a browser. Build, check, and preview the demo locally. Do not
+> publish anything. When you finish, give me the local preview path and a short
+> summary of what ShowKit checked.
 
 The skill handles setup, installs a compatible `@showkit/cli` runtime in the
 output folder, selects the safest available capture route, checks the demo, and
