@@ -17,6 +17,9 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
+      semver:
+        specifier: 7.8.5
+        version: 7.8.5
       typescript:
         specifier: 7.0.2
         version: 7.0.2
