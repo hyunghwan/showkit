@@ -26,9 +26,10 @@
     "test:capture": "playwright test fixtures/demo-apps/public/public.demo.ts"
   },
   "devDependencies": {
-    "@showkit/cli": "workspace:*",
     "@playwright/test": "1.62.0",
+    "@showkit/cli": "workspace:*",
     "@types/node": "^24.0.0",
+    "semver": "7.8.5",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
   }
