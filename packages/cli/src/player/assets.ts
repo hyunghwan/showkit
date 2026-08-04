@@ -101,6 +101,13 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
                 <button class="tooltip-next" id="tooltip-next" type="button">Next</button>
               </div>
             </aside>
+            <a
+              class="showkit-watermark"
+              href="https://showkit.sqncs.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              referrerpolicy="no-referrer"
+            >Powered by <strong>ShowKit</strong><span class="visually-hidden"> (opens in a new tab)</span></a>
           </div>
           <div class="chrome-overlay" id="chrome-overlay" aria-label="Demo controls">
             <div class="chrome-dock" data-position="top-left"></div>
@@ -129,13 +136,6 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
               <button class="welcome-action" id="welcome-action" type="button"></button>
             </div>
           </div>
-          <a
-            class="showkit-watermark"
-            href="https://showkit.sqncs.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            referrerpolicy="no-referrer"
-          >Powered by <strong>ShowKit</strong><span class="visually-hidden"> (opens in a new tab)</span></a>
         </section>
       </main>
       <footer class="frame-footer" id="frame-footer">
@@ -510,8 +510,8 @@ main {
   padding: 4px 8px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
-  background: rgba(17, 20, 19, 0.52);
-  color: rgba(255, 255, 255, 0.72);
+  background: #17211b;
+  color: #fffdf7;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -529,8 +529,8 @@ main {
 }
 
 .showkit-watermark:hover {
-  background: rgba(17, 20, 19, 0.74);
-  color: rgba(255, 255, 255, 0.96);
+  background: #0f1612;
+  color: #ffffff;
 }
 
 .scene-shell {

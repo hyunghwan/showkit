@@ -670,11 +670,33 @@ test.describe("Milestone 1 local workflow", () => {
       const rect = element.getBoundingClientRect();
       const stage = document.querySelector("#stage-card")?.getBoundingClientRect();
       const style = getComputedStyle(element);
+      const sceneShell = document.querySelector("#scene-shell");
       const hotspot = document.querySelector("#hotspot");
       const tooltip = document.querySelector("#tooltip");
       const chrome = document.querySelector("#chrome-overlay");
+      const welcome = document.querySelector("#welcome-layer");
+      const parseRgb = (value: string) =>
+        value.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [];
+      const luminance = (value: string) => {
+        const channels = parseRgb(value).map((channel) => {
+          const normalized = channel / 255;
+          return normalized <= 0.04045
+            ? normalized / 12.92
+            : ((normalized + 0.055) / 1.055) ** 2.4;
+        });
+        return channels.length === 3
+          ? channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722
+          : 0;
+      };
+      const foregroundLuminance = luminance(style.color);
+      const backgroundLuminance = luminance(style.backgroundColor);
       return {
         position: style.position,
+        color: style.color,
+        backgroundColor: style.backgroundColor,
+        contrast:
+          (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+          (Math.min(foregroundLuminance, backgroundLuminance) + 0.05),
         width: rect.width,
         height: rect.height,
         rightInset: stage ? stage.right - rect.right : Number.POSITIVE_INFINITY,
@@ -685,6 +707,51 @@ test.describe("Milestone 1 local workflow", () => {
           rect.top >= stage.top &&
           rect.right <= stage.right &&
           rect.bottom <= stage.bottom,
+        insideSceneShell:
+          sceneShell instanceof HTMLElement && element.parentElement === sceneShell,
+        sceneShellIsolation:
+          sceneShell instanceof HTMLElement
+            ? getComputedStyle(sceneShell).isolation
+            : "",
+        overlayLayersAreStageSiblings:
+          sceneShell instanceof HTMLElement &&
+          chrome instanceof HTMLElement &&
+          welcome instanceof HTMLElement &&
+          sceneShell.parentElement === chrome.parentElement &&
+          sceneShell.parentElement === welcome.parentElement,
+        receivesPointer: (() => {
+          const hit = document.elementFromPoint(
+            rect.left + rect.width / 2,
+            rect.top + rect.height / 2
+          );
+          return hit === element || (hit !== null && element.contains(hit));
+        })(),
+        hotspotWinsOnOverlap: (() => {
+          if (
+            !(sceneShell instanceof HTMLElement) ||
+            !(hotspot instanceof HTMLElement)
+          ) {
+            return false;
+          }
+          const originalStyle = element.getAttribute("style");
+          const shellRect = sceneShell.getBoundingClientRect();
+          const hotspotRect = hotspot.getBoundingClientRect();
+          element.style.right = "auto";
+          element.style.bottom = "auto";
+          element.style.left =
+            hotspotRect.left + hotspotRect.width / 2 - shellRect.left - rect.width / 2 +
+            "px";
+          element.style.top =
+            hotspotRect.top + hotspotRect.height / 2 - shellRect.top - rect.height / 2 +
+            "px";
+          const hit = document.elementFromPoint(
+            hotspotRect.left + hotspotRect.width / 2,
+            hotspotRect.top + hotspotRect.height / 2
+          );
+          if (originalStyle === null) element.removeAttribute("style");
+          else element.setAttribute("style", originalStyle);
+          return hit === hotspot || (hit !== null && hotspot.contains(hit));
+        })(),
         zIndex: Number(style.zIndex),
         hotspotZIndex:
           hotspot instanceof HTMLElement ? Number(getComputedStyle(hotspot).zIndex) : 0,
@@ -695,6 +762,9 @@ test.describe("Milestone 1 local workflow", () => {
       };
     });
     expect(watermarkLayout.position).toBe("absolute");
+    expect(watermarkLayout.color).toBe("rgb(255, 253, 247)");
+    expect(watermarkLayout.backgroundColor).toBe("rgb(23, 33, 27)");
+    expect(watermarkLayout.contrast).toBeGreaterThanOrEqual(4.5);
     expect(watermarkLayout.width).toBeGreaterThanOrEqual(24);
     expect(watermarkLayout.height).toBeGreaterThanOrEqual(24);
     expect(watermarkLayout.rightInset).toBeGreaterThanOrEqual(0);
@@ -702,9 +772,14 @@ test.describe("Milestone 1 local workflow", () => {
     expect(watermarkLayout.bottomInset).toBeGreaterThanOrEqual(0);
     expect(watermarkLayout.bottomInset).toBeLessThanOrEqual(12);
     expect(watermarkLayout.insideStage).toBe(true);
+    expect(watermarkLayout.insideSceneShell).toBe(true);
+    expect(watermarkLayout.sceneShellIsolation).toBe("isolate");
+    expect(watermarkLayout.overlayLayersAreStageSiblings).toBe(true);
+    expect(watermarkLayout.receivesPointer).toBe(true);
+    expect(watermarkLayout.hotspotWinsOnOverlap).toBe(true);
     expect(watermarkLayout.zIndex).toBeLessThan(watermarkLayout.hotspotZIndex);
     expect(watermarkLayout.zIndex).toBeLessThan(watermarkLayout.tooltipZIndex);
-    expect(watermarkLayout.zIndex).toBeLessThan(watermarkLayout.chromeZIndex);
+    expect(watermarkLayout.chromeZIndex).toBeGreaterThan(0);
     await expect(
       page.locator(".scene-viewport").getByRole("button", { name: "Add filter" })
     ).toBeVisible();
