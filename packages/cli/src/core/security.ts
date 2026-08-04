@@ -269,7 +269,7 @@ export function assertCaptureSafeForPersistence(capture: CaptureSource): void {
     throw new ShowKitError({
       code: "SensitiveDataDetected",
       message:
-        "Sensitive data was found. ShowKit did not save the captured page. Your previous captured product flow has not changed.",
+        "[SHOWKIT:SensitiveDataDetected] Sensitive data was found. ShowKit did not save the captured page. Your previous captured product flow has not changed.",
       exitCode: EXIT_CODES.validation,
       recovery: "Hide the data or update the capture rule, then try again."
     });

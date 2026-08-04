@@ -69,12 +69,12 @@ test("selects the three current landing-page demos", async ({ page }) => {
 
   const tabs = page.getByRole("tab");
   await expect(tabs).toHaveCount(3);
-  await expect(tabs).toHaveText([/Airbnb demo/, /Linear demo/, /Shopify demo/]);
+  await expect(tabs).toHaveText([/Airbnb demo/, /Linear demo/, /Stripe demo/]);
 
   const frame = page.locator("#showkit-demo");
   await expect(frame).toHaveAttribute(
     "src",
-    "https://showkit.sqncs.com/demos/travel-search/?release=2026-08-01-english-captures"
+    "https://showkit.sqncs.com/demos/travel-search/?release=2026-08-04-stripe-restart-icon"
   );
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(
     "Explore flexible travel dates"
@@ -88,9 +88,14 @@ test("selects the three current landing-page demos", async ({ page }) => {
   await tabs.nth(1).press("ArrowRight");
   await expect(tabs.nth(2)).toBeFocused();
   await expect(tabs.nth(2)).toHaveAttribute("aria-selected", "true");
-  await expect(frame).toHaveAttribute("src", /\/demos\/product-options\//);
-  await expect(page.getByRole("heading", { level: 2 })).toHaveText("Compare product options");
-  await expect(page.locator("#open-demo")).toHaveAttribute("href", /\/demos\/product-options\//);
+  await expect(frame).toHaveAttribute("src", /\/demos\/stripe-payments\//);
+  await expect(page.getByRole("heading", { level: 2 })).toHaveText(
+    "Explore Stripe payment tools"
+  );
+  await expect(page.locator("#open-demo")).toHaveAttribute(
+    "href",
+    /\/demos\/stripe-payments\//
+  );
   await expect.poll(() => requestedDemos.length).toBeGreaterThanOrEqual(3);
 });
 
@@ -99,15 +104,15 @@ test("keeps the selector usable on a narrow viewport", async ({ page }) => {
     route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Demo</title>" })
   );
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`${pageUrl}/?demo=product-options`);
+  await page.goto(`${pageUrl}/?demo=stripe-payments`);
 
-  await expect(page.getByRole("tab", { name: /Shopify demo/ })).toHaveAttribute(
+  await expect(page.getByRole("tab", { name: /Stripe demo/ })).toHaveAttribute(
     "aria-selected",
     "true"
   );
   await expect(page.locator("#showkit-demo")).toHaveAttribute(
     "title",
-    "Compare product options interactive demo"
+    "Explore Stripe payment tools interactive demo"
   );
   await expect(page.locator(".demo-stage")).toBeInViewport();
 });

@@ -39,6 +39,14 @@ Pass the returned host validation to
 read-only evaluate surface and implement `Page.createIsolatedWorld` with a
 host-owned read-only wrapper.
 
+If that higher-level evaluator is blocked by verified host policy or its
+bounded setup times out, the adapter may request the official tab-scoped `cdp`
+capability. Continue only after the person approves access for the exact site.
+The adapter permits only `Page.getFrameTree`, `Page.createIsolatedWorld`, and
+`Runtime.evaluate`, binds the runtime to the selected tab and origin, and
+recreates its isolated context after navigation. It never exposes the raw CDP
+handle or sends network, storage, cookie, fetch, or DOM snapshot commands.
+
 The browser host selects and operates the tab. The ShowKit CLI validates and
 imports only the safe temporary envelope. It never reads cookies, headers,
 passwords, browser storage, request bodies, response bodies, or raw DOM.
@@ -58,7 +66,7 @@ purchase, upload, download, permission, security, legal, or delete action.
 Private visible content is a separate confirmation. Offer **Keep visible
 content**, **Use text-only redaction**, or **Do not capture**. Do not infer
 consent. When the person keeps visible content, connect
-`createOpenAIPageAssetProvider({ tab })` and pass both confirmed
+`createOpenAIPageAssetProvider({ tab, hostValidation })` and pass both confirmed
 `privateContentConsent` and `pageAssetConsent`. Text-only redaction does not
 grant private asset consent.
 
@@ -158,7 +166,9 @@ After a supported capture:
    completion-card choices in `SKILL.md`.
 3. Run `story apply`, `validate`, `build`, and local `preview`.
 4. Compare the source and preview at the capture viewport and once after
-   resizing. Report visual fidelity as `checked`, `incomplete`, or `blocked`.
+   resizing. Require zero overlap between ShowKit cards and visible captured
+   dialogs, alert dialogs, menus, listboxes, tooltips, and the active hotspot.
+   Report visual fidelity as `checked`, `incomplete`, or `blocked`.
 5. Keep captured, built, checked, previewed, and published states distinct.
 6. Publish only after a separate explicit request and destination confirmation.
 

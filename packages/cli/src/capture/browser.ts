@@ -1,10 +1,13 @@
 import type { Locator, Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { EXIT_CODES, ShowKitError } from "../core/errors.js";
 import { sha256 } from "../core/json.js";
 import type { AssetPayload, Scene } from "../core/schemas.js";
 import { DEFAULT_SECRET_PATTERN_SOURCES } from "../core/security.js";
 import {
   extractSceneKernel,
+  readFrozenSceneTransferKernel,
+  type FrozenSceneTransferResult,
   type SceneKernelBlocker,
   type SceneKernelOptions,
   type SceneKernelResult
@@ -22,6 +25,89 @@ type CdpSession = {
   send(method: string, params?: Record<string, unknown>): Promise<any>;
   detach(): Promise<void>;
 };
+
+type CachedIsolatedWorld = {
+  session: CdpSession;
+  executionContextId: number | undefined;
+};
+
+const isolatedWorlds = new WeakMap<Page, Promise<CachedIsolatedWorld>>();
+
+async function cachedIsolatedWorld(page: Page): Promise<CachedIsolatedWorld> {
+  const existing = isolatedWorlds.get(page);
+  if (existing) return existing;
+  const created = (async (): Promise<CachedIsolatedWorld> => {
+    const world: CachedIsolatedWorld = {
+      session: (await page.context().newCDPSession(page)) as CdpSession,
+      executionContextId: undefined
+    };
+    const invalidate = (): void => {
+      world.executionContextId = undefined;
+    };
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) invalidate();
+    });
+    page.once("close", () => {
+      isolatedWorlds.delete(page);
+      void world.session.detach().catch(() => undefined);
+    });
+    return world;
+  })();
+  isolatedWorlds.set(page, created);
+  try {
+    return await created;
+  } catch (error) {
+    isolatedWorlds.delete(page);
+    throw error;
+  }
+}
+
+async function ensureExecutionContext(
+  page: Page,
+  world: CachedIsolatedWorld
+): Promise<number> {
+  if (Number.isInteger(world.executionContextId)) {
+    return world.executionContextId!;
+  }
+  const frameTree = (await world.session.send("Page.getFrameTree")) as {
+    frameTree?: { frame?: { id?: string } };
+  };
+  const frameId = frameTree.frameTree?.frame?.id;
+  if (!frameId) throw new Error("The main browser frame is unavailable.");
+  const isolatedWorld = (await world.session.send("Page.createIsolatedWorld", {
+    frameId,
+    worldName: "showkit-capture-readonly",
+    grantUniveralAccess: false
+  })) as { executionContextId?: number };
+  if (!Number.isInteger(isolatedWorld.executionContextId)) {
+    throw new Error("The isolated browser execution context is unavailable.");
+  }
+  const executionContextId = isolatedWorld.executionContextId!;
+  const installation = (await world.session.send("Runtime.evaluate", {
+    expression: `(() => {
+      Object.defineProperty(globalThis, "__showkitExtractHtmlSceneV1", {
+        value: ${extractSceneKernel.toString()},
+        configurable: true
+      });
+      Object.defineProperty(globalThis, "__showkitReadFrozenHtmlSceneV1", {
+        value: ${readFrozenSceneTransferKernel.toString()},
+        configurable: true
+      });
+      return true;
+    })()`,
+    contextId: executionContextId,
+    awaitPromise: true,
+    returnByValue: true
+  })) as { exceptionDetails?: { text?: string } };
+  if (installation.exceptionDetails) {
+    throw new Error(
+      installation.exceptionDetails.text ??
+        "The isolated browser capture functions could not be installed."
+    );
+  }
+  world.executionContextId = executionContextId;
+  return executionContextId;
+}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -116,7 +202,8 @@ function kernelOptions(
       : {}),
     ...(options.transferChunkSize !== undefined
       ? { transferChunkSize: options.transferChunkSize }
-      : {})
+      : {}),
+    ...(options.transferId ? { transferId: options.transferId } : {})
   };
 }
 
@@ -142,32 +229,18 @@ async function evaluateInIsolatedWorld(
   page: Page,
   options: SceneKernelOptions
 ): Promise<SceneKernelResult> {
-  let session: CdpSession | undefined;
+  let world: CachedIsolatedWorld | undefined;
+  let frozenCaptureId: string | undefined;
   try {
-    session = (await page.context().newCDPSession(page)) as CdpSession;
-    const frameTree = (await session.send("Page.getFrameTree")) as {
-      frameTree?: { frame?: { id?: string } };
-    };
-    const frameId = frameTree.frameTree?.frame?.id;
-    if (!frameId) throw new Error("The main browser frame is unavailable.");
-    const isolatedWorld = (await session.send("Page.createIsolatedWorld", {
-      frameId,
-      worldName: "showkit-capture-readonly",
-      grantUniveralAccess: false
-    })) as { executionContextId?: number };
-    if (!Number.isInteger(isolatedWorld.executionContextId)) {
-      throw new Error("The isolated browser execution context is unavailable.");
-    }
-    const functionDeclaration = `async function(options) {
-      const extract = ${extractSceneKernel.toString()};
-      return await extract(options);
-    }`;
+    world = await cachedIsolatedWorld(page);
+    const executionContextId = await ensureExecutionContext(page, world);
     const callKernel = async (
       nextOptions: SceneKernelOptions
     ): Promise<SceneKernelResult> => {
-      const response = (await session!.send("Runtime.callFunctionOn", {
-        functionDeclaration,
-        executionContextId: isolatedWorld.executionContextId,
+      const response = (await world!.session.send("Runtime.callFunctionOn", {
+        functionDeclaration:
+          "async function(options) { return await globalThis.__showkitExtractHtmlSceneV1(options); }",
+        executionContextId,
         arguments: [{ value: nextOptions }],
         awaitPromise: true,
         returnByValue: true,
@@ -187,22 +260,86 @@ async function evaluateInIsolatedWorld(
       }
       return response.result.value;
     };
-    const initialResult = await callKernel(options);
-    return await decodeSceneKernelResult(
+    const callFrozenTransfer = async (request: {
+      captureId: string;
+      offset?: number;
+      chunkSize?: number;
+      release?: boolean;
+    }): Promise<FrozenSceneTransferResult> => {
+      const response = (await world!.session.send("Runtime.callFunctionOn", {
+        functionDeclaration:
+          "function(options) { return globalThis.__showkitReadFrozenHtmlSceneV1(options); }",
+        executionContextId,
+        arguments: [{ value: request }],
+        awaitPromise: true,
+        returnByValue: true,
+        userGesture: false
+      })) as {
+        result?: { value?: FrozenSceneTransferResult };
+        exceptionDetails?: { text?: string };
+      };
+      if (response.exceptionDetails) {
+        throw new Error(
+          response.exceptionDetails.text ??
+            "The frozen HTML scene transfer failed."
+        );
+      }
+      if (!response.result || response.result.value === undefined) {
+        throw new Error("The frozen HTML scene transfer returned no result.");
+      }
+      return response.result.value;
+    };
+    const initialResult = await callKernel({
+      ...options,
+      ...(!options.scanOnly ? { transferId: randomUUID() } : {})
+    });
+    if (
+      initialResult.ok &&
+      !initialResult.scanOnly &&
+      initialResult.transfer?.mode === "chunked-json"
+    ) {
+      frozenCaptureId = initialResult.transfer.captureId;
+    }
+    const decoded = await decodeSceneKernelResult(
       initialResult,
-      (offset, chunkSize) =>
-        callKernel({
-          ...options,
-          transferEncoding: "chunked-json",
-          transferOffset: offset,
-          transferChunkSize: chunkSize
-        })
+      async (offset, chunkSize) => {
+        if (!frozenCaptureId) {
+          throw new Error("The frozen HTML scene transfer id is unavailable.");
+        }
+        return callFrozenTransfer({
+          captureId: frozenCaptureId,
+          offset,
+          chunkSize
+        });
+      }
     );
+    if (frozenCaptureId) {
+      await callFrozenTransfer({
+        captureId: frozenCaptureId,
+        release: true
+      }).catch(() => undefined);
+      frozenCaptureId = undefined;
+    }
+    return decoded;
   } catch (error) {
     if (error instanceof ShowKitError) throw error;
     throw browserIsolationError(error);
   } finally {
-    await session?.detach().catch(() => undefined);
+    if (world && frozenCaptureId && Number.isInteger(world.executionContextId)) {
+      await world.session
+        .send("Runtime.callFunctionOn", {
+          functionDeclaration:
+            "function(options) { return globalThis.__showkitReadFrozenHtmlSceneV1(options); }",
+          executionContextId: world.executionContextId,
+          arguments: [
+            { value: { captureId: frozenCaptureId, release: true } }
+          ],
+          awaitPromise: true,
+          returnByValue: true,
+          userGesture: false
+        })
+        .catch(() => undefined);
+    }
   }
 }
 

@@ -3,6 +3,7 @@ import {
   type CaptureSource,
   type StorySpec
 } from "../core/schemas.js";
+import { sha256 } from "../core/json.js";
 
 export type PlayerFiles = {
   "index.html": string;
@@ -10,6 +11,8 @@ export type PlayerFiles = {
   "story.js": string;
   "player.js": string;
 };
+
+const PLAYER_ASSET_REVISION_NAMESPACE = "showkit-player-assets-v1";
 
 function escapeHtml(value: string): string {
   return value
@@ -64,6 +67,12 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
     cta: story.cta ?? null,
     completion: story.completion ?? null
   };
+  const storySource = `window.__SHOWKIT_DEMO__ = ${safeScriptJson(payload)};\n`;
+  const assetRevision = sha256(
+    [PLAYER_ASSET_REVISION_NAMESPACE, PLAYER_CSS_MODERN, PLAYER_JS, storySource].join(
+      "\u0000"
+    )
+  ).slice(0, 16);
 
   return {
     "index.html": `<!doctype html>
@@ -77,7 +86,7 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
     >
     <title>${escapeHtml(story.title)}</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='${encodeURIComponent(story.theme.accent)}'/%3E%3Cpath d='M9 11h14M9 16h10M9 21h14' stroke='%23fffdf7' stroke-width='2.5'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./styles.css?v=${assetRevision}">
   </head>
   <body>
     <div class="demo-frame">
@@ -150,18 +159,43 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
           <span class="visually-hidden">Demo progress</span>
           <span class="progress-track" aria-hidden="true"><span id="progress-bar"></span></span>
         </div>
-        <button class="control-button chrome-part" id="back" data-chrome-part="back" type="button">Back</button>
-        <button class="control-button chrome-part" id="restart" data-chrome-part="restart" type="button">Restart demo</button>
+        <button
+          class="control-button chrome-part"
+          id="back"
+          data-chrome-part="back"
+          type="button"
+          aria-label="Back"
+          title="Back"
+        >
+          <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M15 18 9 12l6-6M9 12h10"></path>
+          </svg>
+          <span class="control-label">Back</span>
+        </button>
+        <button
+          class="control-button chrome-part"
+          id="restart"
+          data-chrome-part="restart"
+          type="button"
+          aria-label="Restart demo"
+          title="Restart demo"
+        >
+          <svg class="control-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+            <path d="M3 3v5h5"></path>
+          </svg>
+          <span class="control-label">Restart demo</span>
+        </button>
         <a class="cta chrome-part" id="cta" data-chrome-part="cta" hidden>Open product</a>
       </div>
       <p class="visually-hidden" id="announcer" aria-live="polite"></p>
     </div>
-    <script src="./story.js"></script>
-    <script src="./player.js"></script>
+    <script src="./story.js?v=${assetRevision}"></script>
+    <script src="./player.js?v=${assetRevision}"></script>
   </body>
 </html>
 `,
-    "story.js": `window.__SHOWKIT_DEMO__ = ${safeScriptJson(payload)};\n`,
+    "story.js": storySource,
     "styles.css": PLAYER_CSS_MODERN,
     "player.js": PLAYER_JS
   };
@@ -596,17 +630,14 @@ main {
 
 .welcome-layer[data-backdrop="light"] {
   background: rgba(4, 8, 7, 0.24);
-  backdrop-filter: blur(1px);
 }
 
 .welcome-layer[data-backdrop="medium"] {
   background: rgba(4, 8, 7, 0.48);
-  backdrop-filter: blur(2px);
 }
 
 .welcome-layer[data-backdrop="heavy"] {
   background: rgba(4, 8, 7, 0.7);
-  backdrop-filter: blur(4px);
 }
 
 .welcome-card {
@@ -962,6 +993,25 @@ main {
   cursor: pointer;
 }
 
+.control-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.control-icon {
+  display: none;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .control-button:hover { background: rgba(255, 255, 255, 0.1); }
 .control-button:disabled { cursor: not-allowed; opacity: 0.36; }
 
@@ -1034,7 +1084,65 @@ main {
 }
 
 .tooltip[data-complete="true"] {
+  container-type: inline-size;
   width: min(360px, calc(100% - 24px));
+  padding: 14px 14px 12px;
+  border-radius: 12px;
+}
+
+.tooltip[data-complete="true"] .tooltip-meta {
+  min-height: 13px;
+  margin-bottom: 5px;
+}
+
+.tooltip[data-complete="true"] .step-count {
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.tooltip[data-complete="true"] h2 {
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.tooltip[data-complete="true"] p:not(.tooltip-kicker) {
+  margin-top: 7px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.tooltip[data-complete="true"] .tooltip-actions {
+  display: grid;
+  min-height: 32px;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+}
+
+.tooltip[data-complete="true"][data-completion-action-count="1"] .tooltip-actions {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.tooltip[data-complete="true"][data-completion-action-count="2"] .tooltip-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tooltip[data-complete="true"] .completion-actions {
+  display: contents;
+}
+
+.tooltip[data-complete="true"] .completion-action,
+.tooltip[data-complete="true"] .control-button,
+.tooltip[data-complete="true"] .cta {
+  width: auto;
+  min-width: 0;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 body[data-chrome-mode="overlay"] main {
@@ -1190,6 +1298,90 @@ body[data-chrome-mode="frame"] .control-button:hover {
   .frame-footer-actions { flex-wrap: wrap; }
 }
 
+@media (max-width: 480px) {
+  .tooltip { width: min(220px, calc(100% - 16px)); }
+}
+
+@container (max-width: 300px) {
+  .tooltip[data-complete="true"] #back,
+  .tooltip[data-complete="true"] #restart {
+    position: relative;
+    width: 32px;
+    min-width: 32px;
+    padding-inline: 0;
+  }
+
+  .tooltip[data-complete="true"] #back .control-icon,
+  .tooltip[data-complete="true"] #restart .control-icon {
+    display: block;
+  }
+
+  .tooltip[data-complete="true"] #back .control-label,
+  .tooltip[data-complete="true"] #restart .control-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .tooltip[data-complete="true"] #back::after,
+  .tooltip[data-complete="true"] #restart::after {
+    position: absolute;
+    z-index: 2;
+    bottom: calc(100% + 6px);
+    width: max-content;
+    max-width: 120px;
+    padding: 4px 6px;
+    border-radius: 5px;
+    background: var(--ink);
+    color: color-mix(in srgb, var(--paper) 8%, white);
+    content: attr(aria-label);
+    font-size: 9px;
+    font-weight: 650;
+    line-height: 1.2;
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
+    transform: translateY(2px);
+    transition:
+      opacity 120ms ease,
+      transform 120ms ease,
+      visibility 120ms ease;
+  }
+
+  .tooltip[data-complete="true"] #back::after {
+    left: 0;
+  }
+
+  .tooltip[data-complete="true"] #restart::after {
+    right: 0;
+  }
+
+  .tooltip[data-complete="true"] #back:is(:hover, :focus)::after,
+  .tooltip[data-complete="true"] #restart:is(:hover, :focus)::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 280px) {
+  .tooltip[data-complete="true"][data-completion-action-count="1"] .tooltip-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tooltip[data-complete="true"][data-completion-action-count="1"] .completion-action {
+    grid-column: 1 / -1;
+  }
+
+  .tooltip[data-complete="true"] #back,
+  .tooltip[data-complete="true"] #restart {
+    width: 100%;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -1247,6 +1439,7 @@ const PLAYER_JS = `(() => {
   let renderedScale = 1;
   let overlayFrame = 0;
   let overlayTimer = 0;
+  let completionSplitLayout = false;
   const defaultChrome = {
     mode: "overlay",
     placements: {
@@ -1344,6 +1537,281 @@ const PLAYER_JS = `(() => {
 
   function clamp(value, minimum, maximum) {
     return Math.min(Math.max(value, minimum), maximum);
+  }
+
+  function overlapArea(left, top, width, height, obstacle) {
+    const overlapWidth = Math.max(
+      0,
+      Math.min(left + width, obstacle.right) - Math.max(left, obstacle.left)
+    );
+    const overlapHeight = Math.max(
+      0,
+      Math.min(top + height, obstacle.bottom) - Math.max(top, obstacle.top)
+    );
+    return overlapWidth * overlapHeight;
+  }
+
+  function prominentSceneObstacles(shellRect) {
+    const candidates = Array.from(
+      elements.viewport.querySelectorAll(
+        '[role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="menu"], [role="listbox"], [role="tooltip"]'
+      )
+    ).filter((element) => {
+      if (!(element instanceof HTMLElement) || element.hidden) return false;
+      if (element.getAttribute("aria-hidden") === "true") return false;
+      const style = getComputedStyle(element);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        Number.parseFloat(style.opacity) === 0
+      ) {
+        return false;
+      }
+      const rect = element.getBoundingClientRect();
+      return rect.width >= 24 && rect.height >= 24;
+    });
+    const outermost = candidates.filter(
+      (candidate) =>
+        !candidates.some(
+          (other) => other !== candidate && other.contains(candidate)
+        )
+    );
+    return outermost
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const left = rect.left - shellRect.left;
+        const top = rect.top - shellRect.top;
+        return {
+          left,
+          top,
+          right: left + rect.width,
+          bottom: top + rect.height,
+          width: rect.width,
+          height: rect.height
+        };
+      })
+      .filter(
+        (obstacle) =>
+          obstacle.right > 0 &&
+          obstacle.bottom > 0 &&
+          obstacle.left < shellRect.width &&
+          obstacle.top < shellRect.height
+      );
+  }
+
+  function activeChromeObstacles(shellRect) {
+    if (chrome.mode !== "overlay") return [];
+    return Array.from(
+      elements.chromeOverlay.querySelectorAll('.chrome-dock[data-active="true"]')
+    ).map((dock) => {
+      const rect = dock.getBoundingClientRect();
+      const left = rect.left - shellRect.left;
+      const top = rect.top - shellRect.top;
+      return {
+        left,
+        top,
+        right: left + rect.width,
+        bottom: top + rect.height,
+        width: rect.width,
+        height: rect.height
+      };
+    });
+  }
+
+  function selectCompletionPlacement(shellRect, tooltipRect, sceneObstacles) {
+    const gap = 18;
+    const chromeObstacles = activeChromeObstacles(shellRect);
+    const candidates = [
+      {
+        placement: "center",
+        left: (shellRect.width - tooltipRect.width) / 2,
+        top: (shellRect.height - tooltipRect.height) / 2
+      },
+      ...sceneObstacles.flatMap((obstacle) => [
+        {
+          placement: "right",
+          left: obstacle.right + gap,
+          top: obstacle.top + obstacle.height / 2 - tooltipRect.height / 2
+        },
+        {
+          placement: "left",
+          left: obstacle.left - tooltipRect.width - gap,
+          top: obstacle.top + obstacle.height / 2 - tooltipRect.height / 2
+        },
+        {
+          placement: "bottom",
+          left: obstacle.left + obstacle.width / 2 - tooltipRect.width / 2,
+          top: obstacle.bottom + gap
+        },
+        {
+          placement: "top",
+          left: obstacle.left + obstacle.width / 2 - tooltipRect.width / 2,
+          top: obstacle.top - tooltipRect.height - gap
+        }
+      ]),
+      { placement: "top-left", left: 12, top: 12 },
+      {
+        placement: "top-right",
+        left: shellRect.width - tooltipRect.width - 12,
+        top: 12
+      },
+      {
+        placement: "bottom-left",
+        left: 12,
+        top: shellRect.height - tooltipRect.height - 12
+      },
+      {
+        placement: "bottom-right",
+        left: shellRect.width - tooltipRect.width - 12,
+        top: shellRect.height - tooltipRect.height - 12
+      }
+    ];
+    let selected = {
+      placement: "center",
+      left: 12,
+      top: 12,
+      sceneOverlap: Number.POSITIVE_INFINITY,
+      score: Number.POSITIVE_INFINITY
+    };
+    for (const [preferenceIndex, candidate] of candidates.entries()) {
+      const left = clamp(
+        candidate.left,
+        12,
+        Math.max(12, shellRect.width - tooltipRect.width - 12)
+      );
+      const top = clamp(
+        candidate.top,
+        12,
+        Math.max(12, shellRect.height - tooltipRect.height - 12)
+      );
+      const overflow =
+        Math.max(0, 12 - candidate.left) +
+        Math.max(0, 12 - candidate.top) +
+        Math.max(
+          0,
+          candidate.left + tooltipRect.width - shellRect.width + 12
+        ) +
+        Math.max(
+          0,
+          candidate.top + tooltipRect.height - shellRect.height + 12
+        );
+      const sceneOverlap = sceneObstacles.reduce(
+        (area, obstacle) =>
+          area +
+          overlapArea(
+            left,
+            top,
+            tooltipRect.width,
+            tooltipRect.height,
+            obstacle
+          ),
+        0
+      );
+      const chromeOverlap = chromeObstacles.reduce(
+        (area, obstacle) =>
+          area +
+          overlapArea(
+            left,
+            top,
+            tooltipRect.width,
+            tooltipRect.height,
+            obstacle
+          ),
+        0
+      );
+      const score =
+        overflow * 10_000_000 +
+        sceneOverlap * 1_000_000 +
+        chromeOverlap * 1_000 +
+        preferenceIndex;
+      if (score < selected.score) {
+        selected = {
+          placement: candidate.placement,
+          left,
+          top,
+          sceneOverlap,
+          score
+        };
+      }
+    }
+    return selected;
+  }
+
+  function splitCompletionPlacement(shellRect, tooltipRect) {
+    const margin = 12;
+    const gap = 18;
+    const sideAvailableWidth = Math.max(
+      0,
+      shellRect.width - tooltipRect.width - gap - margin * 2
+    );
+    const bottomAvailableHeight = Math.max(
+      0,
+      shellRect.height - tooltipRect.height - gap - margin * 2
+    );
+    const sideScale = Math.min(
+      sideAvailableWidth / renderedViewport.width,
+      Math.max(0, shellRect.height - margin * 2) / renderedViewport.height,
+      1
+    );
+    const bottomScale = Math.min(
+      Math.max(0, shellRect.width - margin * 2) / renderedViewport.width,
+      bottomAvailableHeight / renderedViewport.height,
+      1
+    );
+    const useSide = sideScale > 0 && sideScale >= bottomScale;
+    const scale = Math.max(0, useSide ? sideScale : bottomScale);
+    const sceneWidth = renderedViewport.width * scale;
+    const sceneHeight = renderedViewport.height * scale;
+    let left;
+    let top;
+    let sceneLeft;
+    let sceneTop;
+    let placement;
+    if (useSide) {
+      sceneLeft = margin;
+      sceneTop = Math.max(margin, (shellRect.height - sceneHeight) / 2);
+      left = shellRect.width - tooltipRect.width - margin;
+      top = clamp(
+        (shellRect.height - tooltipRect.height) / 2,
+        margin,
+        Math.max(margin, shellRect.height - tooltipRect.height - margin)
+      );
+      placement = "split-right";
+    } else {
+      sceneLeft = Math.max(margin, (shellRect.width - sceneWidth) / 2);
+      sceneTop = margin;
+      left = clamp(
+        (shellRect.width - tooltipRect.width) / 2,
+        margin,
+        Math.max(margin, shellRect.width - tooltipRect.width - margin)
+      );
+      top = shellRect.height - tooltipRect.height - margin;
+      placement = "split-bottom";
+    }
+    renderedScale = scale;
+    elements.viewport.style.left = Math.round(sceneLeft) + "px";
+    elements.viewport.style.top = Math.round(sceneTop) + "px";
+    elements.viewport.style.transform = "scale(" + scale + ")";
+    const sceneObstacles = prominentSceneObstacles(shellRect);
+    const sceneOverlap = sceneObstacles.reduce(
+      (area, obstacle) =>
+        area +
+        overlapArea(
+          left,
+          top,
+          tooltipRect.width,
+          tooltipRect.height,
+          obstacle
+        ),
+      0
+    );
+    return {
+      placement,
+      left,
+      top,
+      sceneOverlap,
+      score: sceneOverlap
+    };
   }
 
   const allowedAttributes = new Set([
@@ -1535,17 +2003,56 @@ const PLAYER_JS = `(() => {
       elements.stepBackdrop.hidden = true;
       elements.tooltip.hidden = false;
       elements.tooltip.style.visibility = "hidden";
-      elements.tooltip.dataset.placement = "center";
       elements.tooltip.dataset.complete = "true";
-      const tooltipRect = elements.tooltip.getBoundingClientRect();
-      elements.tooltip.style.left =
-        Math.max(12, (shellRect.width - tooltipRect.width) / 2) + "px";
-      elements.tooltip.style.top =
-        Math.max(12, (shellRect.height - tooltipRect.height) / 2) + "px";
+      elements.tooltip.style.removeProperty("width");
+      let tooltipRect = elements.tooltip.getBoundingClientRect();
+      let sceneObstacles = prominentSceneObstacles(shellRect);
+      let selected = completionSplitLayout
+        ? splitCompletionPlacement(shellRect, tooltipRect)
+        : selectCompletionPlacement(shellRect, tooltipRect, sceneObstacles);
+      if (
+        !completionSplitLayout &&
+        selected.sceneOverlap > 0 &&
+        sceneObstacles.length > 0
+      ) {
+        const minimumWidth = Math.min(220, shellRect.width - 24);
+        const widestSide = Math.max(
+          ...sceneObstacles.flatMap((obstacle) => [
+            obstacle.left - 30,
+            shellRect.width - obstacle.right - 30
+          ])
+        );
+        if (widestSide >= minimumWidth && widestSide < tooltipRect.width) {
+          elements.tooltip.style.width = Math.floor(widestSide) + "px";
+          tooltipRect = elements.tooltip.getBoundingClientRect();
+          selected = selectCompletionPlacement(
+            shellRect,
+            tooltipRect,
+            sceneObstacles
+          );
+        }
+      }
+      if (selected.sceneOverlap > 0 && sceneObstacles.length > 0) {
+        completionSplitLayout = true;
+        elements.tooltip.style.removeProperty("width");
+        tooltipRect = elements.tooltip.getBoundingClientRect();
+        selected = splitCompletionPlacement(shellRect, tooltipRect);
+        sceneObstacles = prominentSceneObstacles(shellRect);
+      }
+      elements.tooltip.dataset.placement = selected.placement;
+      elements.tooltip.dataset.prominentObstacleCount = String(
+        sceneObstacles.length
+      );
+      elements.tooltip.dataset.sceneOverlap = String(selected.sceneOverlap);
+      elements.tooltip.style.left = selected.left + "px";
+      elements.tooltip.style.top = selected.top + "px";
       elements.tooltip.style.visibility = "visible";
       return;
     }
     elements.tooltip.dataset.complete = "false";
+    elements.tooltip.dataset.prominentObstacleCount = "0";
+    elements.tooltip.dataset.sceneOverlap = "0";
+    elements.tooltip.style.removeProperty("width");
     const anchor = elements.viewport.querySelector('[data-showkit-anchor="' + CSS.escape(step.anchorId) + '"]');
     if (!anchor) {
       elements.stepBackdrop.hidden = true;
@@ -1556,10 +2063,22 @@ const PLAYER_JS = `(() => {
     const anchorRect = anchor.getBoundingClientRect();
     const left = anchorRect.left - shellRect.left;
     const top = anchorRect.top - shellRect.top;
-    elements.hotspot.style.left = left + "px";
-    elements.hotspot.style.top = top + "px";
-    elements.hotspot.style.width = anchorRect.width + "px";
-    elements.hotspot.style.height = anchorRect.height + "px";
+    const hotspotWidth = Math.max(24, anchorRect.width);
+    const hotspotHeight = Math.max(24, anchorRect.height);
+    const hotspotLeft = clamp(
+      left - (hotspotWidth - anchorRect.width) / 2,
+      0,
+      Math.max(0, shellRect.width - hotspotWidth)
+    );
+    const hotspotTop = clamp(
+      top - (hotspotHeight - anchorRect.height) / 2,
+      0,
+      Math.max(0, shellRect.height - hotspotHeight)
+    );
+    elements.hotspot.style.left = hotspotLeft + "px";
+    elements.hotspot.style.top = hotspotTop + "px";
+    elements.hotspot.style.width = hotspotWidth + "px";
+    elements.hotspot.style.height = hotspotHeight + "px";
     const anchorRadius = Number.parseFloat(
       getComputedStyle(anchor).borderTopLeftRadius
     );
@@ -1589,19 +2108,16 @@ const PLAYER_JS = `(() => {
     const tooltipRect = elements.tooltip.getBoundingClientRect();
     const gap = 18;
     const candidates = {
-      right: [left + anchorRect.width + gap, top + anchorRect.height / 2 - tooltipRect.height / 2],
-      left: [left - tooltipRect.width - gap, top + anchorRect.height / 2 - tooltipRect.height / 2],
-      bottom: [left + anchorRect.width / 2 - tooltipRect.width / 2, top + anchorRect.height + gap],
-      top: [left + anchorRect.width / 2 - tooltipRect.width / 2, top - tooltipRect.height - gap]
+      right: [hotspotLeft + hotspotWidth + gap, hotspotTop + hotspotHeight / 2 - tooltipRect.height / 2],
+      left: [hotspotLeft - tooltipRect.width - gap, hotspotTop + hotspotHeight / 2 - tooltipRect.height / 2],
+      bottom: [hotspotLeft + hotspotWidth / 2 - tooltipRect.width / 2, hotspotTop + hotspotHeight + gap],
+      top: [hotspotLeft + hotspotWidth / 2 - tooltipRect.width / 2, hotspotTop - tooltipRect.height - gap]
     };
     const preferred = step.tooltip.placement === "auto"
       ? ["right", "left", "bottom", "top"]
       : [step.tooltip.placement, "right", "left", "bottom", "top"];
-    const chromeObstacles = chrome.mode === "overlay"
-      ? Array.from(
-          elements.chromeOverlay.querySelectorAll('.chrome-dock[data-active="true"]')
-        ).map((dock) => dock.getBoundingClientRect())
-      : [];
+    const chromeObstacles = activeChromeObstacles(shellRect);
+    const sceneObstacles = prominentSceneObstacles(shellRect);
     let selected = { placement: "right", left: 12, top: 12, score: Number.POSITIVE_INFINITY };
     for (const [preferenceIndex, placement] of [...new Set(preferred)].entries()) {
       const candidate = candidates[placement];
@@ -1614,31 +2130,41 @@ const PLAYER_JS = `(() => {
         Math.max(0, candidate[1] + tooltipRect.height - shellRect.height + 12);
       const overlapWidth = Math.max(
         0,
-        Math.min(candidateLeft + tooltipRect.width, left + anchorRect.width) -
-          Math.max(candidateLeft, left)
+        Math.min(candidateLeft + tooltipRect.width, hotspotLeft + hotspotWidth) -
+          Math.max(candidateLeft, hotspotLeft)
       );
       const overlapHeight = Math.max(
         0,
-        Math.min(candidateTop + tooltipRect.height, top + anchorRect.height) -
-          Math.max(candidateTop, top)
+        Math.min(candidateTop + tooltipRect.height, hotspotTop + hotspotHeight) -
+          Math.max(candidateTop, hotspotTop)
       );
-      const chromeOverlap = chromeObstacles.reduce((area, obstacle) => {
-        const obstacleLeft = obstacle.left - shellRect.left;
-        const obstacleTop = obstacle.top - shellRect.top;
-        const width = Math.max(
-          0,
-          Math.min(candidateLeft + tooltipRect.width, obstacleLeft + obstacle.width) -
-            Math.max(candidateLeft, obstacleLeft)
-        );
-        const height = Math.max(
-          0,
-          Math.min(candidateTop + tooltipRect.height, obstacleTop + obstacle.height) -
-            Math.max(candidateTop, obstacleTop)
-        );
-        return area + width * height;
-      }, 0);
+      const chromeOverlap = chromeObstacles.reduce(
+        (area, obstacle) =>
+          area +
+          overlapArea(
+            candidateLeft,
+            candidateTop,
+            tooltipRect.width,
+            tooltipRect.height,
+            obstacle
+          ),
+        0
+      );
+      const sceneOverlap = sceneObstacles.reduce(
+        (area, obstacle) =>
+          area +
+          overlapArea(
+            candidateLeft,
+            candidateTop,
+            tooltipRect.width,
+            tooltipRect.height,
+            obstacle
+          ),
+        0
+      );
       const score =
         overflow * 10_000 +
+        sceneOverlap * 1_000 +
         chromeOverlap * 200 +
         overlapWidth * overlapHeight * 100 +
         preferenceIndex;
@@ -1652,6 +2178,9 @@ const PLAYER_JS = `(() => {
       }
     }
     elements.tooltip.dataset.placement = selected.placement;
+    elements.tooltip.dataset.prominentObstacleCount = String(
+      sceneObstacles.length
+    );
     elements.tooltip.style.left = selected.left + "px";
     elements.tooltip.style.top = selected.top + "px";
     elements.tooltip.style.visibility = "visible";
@@ -1669,6 +2198,7 @@ const PLAYER_JS = `(() => {
 
   function scaleScene() {
     const overlayMode = chrome.mode === "overlay";
+    completionSplitLayout = false;
     elements.shell.scrollTop = 0;
     elements.shell.scrollLeft = 0;
     elements.viewport.style.width = renderedViewport.width + "px";
@@ -1715,15 +2245,20 @@ const PLAYER_JS = `(() => {
     }
     renderedScale = scale;
     elements.viewport.style.transform = "scale(" + scale + ")";
+    positionOverlay();
     scheduleOverlayPosition();
   }
 
   function renderCompletionActions() {
     elements.completionActions.replaceChildren();
     if (!demo.completion) {
+      elements.tooltip.dataset.completionActionCount = "0";
       elements.completionActions.hidden = true;
       return;
     }
+    elements.tooltip.dataset.completionActionCount = String(
+      demo.completion.actions.length
+    );
     for (const action of demo.completion.actions) {
       const link = document.createElement("a");
       link.className = "completion-action";

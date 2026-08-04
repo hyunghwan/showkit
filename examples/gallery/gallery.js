@@ -1,4 +1,4 @@
-const release = "2026-08-01-english-captures";
+const release = "2026-08-04-stripe-restart-icon";
 const origin = "https://showkit.sqncs.com";
 
 const demos = {
@@ -8,8 +8,8 @@ const demos = {
   "issue-priority": {
     title: "Prioritize a new issue"
   },
-  "product-options": {
-    title: "Compare product options"
+  "stripe-payments": {
+    title: "Explore Stripe payment tools"
   }
 };
 

@@ -16,6 +16,8 @@ import {
   browserSelectionPlan,
   captureBrowserSession,
   collectRenderedIconCandidatesInPage,
+  createAdaptiveApprovedRuntime,
+  createApprovedCdpRuntime,
   createCodexBrowserAdapter,
   createCodexPageAssetProvider,
   readCodexBrowserEnvironment,
@@ -279,7 +281,27 @@ await assert.rejects(
 assert.equal(forgedProbeCount, 0);
 await rm(hostFixtureRoot, { recursive: true, force: true });
 
-const trustedPluginRoot = await firstExisting([
+const trustedPluginRoot = process.env.SHOWKIT_TEST_SKIP_INSTALLED_HOST === "1"
+  ? undefined
+  : await firstExisting([
+  path.join(
+    os.homedir(),
+    ".codex",
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "browser",
+    "26.727.51351"
+  ),
+  path.join(
+    os.homedir(),
+    ".codex",
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "chrome",
+    "26.727.51351"
+  ),
   path.join(
     os.homedir(),
     ".codex",
@@ -298,8 +320,9 @@ const trustedPluginRoot = await firstExisting([
     "chrome",
     "26.727.40816"
   )
-]);
+    ]);
 if (trustedPluginRoot) {
+  const trustedPluginVersion = path.basename(trustedPluginRoot);
   let environmentResult = {
     viewport: { width: 1280, height: 720 },
     locale: "en-US",
@@ -343,7 +366,7 @@ if (trustedPluginRoot) {
   probing = false;
   assert.equal(verifiedHost.provider, "openai-browser");
   assert.match(verifiedHost.pluginName, /^(?:browser|chrome)$/);
-  assert.equal(verifiedHost.pluginVersion, "26.727.40816");
+  assert.equal(verifiedHost.pluginVersion, trustedPluginVersion);
   assert.equal(verifiedHost.executionWorld, "isolated-readonly-v1");
   const boundHostAdapter = createCodexBrowserAdapter({
     tab: trustedTab,
@@ -399,6 +422,352 @@ if (trustedPluginRoot) {
       return true;
     }
   );
+}
+
+let approvedCdpFallbackVerified = false;
+let approvedCdpCommandAllowlistVerified = false;
+let approvedCdpNavigationRefreshVerified = false;
+let deniedCdpCapabilityRejected = false;
+let adaptiveCdpTimeoutFallbackVerified = false;
+{
+  let currentUrl = "https://dashboard.example.test/payments";
+  let loaderId = "loader-1";
+  let nextExecutionContextId = 40;
+  let failNextRuntimeContext = false;
+  let capabilityGetCount = 0;
+  const cdpCommands = [];
+  const locator = {
+    async count() {
+      return 1;
+    },
+    async isVisible() {
+      return true;
+    }
+  };
+  const cdpCapability = {
+    async send(method, params, options) {
+      cdpCommands.push({ method, params, options });
+      if (method === "Page.getFrameTree") {
+        return {
+          frameTree: {
+            frame: {
+              id: "frame-1",
+              loaderId,
+              url: currentUrl
+            }
+          }
+        };
+      }
+      if (method === "Page.createIsolatedWorld") {
+        nextExecutionContextId += 1;
+        return { executionContextId: nextExecutionContextId };
+      }
+      if (method === "Runtime.evaluate") {
+        if (failNextRuntimeContext) {
+          failNextRuntimeContext = false;
+          return {
+            exceptionDetails: {
+              text: "Execution context was destroyed during navigation."
+            }
+          };
+        }
+        const value = params.expression.includes("timezoneId")
+          ? {
+              viewport: { width: 1280, height: 720 },
+              locale: "en-US",
+              timezoneId: "UTC"
+            }
+          : {
+              ok: true,
+              documentNodeType: 9,
+              viewport: { width: 1280, height: 720 }
+            };
+        return { result: { type: "object", value } };
+      }
+      throw new Error(`Unexpected CDP command: ${method}`);
+    }
+  };
+  const cdpTab = {
+    async url() {
+      return currentUrl;
+    },
+    capabilities: {
+      async list() {
+        return [{ id: "cdp", description: "Raw CDP" }];
+      },
+      async get(id) {
+        assert.equal(id, "cdp");
+        capabilityGetCount += 1;
+        return cdpCapability;
+      }
+    },
+    playwright: {
+      async evaluate() {
+        throw new Error("admin-enforced policy could not be verified");
+      },
+      async domSnapshot() {
+        return 'button "Payments"';
+      },
+      locator() {
+        return locator;
+      },
+      getByRole() {
+        return locator;
+      }
+    }
+  };
+  let readCdpEnvironment;
+  if (trustedPluginRoot) {
+    const cdpValidation = await verifyCodexBrowserHostIsolation({
+      pluginRoot: trustedPluginRoot,
+      tab: cdpTab
+    });
+    assert.equal(cdpValidation.transport, "approved-cdp-capability");
+    assert.equal(cdpValidation.send, undefined);
+    assert.equal(capabilityGetCount, 1);
+    const cdpAdapter = createCodexBrowserAdapter({
+      tab: cdpTab,
+      browserSurface: "chrome",
+      browserName: "Google Chrome",
+      viewport: { width: 1280, height: 720 },
+      hostValidation: cdpValidation
+    });
+    assert.equal(cdpAdapter.hasDomAccess, true);
+    assert.equal(cdpAdapter.captureSecurity.verified, true);
+    assert.equal(
+      cdpAdapter.captureSecurity.transport,
+      "approved-cdp-capability"
+    );
+    assert.equal(cdpAdapter.send, undefined);
+    readCdpEnvironment = () =>
+      readCodexBrowserEnvironment(cdpTab, cdpValidation);
+  } else {
+    const cdpRuntime = await createApprovedCdpRuntime(
+      cdpTab,
+      cdpCapability,
+      new URL(currentUrl).origin
+    );
+    readCdpEnvironment = () =>
+      cdpRuntime.evaluate(() => ({
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight
+        },
+        locale: window.navigator.language,
+        timezoneId: Intl.DateTimeFormat().resolvedOptions().timeZone
+      }));
+  }
+  assert.deepEqual(
+    await readCdpEnvironment(),
+    {
+      viewport: { width: 1280, height: 720 },
+      locale: "en-US",
+      timezoneId: "UTC"
+    }
+  );
+  const isolatedWorldCountBeforeNavigation = cdpCommands.filter(
+    ({ method }) => method === "Page.createIsolatedWorld"
+  ).length;
+  loaderId = "loader-2";
+  await readCdpEnvironment();
+  assert.equal(
+    cdpCommands.filter(({ method }) => method === "Page.createIsolatedWorld")
+      .length,
+    isolatedWorldCountBeforeNavigation + 1
+  );
+  failNextRuntimeContext = true;
+  await readCdpEnvironment();
+  assert.equal(
+    cdpCommands.filter(({ method }) => method === "Page.createIsolatedWorld")
+      .length,
+    isolatedWorldCountBeforeNavigation + 2
+  );
+  const runtimeCountBeforeOriginChange = cdpCommands.filter(
+    ({ method }) => method === "Runtime.evaluate"
+  ).length;
+  currentUrl = "https://example.test/payments";
+  await assert.rejects(
+    () => readCdpEnvironment(),
+    /left the origin approved for this capture/
+  );
+  assert.equal(
+    cdpCommands.filter(({ method }) => method === "Runtime.evaluate").length,
+    runtimeCountBeforeOriginChange
+  );
+  assert.deepEqual(
+    [...new Set(cdpCommands.map(({ method }) => method))].sort(),
+    [
+      "Page.createIsolatedWorld",
+      "Page.getFrameTree",
+      "Runtime.evaluate"
+    ]
+  );
+  assert.ok(
+    cdpCommands.every(
+      ({ options }) =>
+        options?.timeoutMs === 10_000
+    )
+  );
+  approvedCdpFallbackVerified = true;
+  approvedCdpCommandAllowlistVerified = true;
+  approvedCdpNavigationRefreshVerified = true;
+
+  const deniedTab = {
+    async url() {
+      return "https://dashboard.example.test/payments";
+    },
+    playwright: {
+      async evaluate() {
+        throw new Error("admin-enforced policy could not be verified");
+      }
+    },
+    capabilities: {
+      async list() {
+        return [{ id: "cdp" }];
+      },
+      async get() {
+        throw new Error("Chrome CDP access was not approved.");
+      }
+    }
+  };
+  if (trustedPluginRoot) {
+    await assert.rejects(
+      () =>
+        verifyCodexBrowserHostIsolation({
+          pluginRoot: trustedPluginRoot,
+          tab: deniedTab
+        }),
+      /was not approved/
+    );
+  } else {
+    const deniedRuntime = await createApprovedCdpRuntime(
+      deniedTab,
+      {
+        async send() {
+          throw new Error("Chrome CDP access was not approved.");
+        }
+      },
+      "https://dashboard.example.test"
+    );
+    await assert.rejects(
+      () => deniedRuntime.evaluate(() => true),
+      /was not approved/
+    );
+  }
+  deniedCdpCapabilityRejected = true;
+
+  let adaptiveDirectEvaluateCount = 0;
+  let adaptiveCapabilityGetCount = 0;
+  const adaptiveCdpCommands = [];
+  const adaptiveCdpCapability = {
+    async send(method) {
+      adaptiveCdpCommands.push(method);
+      if (method === "Page.getFrameTree") {
+        return {
+          frameTree: {
+            frame: {
+              id: "adaptive-frame",
+              loaderId: "adaptive-loader",
+              url: "https://dashboard.example.test/payments"
+            }
+          }
+        };
+      }
+      if (method === "Page.createIsolatedWorld") {
+        return { executionContextId: 77 };
+      }
+      if (method === "Runtime.evaluate") {
+        return {
+          result: {
+            type: "object",
+            value: {
+              viewport: { width: 1280, height: 720 },
+              locale: "en-US",
+              timezoneId: "UTC"
+            }
+          }
+        };
+      }
+      throw new Error(`Unexpected adaptive CDP command: ${method}`);
+    }
+  };
+  const adaptiveTab = {
+    async url() {
+      return "https://dashboard.example.test/payments";
+    },
+    capabilities: {
+      async list() {
+        return [{ id: "cdp" }];
+      },
+      async get() {
+        adaptiveCapabilityGetCount += 1;
+        return adaptiveCdpCapability;
+      }
+    },
+    playwright: {
+      async evaluate() {
+        adaptiveDirectEvaluateCount += 1;
+        if (adaptiveDirectEvaluateCount === 1) {
+          return {
+            ok: true,
+            documentNodeType: 9,
+            viewport: { width: 1280, height: 720 }
+          };
+        }
+        throw new Error(
+          "Timed out after 3000ms waiting for CDP command Page.getFrameTree."
+        );
+      }
+    }
+  };
+  let readAdaptiveEnvironment;
+  if (trustedPluginRoot) {
+    const adaptiveValidation = await verifyCodexBrowserHostIsolation({
+      pluginRoot: trustedPluginRoot,
+      tab: adaptiveTab
+    });
+    assert.equal(
+      adaptiveValidation.transport,
+      "host-readonly-evaluate+approved-cdp-fallback"
+    );
+    readAdaptiveEnvironment = () =>
+      readCodexBrowserEnvironment(adaptiveTab, adaptiveValidation);
+  } else {
+    const directRuntime = {
+      evaluate(pageFunction, options) {
+        return adaptiveTab.playwright.evaluate(pageFunction, options);
+      }
+    };
+    const adaptiveRuntime = createAdaptiveApprovedRuntime(
+      adaptiveTab,
+      directRuntime,
+      "https://dashboard.example.test"
+    );
+    await adaptiveRuntime.evaluate(() => ({
+      ok: true,
+      documentNodeType: document.nodeType,
+      viewport: { width: window.innerWidth, height: window.innerHeight }
+    }));
+    readAdaptiveEnvironment = () =>
+      adaptiveRuntime.evaluate(() => ({
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        locale: window.navigator.language,
+        timezoneId: Intl.DateTimeFormat().resolvedOptions().timeZone
+      }));
+  }
+  await readAdaptiveEnvironment();
+  await readAdaptiveEnvironment();
+  assert.equal(adaptiveDirectEvaluateCount, 2);
+  assert.equal(adaptiveCapabilityGetCount, 1);
+  assert.deepEqual(
+    [...new Set(adaptiveCdpCommands)].sort(),
+    [
+      "Page.createIsolatedWorld",
+      "Page.getFrameTree",
+      "Runtime.evaluate"
+    ]
+  );
+  adaptiveCdpTimeoutFallbackVerified = true;
 }
 
 const noPageEvaluateLocator = {
@@ -628,6 +997,23 @@ for (const surface of ["iab", "chrome"]) {
     const envelope = cli.validateAgentBrowserCaptureEnvelope(JSON.parse(serialized));
     assert.equal(result.stepCount, 5);
     assert.equal(result.replayLevel, "session-captured");
+    assert.deepEqual(
+      {
+        htmlSceneCount: result.capturePerformance.htmlSceneCount,
+        assetPreparationCount:
+          result.capturePerformance.assetPreparationCount,
+        actionCount: result.capturePerformance.actionCount
+      },
+      {
+        htmlSceneCount: 6,
+        assetPreparationCount: 6,
+        actionCount: 5
+      }
+    );
+    assert.equal(
+      Number.isFinite(result.capturePerformance.totalMs),
+      true
+    );
     assert.equal(envelope.capture.source.host, sourceHost);
     assert.equal(envelope.capture.source.browserSurface, surface);
     assert.equal(envelope.capture.source.sessionPersisted, false);
@@ -1829,7 +2215,16 @@ const transferredNodesJson = JSON.stringify(transferredNodes);
 const transferredHtml =
   '<main><button data-showkit-anchor="sk-compose">Compose</button></main>';
 const transferChunkSize = 32;
+const transferredPayloadSha256 = createHash("sha256")
+  .update(`${transferredHtml}\u0000${transferredNodesJson}`)
+  .digest("hex");
 let transferCallCount = 0;
+let frozenTransferReadCount = 0;
+let frozenTransferReleaseCount = 0;
+let transferHashMismatch = false;
+let activeTransferId;
+let activeTransferHash;
+const frozenTransferReader = () => {};
 const transferLocator = {
   async count() {
     return 1;
@@ -1840,7 +2235,11 @@ const transferLocator = {
   async click() {},
   async evaluate(_pageFunction, options) {
     transferCallCount += 1;
-    const offset = options.transferOffset ?? 0;
+    activeTransferId = options.transferId;
+    activeTransferHash = transferHashMismatch
+      ? "0".repeat(64)
+      : transferredPayloadSha256;
+    const offset = 0;
     return {
       ok: true,
       scanOnly: false,
@@ -1852,6 +2251,8 @@ const transferLocator = {
       ),
       transfer: {
         mode: "chunked-json",
+        captureId: activeTransferId,
+        payloadSha256: activeTransferHash,
         offset,
         chunkSize: transferChunkSize,
         htmlLength: transferredHtml.length,
@@ -1877,6 +2278,48 @@ const transferAdapter = createCodexBrowserAdapter({
         return 'button "Compose"';
       },
       async evaluate(pageFunction, options) {
+        if (pageFunction === frozenTransferReader) {
+          assert.equal(options.captureId, activeTransferId);
+          if (options.release === true) {
+            frozenTransferReleaseCount += 1;
+            return {
+              ok: true,
+              scanOnly: false,
+              html: "",
+              nodesJson: "",
+              released: true,
+              transfer: {
+                mode: "chunked-json",
+                captureId: activeTransferId,
+                payloadSha256: activeTransferHash,
+                offset: 0,
+                chunkSize: 1,
+                htmlLength: transferredHtml.length,
+                nodesJsonLength: transferredNodesJson.length
+              }
+            };
+          }
+          frozenTransferReadCount += 1;
+          const offset = options.offset;
+          return {
+            ok: true,
+            scanOnly: false,
+            html: transferredHtml.slice(offset, offset + transferChunkSize),
+            nodesJson: transferredNodesJson.slice(
+              offset,
+              offset + transferChunkSize
+            ),
+            transfer: {
+              mode: "chunked-json",
+              captureId: activeTransferId,
+              payloadSha256: activeTransferHash,
+              offset,
+              chunkSize: transferChunkSize,
+              htmlLength: transferredHtml.length,
+              nodesJsonLength: transferredNodesJson.length
+            }
+          };
+        }
         return transferLocator.evaluate(pageFunction, options);
       },
       locator() {
@@ -1901,11 +2344,32 @@ const transferredScene = await transferAdapter.evaluateTarget(
     name: "Compose"
   },
   () => {},
-  {}
+  {},
+  frozenTransferReader
 );
 assert.equal(transferredScene.html, transferredHtml);
 assert.deepEqual(transferredScene.nodes, transferredNodes);
-assert.ok(transferCallCount > 1);
+assert.equal(transferCallCount, 1);
+assert.ok(frozenTransferReadCount > 0);
+assert.equal(frozenTransferReleaseCount, 1);
+
+transferHashMismatch = true;
+await assert.rejects(
+  () =>
+    transferAdapter.evaluateTarget(
+      {
+        strategy: "role",
+        role: "button",
+        name: "Compose"
+      },
+      () => {},
+      {},
+      frozenTransferReader
+    ),
+  /changed content/
+);
+assert.equal(transferCallCount, 2);
+assert.equal(frozenTransferReleaseCount, 2);
 
 const compressedSource = new TextEncoder().encode(transferredNodesJson);
 const compressedLiteralBytes = [];
@@ -2385,6 +2849,11 @@ process.stdout.write(
     forgedHostRejected: true,
     hostValidationBoundToExactTab: true,
     mainWorldEvaluationFallback: false,
+    approvedCdpFallbackVerified,
+    approvedCdpCommandAllowlistVerified,
+    approvedCdpNavigationRefreshVerified,
+    deniedCdpCapabilityRejected,
+    adaptiveCdpTimeoutFallbackVerified,
     sourceHostRequired: true,
     unverifiedHostPersisted: false,
     poisonedSnapshotPersisted: false,

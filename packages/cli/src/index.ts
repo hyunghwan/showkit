@@ -54,7 +54,10 @@ export {
   type StaticCaptureInput,
   type StaticCaptureStepInput
 } from "./capture/static.js";
-export { extractSceneKernel } from "./capture/extractor.js";
+export {
+  extractSceneKernel,
+  readFrozenSceneTransferKernel
+} from "./capture/extractor.js";
 export {
   cropCapturedImage,
   type CapturedImageCrop

@@ -78,6 +78,60 @@ const markdownFiles = (
 ).flat();
 const failures = [];
 
+const packageJson = JSON.parse(
+  await readFile(path.join(root, "packages", "cli", "package.json"), "utf8")
+);
+const versionMatch = /^(\d+)\.(\d+)\.(\d+)$/.exec(packageJson.version);
+if (!versionMatch) {
+  failures.push(
+    `packages/cli/package.json: release version must be exact semver, received ${JSON.stringify(packageJson.version)}`
+  );
+} else {
+  const major = Number(versionMatch[1]);
+  const minor = Number(versionMatch[2]);
+  const minorBase = `${major}.${minor}.0`;
+  const nextMinor = `${major}.${minor + 1}.0`;
+  const expectedSkillRange = `>=${minorBase} <${nextMinor}`;
+  const expectedSupportWindow = `ShowKit \`${major}.${minor}.x\``;
+  const changelog = await readFile(path.join(root, "CHANGELOG.md"), "utf8");
+  const escapedVersion = packageJson.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (
+    !new RegExp(
+      `^## ${escapedVersion} - \\d{4}-\\d{2}-\\d{2}$`,
+      "m"
+    ).test(changelog)
+  ) {
+    failures.push(
+      `CHANGELOG.md: missing release heading for ${packageJson.version}`
+    );
+  }
+
+  const skillCompatibility = JSON.parse(
+    await readFile(
+      path.join(root, "skills", "showkit", "compatibility.json"),
+      "utf8"
+    )
+  );
+  if (skillCompatibility.cli !== expectedSkillRange) {
+    failures.push(
+      `skills/showkit/compatibility.json: expected cli range ${expectedSkillRange}, received ${JSON.stringify(skillCompatibility.cli)}`
+    );
+  }
+
+  for (const relativeFile of [
+    "COMPATIBILITY.md",
+    "SECURITY.md",
+    "SUPPORT.md"
+  ]) {
+    const markdown = await readFile(path.join(root, relativeFile), "utf8");
+    if (!markdown.includes(expectedSupportWindow)) {
+      failures.push(
+        `${relativeFile}: missing support window ${expectedSupportWindow}`
+      );
+    }
+  }
+}
+
 for (const relativeFile of markdownFiles.sort()) {
   const markdown = await readFile(path.join(root, relativeFile), "utf8");
   for (const target of localTargets(markdown)) {

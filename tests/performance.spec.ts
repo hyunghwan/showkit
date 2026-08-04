@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,18 @@ test("captures 25 steps under 30 seconds", async () => {
     expect(performance.now() - startedAt).toBeLessThan(30_000);
     expect(capture.stepCount).toBe(25);
     expect(capture.fullSceneRasterCount).toBe(0);
+    expect(capture.capturePerformance).toEqual(
+      expect.objectContaining({
+        htmlSceneCount: 26,
+        actionCount: 25,
+        sceneExtractionMs: expect.any(Number),
+        actionMs: expect.any(Number),
+        totalMs: expect.any(Number)
+      })
+    );
+    expect(
+      await readFile(String(capture.path), "utf8")
+    ).not.toContain("capturePerformance");
   } finally {
     await rm(projectDirectory, { recursive: true, force: true });
   }

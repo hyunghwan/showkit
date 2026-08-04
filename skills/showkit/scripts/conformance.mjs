@@ -173,6 +173,10 @@ for (const requirement of [
   'get("extension")',
   "verifyOpenAIBrowserHostIsolation",
   "Page.createIsolatedWorld",
+  'capabilities.get("cdp")',
+  "Page.getFrameTree",
+  "Runtime.evaluate",
+  "DOMSnapshot",
   "domSnapshot()",
   "untrusted target-planning hint",
   "target-missing",
@@ -295,6 +299,32 @@ for (const exportName of [
 ]) {
   if (!browserAdapter.includes(`export `) || !browserAdapter.includes(exportName)) {
     throw new Error(`Browser adapter is missing ${exportName}.`);
+  }
+}
+for (const requirement of [
+  "OPENAI_BROWSER_CDP_METHODS",
+  "Page.getFrameTree",
+  "Page.createIsolatedWorld",
+  "Runtime.evaluate",
+  "approved-cdp-capability",
+  "host-readonly-evaluate+approved-cdp-fallback"
+]) {
+  if (!browserAdapter.includes(requirement)) {
+    throw new Error(`Browser adapter is missing approved CDP contract ${requirement}.`);
+  }
+}
+for (const forbiddenMethod of [
+  "Network.",
+  "Storage.",
+  "Fetch.",
+  "DOMSnapshot.",
+  "Browser.getCookies",
+  "Network.getAllCookies"
+]) {
+  if (browserAdapter.includes(`send(\"${forbiddenMethod}`)) {
+    throw new Error(
+      `Browser adapter sends forbidden CDP command family ${forbiddenMethod}.`
+    );
   }
 }
 for (const forbidden of [
