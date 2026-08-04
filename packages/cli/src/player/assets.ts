@@ -101,6 +101,13 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
                 <button class="tooltip-next" id="tooltip-next" type="button">Next</button>
               </div>
             </aside>
+            <a
+              class="showkit-watermark"
+              href="https://showkit.sqncs.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              referrerpolicy="no-referrer"
+            >Powered by <strong>ShowKit</strong><span class="visually-hidden"> (opens in a new tab)</span></a>
           </div>
           <div class="chrome-overlay" id="chrome-overlay" aria-label="Demo controls">
             <div class="chrome-dock" data-position="top-left"></div>
@@ -489,6 +496,41 @@ main {
   background: #111413;
   box-shadow: none;
   isolation: isolate;
+}
+
+.showkit-watermark {
+  position: absolute;
+  z-index: 2;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 0.28em;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: #17211b;
+  color: #fffdf7;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(8px) saturate(1.1);
+  -webkit-backdrop-filter: blur(8px) saturate(1.1);
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.showkit-watermark strong {
+  font-weight: 700;
+}
+
+.showkit-watermark:hover {
+  background: #0f1612;
+  color: #ffffff;
 }
 
 .scene-shell {
@@ -1100,6 +1142,7 @@ body[data-chrome-mode="frame"] .control-button:hover {
 @media (max-width: 720px) {
   :root { --container-radius: 13px; }
   body[data-chrome-mode="frame"] .demo-frame { padding: 6px; }
+  .showkit-watermark { right: 6px; bottom: 6px; font-size: 9px; }
   .chrome-dock {
     min-height: 32px;
     gap: 3px;

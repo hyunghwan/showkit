@@ -3,6 +3,12 @@
 All notable ShowKit changes are recorded here. Published versions are immutable;
 fixes ship as a new version.
 
+## Unreleased
+
+- Added a small, low-contrast `Powered by ShowKit` link to the bottom-right of
+  generated demos. The link opens `showkit.sqncs.com` in a new tab and stays
+  below hotspots, tooltips, controls, and the welcome layer.
+
 ## 0.1.0 - 2026-08-03
 
 - Added the deterministic `@showkit/cli` command and JSON/exit-code contracts.
