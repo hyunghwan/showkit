@@ -23,7 +23,7 @@ HTML, text, styles, and local assets, then builds a portable demo with hotspots
 and tooltips. The result is interactive HTML, not a screenshot tour.
 
 > [!NOTE]
-> The first npm release is `@showkit/cli@0.1.0`. The ShowKit skill and CLI are
+> The ShowKit CLI is published as `@showkit/cli`. The ShowKit skill and CLI are
 > separate installs: adding the skill does not change project dependencies,
 > and the skill asks before it adds the CLI to an existing project.
 
@@ -33,7 +33,7 @@ and tooltips. The result is interactive HTML, not a screenshot tour.
   </a>
 </p>
 
-<p align="center"><em>Explore the Airbnb, Linear, and Shopify demos on the <a href="https://hyunghwan.github.io/showkit/">public demo gallery</a>.</em></p>
+<p align="center"><em>Explore the Airbnb, Linear, and Stripe demos on the <a href="https://hyunghwan.github.io/showkit/">public demo gallery</a>.</em></p>
 
 The [checked product-insights example](examples/product-insights/) uses only
 synthetic content. The public repository's Pages workflow publishes a gallery

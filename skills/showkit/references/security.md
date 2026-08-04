@@ -11,6 +11,15 @@
   allowlisted version and implementation hash, documented read-only evaluate
   surface, `Page.createIsolatedWorld`, host-owned wrapper, and live probe on
   that exact tab. A DOM snapshot or page-provided claim is never proof.
+- A verified OpenAI host may use its official tab-scoped `cdp` capability only
+  when the higher-level evaluator is blocked by host policy or its bounded CDP
+  setup times out, and only after exact-site approval. Permit exactly
+  `Page.getFrameTree`, `Page.createIsolatedWorld`, and `Runtime.evaluate`. Bind
+  the bridge to the selected tab and initial HTTP or HTTPS origin, refresh its
+  isolated context when the main-frame loader changes, validate results by
+  value, and cap their size. Never send `Network`, `Storage`, `Fetch`, cookie,
+  `DOMSnapshot`, or another CDP command. Do not expose or persist the raw
+  capability.
 - A Claude `javascript_tool` capability that runs in page context has no
   host-validated isolated-world guarantee. Return
   `UnsupportedSurface` with

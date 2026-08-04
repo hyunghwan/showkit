@@ -29,8 +29,25 @@ app. Follow the installed Browser or Chrome skill before controlling a browser.
   `hostValidation` to
   `readOpenAIBrowserEnvironment(tab, hostValidation)` and
   `createOpenAIBrowserAdapter({ ..., hostValidation })`.
-- Immediately after selecting or claiming that tab, record its exact viewport
-  and keep it as the capture contract. The claimed tab is the capture source.
+- Prefer the verified higher-level read-only evaluator. If it fails because the
+  host cannot verify policy or its bounded CDP setup times out, let the adapter
+  discover `tab.capabilities.list()` and request
+  `tab.capabilities.get("cdp")`. This is an official host capability and may
+  pause for exact-site approval. Do not treat an open or signed-in tab as that
+  approval.
+- The approved fallback is private to the adapter. Its complete CDP command
+  allowlist is `Page.getFrameTree`, `Page.createIsolatedWorld`, and
+  `Runtime.evaluate`. It binds the initial HTTP or HTTPS origin, checks the main
+  frame before every evaluation, and creates a new isolated context when the
+  frame loader changes. Never send `Network`, `Storage`, `Fetch`, cookie,
+  `DOMSnapshot`, or another CDP command, and never expose the capability object
+  to page code or persistence.
+- Before locking the capture contract, use the viewport choice in `SKILL.md`.
+  If no exact size was requested, ask with the three documented presets; when
+  replacing a demo, recommend its manifest viewport. Adjust only the same
+  claimed tab through a documented host window or viewport control, then read
+  and record its exact CSS viewport. The verified value is the capture
+  contract. Never resize by changing page HTML or by opening a replacement tab.
 - Never open a replacement or default-size tab to recover missing `pageAssets`,
   DOM state, or a consumed capability. Reload or navigate the same claimed tab
   to recreate the required state. If that cannot restore the state, stop.
@@ -49,8 +66,9 @@ supported browser may be tried before asking the person to sign in.
 
 ## Plan for source-faithful capture
 
-Read `references/visual-fidelity.md` before capture. Lock the selected tab,
-product state, CSS viewport, zoom, locale, timezone, and color scheme. Wait for
+Read `references/visual-fidelity.md` before capture. Confirm and apply the
+capture viewport first, then lock the selected tab, product state, CSS viewport,
+zoom, locale, timezone, and color scheme. Wait for
 a concrete semantic, layout, font, and lazy-asset ready signal instead of an
 arbitrary sleep.
 
@@ -76,9 +94,10 @@ evidence or target proof.
   one visible match and classify `target-missing`, `target-hidden`, or
   `target-duplicate`.
 - Do not use positional shortcuts to resolve ambiguity.
-- Run the shared `extractSceneKernel` through the verified isolated
-  `tab.playwright.evaluate(...)` surface. Never fall back to main-world
-  evaluation.
+- Run the shared `extractSceneKernel` through the verified adapter runtime. It
+  uses the higher-level `tab.playwright.evaluate(...)` surface when available
+  and may use only the approved tab-scoped CDP isolated-world fallback above.
+  Never fall back to main-world evaluation.
 - Do not dump broad body text or turn a snapshot into an HTML scene.
 - Do not use Computer Use or a screenshot as capture input.
 
@@ -107,7 +126,7 @@ actions, or persistence. A page-provided claim is not host validation.
 
 Pass `ownedTab: false` for an existing or claimed user tab. Set
 `authenticated: true` only after the current page visibly shows the required
-signed-in state. Pass the viewport recorded immediately after selection as
+signed-in state. Pass the viewport verified after the size choice as
 `expectedViewport`; the adapter fails before persistence if the active capture
 tab differs. Pass an action ID in `confirmedActionIds` only after the person
 approves that exact site, account, target, and effect.
@@ -121,7 +140,7 @@ extractor preserves supported elements, computed styles, and hotspot geometry
 and changes captured text only.
 
 When the person instead selects **Keep visible content**, create
-`createOpenAIPageAssetProvider({ tab })`, pass it to
+`createOpenAIPageAssetProvider({ tab, hostValidation })`, pass it to
 `createOpenAIBrowserAdapter()`, and pass both
 `privateContentConsent: { mode: "visible-session", consent: "confirmed" }` and
 `pageAssetConsent: { mode: "visible-session", consent: "confirmed" }` to

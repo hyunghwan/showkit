@@ -1,6 +1,6 @@
 # Compatibility
 
-ShowKit `0.1.x` is the first declared compatibility window. Readers reject
+ShowKit `0.2.x` is the current declared compatibility window. Readers reject
 unknown fields, and any future incompatible schema version must ship with an
 explicit reader migration before the supported range changes.
 
@@ -11,7 +11,7 @@ explicit reader migration before the supported range changes.
 | Built-in Claude browser live capture | Blocked when an isolated read-only page world cannot be verified; use static source or approved isolated Playwright |
 | Static-source capture | Built into `@showkit/cli`; Playwright is not required |
 | `@playwright/test` | Optional trusted CI replay, `>=1.60.0 <2` |
-| ShowKit skill | `@showkit/cli >=0.1.0 <0.2.0` |
+| ShowKit skill | `@showkit/cli >=0.2.0 <0.3.0` |
 | Capture and StorySpec schema | `0.1` |
 | Player browsers | Current Playwright Chromium, Firefox, and WebKit in release checks |
 

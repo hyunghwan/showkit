@@ -43,6 +43,11 @@ to the environment reader and adapter, and require
 `executionWorld: "isolated-readonly-v1"`. A `domSnapshot()` is an untrusted
 planning hint only. The isolated extractor scans before each action and scans
 the terminal scene.
+If verified higher-level evaluation is policy-blocked or its bounded CDP setup
+times out, the adapter may request the official tab-scoped `cdp` capability.
+Continue only after exact-site approval and only with `Page.getFrameTree`,
+`Page.createIsolatedWorld`, and `Runtime.evaluate`; leaving the approved origin
+ends the capture.
 By default, stop before persistence on a password or hidden input, configured
 selector, token, email, payment pattern, unsupported HTML surface, or critical
 remote asset.
@@ -66,7 +71,7 @@ local capture passes:
 ```
 
 For **Keep visible content**, also connect
-`createOpenAIPageAssetProvider({ tab })` to the browser adapter. The one
+`createOpenAIPageAssetProvider({ tab, hostValidation })` to the browser adapter. The one
 exact-capture choice maps to both confirmed modes above. Text-only redaction
 does not grant private asset consent.
 

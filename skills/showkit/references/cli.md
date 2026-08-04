@@ -22,3 +22,15 @@
 
 Exit codes are `0` for success, `2` for validation, `3` for environment,
 `4` for external service, and `70` for an internal bug.
+
+Successful Playwright capture JSON can include `capturePerformance` with the
+number of fresh HTML scene extractions, actions, and their elapsed time. The
+agent-browser session helper also reports asset-preparation and action-settle
+time. These values are runtime diagnostics only: they are not written into the
+captured product flow, demo content, content hash, or exported files.
+
+`htmlSceneCount` counts sanitized, editable HTML states. It never counts a
+full-scene screenshot. ShowKit does not reuse a complete HTML scene across
+steps; a new safe derivative is required so that changed content, computed
+presentation, unsupported surfaces, and sensitive-data policy are checked
+again.

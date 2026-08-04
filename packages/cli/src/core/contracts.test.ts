@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalJson, contentHash } from "./json.js";
+import { canonicalJson, contentHash, sha256 } from "./json.js";
 import {
   CaptureSourceSchema,
   SCHEMA_VERSION,
@@ -438,6 +438,18 @@ describe("data contracts", () => {
 
     expect(validateStory(capture, createEvidenceGroundedStory(capture)).verification.passed)
       .toBe(true);
+  });
+
+  it("namespaces player asset revisions away from legacy content-only cache keys", () => {
+    const capture = captureFixture();
+    const files = createPlayerFiles(capture, createEvidenceGroundedStory(capture));
+    const revision = files["index.html"].match(/styles\.css\?v=([a-f0-9]{16})/)?.[1];
+    const legacyRevision = sha256(
+      [files["styles.css"], files["player.js"], files["story.js"]].join("\u0000")
+    ).slice(0, 16);
+
+    expect(revision).toBeDefined();
+    expect(revision).not.toBe(legacyRevision);
   });
 
   it("keeps local WOFF2 font faces in the player payload", () => {

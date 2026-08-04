@@ -18,6 +18,9 @@ const repositoryRoot = path.resolve(
   ".."
 );
 const packageRoot = path.join(repositoryRoot, "packages", "cli");
+const sourcePackage = JSON.parse(
+  await readFile(path.join(packageRoot, "package.json"), "utf8")
+);
 const temporaryRoot = await mkdtemp(
   path.join(os.tmpdir(), "showkit-package-smoke-")
 );
@@ -677,6 +680,14 @@ try {
       "utf8"
     )
   );
+  if (
+    packedPackage.name !== sourcePackage.name ||
+    packedPackage.version !== sourcePackage.version
+  ) {
+    throw new Error(
+      `Packed package identity changed: expected ${sourcePackage.name}@${sourcePackage.version}.`
+    );
+  }
   if (
     packedPackage.peerDependencies?.["@playwright/test"] !==
     ">=1.60.0 <2"

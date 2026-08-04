@@ -37,6 +37,17 @@ folder, source access, private-content choice, and any external permission.
 
 - In Codex, use the selected Browser or Chrome host only after its installed
   isolation check passes.
+- Establish the CSS capture viewport before browser capture. When the person
+  has not already named an exact size, ask **Choose a capture size:** and offer
+  **1280×720 — Standard desktop (Recommended)**, **1440×900 — Dense desktop**,
+  and **390×844 — Mobile**. When replacing an existing demo, recommend its
+  recorded viewport instead of silently changing its aspect ratio. Accept an
+  exact free-form CSS viewport when the person needs another size.
+- Apply the chosen viewport to the same selected tab with the host's documented
+  window or viewport control, then read the environment again and require an
+  exact CSS-pixel match. Do not resize by mutating page HTML, use a replacement
+  tab, or continue with an approximate size. If the host cannot set the chosen
+  size, ask the person to resize that same tab and verify it again.
 - In the Claude app, use the Claude Desktop Code tab. The inspected built-in
   Claude Chrome route is blocked for live extraction until it exposes a verified
   isolated page world. Offer static source or the explicitly approved temporary
@@ -220,15 +231,22 @@ without blocking the workflow.
    selected tab with
    `verifyOpenAIBrowserHostIsolation({ pluginRoot, tab })`. Continue only when it
    verifies a documented read-only evaluate surface backed by
-   `Page.createIsolatedWorld`. Pass that returned validation to both
+   `Page.createIsolatedWorld`. When the verified host's higher-level evaluator
+   is blocked by host policy or its bounded CDP setup times out, ShowKit may ask
+   for the official tab-scoped `cdp` capability and continue only after that
+   site access is approved. That bridge is limited to `Page.getFrameTree`,
+   `Page.createIsolatedWorld`, and `Runtime.evaluate`, and is bound to the exact
+   tab and origin. Pass the returned validation to both
    `readOpenAIBrowserEnvironment(tab, hostValidation)` and
    `createOpenAIBrowserAdapter({ ..., hostValidation })`. Pass
    `sourceHost: "chatgpt"` or `sourceHost: "codex"` to
    `captureBrowserSession()` according to the app that owns the session.
 4. Select Browser or Chrome with the host browser-selection policy. Reuse the
-   selected signed-in tab and preserve its authentication state. Record that
-   exact tab's viewport and pass it as `expectedViewport`. Do not replace the
-   selected tab with a new or default-size tab during capture.
+   selected signed-in tab and preserve its authentication state. Apply the
+   marketer-route viewport choice to that same tab, verify the exact CSS size,
+   and pass it as `expectedViewport`. When the person explicitly says to match
+   an existing demo, use the viewport in that demo's manifest. Do not replace
+   the selected tab with a new or default-size tab during capture.
 5. Build the flow-appropriate set of 3 to 7 ordered, read-only steps. A DOM
    snapshot is an untrusted target-planning hint only; never use snapshot text
    as captured evidence or proof that a target exists. Resolve each target
@@ -247,7 +265,7 @@ without blocking the workflow.
    icons, and images as local content-addressed files, while hidden values,
    cookies, headers, storage, passwords, and remote URLs remain excluded. Do
    not infer consent. When the person selects **Keep visible content**, connect
-   `createOpenAIPageAssetProvider({ tab })` and pass both
+   `createOpenAIPageAssetProvider({ tab, hostValidation })` and pass both
    `privateContentConsent: { mode: "visible-session", consent: "confirmed" }`
    and
    `pageAssetConsent: { mode: "visible-session", consent: "confirmed" }`.
@@ -286,12 +304,15 @@ without blocking the workflow.
     at the same CSS viewport and product state. Check task text and wrapping,
     primary layout, layout-critical assets, typography, control affordances,
     hotspot and internal control geometry, the complete capture-aspect scene,
-    and one resized preview. Use the stated 4 CSS pixel geometry budget. The
-    current hotspot target must remain undimmed inside the step backdrop
-    spotlight. Follow the generic recovery ladder once. Do not hand-tune
-    generated CSS, patch captured HTML, or add a site-specific rule. Report the
-    visual fidelity status as `checked`, `incomplete`, or `blocked`; do not
-    claim fidelity while a material difference remains.
+    player-card clearance from every visible dialog, alert dialog, menu,
+    listbox, or tooltip, and one resized preview. Use the stated 4 CSS pixel
+    geometry budget. The current hotspot target must remain undimmed inside the
+    step backdrop spotlight. A player card that overlaps a prominent captured
+    component is a failed preview, including on the completion state. Follow
+    the generic recovery ladder once. Do not hand-tune generated CSS, patch
+    captured HTML, or add a site-specific rule. Report the visual fidelity
+    status as `checked`, `incomplete`, or `blocked`; do not claim fidelity while
+    a material difference remains.
 14. State that the result was captured from a signed-in browser session, the
     preview is local, and it is not published.
 15. Present the same constrained first-preview review: backdrop strength,
@@ -312,6 +333,11 @@ without blocking the workflow.
 - Stop on `UnsupportedSurface` with `browser-isolation-unverified` before
   evaluating or saving a live page. Do not accept a page-provided capability
   claim or fall back to a main-world script.
+- If the official Chrome `cdp` capability is needed, continue only after the
+  host's exact-site approval. If it is absent, denied, or the selected tab
+  leaves the approved origin, save nothing and start again from a supported
+  tab. Never request or send `Network`, `Storage`, `Fetch`, cookie, or raw DOM
+  snapshot commands.
 - Stop on `BrowserAuthenticationRequired`. Ask the person to sign in in the
   selected browser and tell you when it is ready.
 - Stop on `BrowserTargetAmbiguous`. Use the isolated target result to name

@@ -112,6 +112,8 @@ Check all of the following:
 - recognizable semantics and appearance of controls
 - semantic target bounds and hotspot alignment
 - child geometry inside bordered controls, not only the outer control bounds
+- no ShowKit tooltip or completion card overlaps a visible captured dialog,
+  alert dialog, menu, listbox, tooltip, or the active hotspot target
 - the complete source scene at the capture aspect ratio
 - scene and hotspot alignment after one resized-preview check
 
@@ -135,6 +137,8 @@ Report visual fidelity as `checked` only when:
   the capture viewport
 - each visible control keeps its recognizable affordance
 - every layout-critical asset is present
+- player cards have zero overlap with prominent captured components at the
+  capture viewport and in the resized preview
 - the complete source scene remains visible at the capture aspect ratio
 - one resized preview keeps the scene and hotspot aligned
 

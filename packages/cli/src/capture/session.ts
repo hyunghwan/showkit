@@ -15,11 +15,13 @@ import {
   PLAYWRIGHT_CAPTURE_ISOLATION_VERSION,
   captureScene,
   evidenceFromTexts,
-  inspectPagePolicy,
   type SemanticCaptureTarget
 } from "./browser.js";
 import { EXIT_CODES, ShowKitError } from "../core/errors.js";
-import { assertCaptureSafeForPersistence } from "../core/security.js";
+import {
+  assertCaptureSafeForPersistence,
+  containsConfiguredSensitiveText
+} from "../core/security.js";
 
 function assetExtension(
   mimeType: AssetPayload["mimeType"]
@@ -54,6 +56,11 @@ export class CaptureSession implements DemoController {
   readonly #steps: CaptureStep[] = [];
   readonly #stepTargets: SemanticCaptureTarget[] = [];
   readonly #assets = new Map<string, AssetPayload>();
+  readonly #startedAt = performance.now();
+  #sceneExtractionCount = 0;
+  #sceneExtractionMs = 0;
+  #actionCount = 0;
+  #actionMs = 0;
   #fixtureSeed:
     | {
         schemaVersion: typeof SCHEMA_VERSION;
@@ -95,7 +102,6 @@ export class CaptureSession implements DemoController {
       return;
     }
 
-    await inspectPagePolicy(this.#page);
     if (!this.#fixtureSeed) {
       const currentUrl = new URL(this.#page.url());
       if (!["http:", "https:"].includes(currentUrl.protocol)) {
@@ -170,18 +176,35 @@ export class CaptureSession implements DemoController {
         options.captureTarget
       );
     const anchorId = `sk-${options.id}`;
-    const { scene, evidenceTexts, assets } = await captureScene(this.#page, {
-      target: options.target,
-      captureTarget,
-      anchorId,
-      stepIndex: this.#steps.length
-    });
+    const extractionStartedAt = performance.now();
+    const { scene, evidenceTexts, assets } = await captureScene(
+      this.#page,
+      {
+        target: options.target,
+        captureTarget,
+        anchorId,
+        stepIndex: this.#steps.length
+      }
+    );
+    this.#sceneExtractionCount += 1;
+    this.#sceneExtractionMs += performance.now() - extractionStartedAt;
     for (const asset of assets) {
       this.#assets.set(asset.sha256, asset);
     }
+    const actionStartedAt = performance.now();
     await options.action();
-    await inspectPagePolicy(this.#page);
+    this.#actionCount += 1;
+    this.#actionMs += performance.now() - actionStartedAt;
     const safeOutcomeTitle = await this.#page.title();
+    if (containsConfiguredSensitiveText(safeOutcomeTitle)) {
+      throw new ShowKitError({
+        code: "SensitiveDataDetected",
+        message:
+          "[SHOWKIT:SensitiveDataDetected] Sensitive data was found in the page title after the action. No captured page was saved. Your previous captured product flow has not changed.",
+        exitCode: EXIT_CODES.validation,
+        recovery: "Hide the data from the page title, then capture again."
+      });
+    }
     this.#stepTargets.push(captureTarget);
     this.#steps.push(
       CaptureSourceSchema.shape.steps.element.parse({
@@ -214,8 +237,11 @@ export class CaptureSession implements DemoController {
       });
     }
 
-    await inspectPagePolicy(this.#page);
+    const terminalExtractionStartedAt = performance.now();
     const { scene: terminalScene, assets } = await captureScene(this.#page);
+    this.#sceneExtractionCount += 1;
+    this.#sceneExtractionMs +=
+      performance.now() - terminalExtractionStartedAt;
     for (const asset of assets) {
       this.#assets.set(asset.sha256, asset);
     }
@@ -313,6 +339,16 @@ export class CaptureSession implements DemoController {
       });
     }
     await writeJsonAtomic(this.#outputPath, envelope);
+    const rounded = (value: number): number => Number(value.toFixed(3));
+    console.error(
+      `[SHOWKIT:CAPTURE_PERFORMANCE] ${JSON.stringify({
+        htmlSceneCount: this.#sceneExtractionCount,
+        sceneExtractionMs: rounded(this.#sceneExtractionMs),
+        actionCount: this.#actionCount,
+        actionMs: rounded(this.#actionMs),
+        totalMs: rounded(performance.now() - this.#startedAt)
+      })}`
+    );
   }
 }
 

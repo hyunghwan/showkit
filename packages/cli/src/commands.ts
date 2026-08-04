@@ -476,6 +476,50 @@ function captureFailure(output: string): ShowKitError {
   });
 }
 
+function capturePerformanceFromOutput(output: string):
+  | {
+      htmlSceneCount: number;
+      sceneExtractionMs: number;
+      actionCount: number;
+      actionMs: number;
+      totalMs: number;
+    }
+  | undefined {
+  const marker = "[SHOWKIT:CAPTURE_PERFORMANCE] ";
+  const line = output
+    .split(/\r?\n/)
+    .reverse()
+    .find((candidate: string) => candidate.includes(marker));
+  if (!line) return undefined;
+  try {
+    const value = JSON.parse(line.slice(line.indexOf(marker) + marker.length)) as
+      Record<string, unknown>;
+    const keys = [
+      "htmlSceneCount",
+      "sceneExtractionMs",
+      "actionCount",
+      "actionMs",
+      "totalMs"
+    ] as const;
+    if (
+      !keys.every(
+        (key) => typeof value[key] === "number" && Number.isFinite(value[key])
+      )
+    ) {
+      return undefined;
+    }
+    return Object.fromEntries(keys.map((key) => [key, value[key]])) as {
+      htmlSceneCount: number;
+      sceneExtractionMs: number;
+      actionCount: number;
+      actionMs: number;
+      totalMs: number;
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function captureCommand(args: string[]): Promise<CommandResult> {
   const id = operationId();
   const [specArgument] = positionalArgs(args);
@@ -546,6 +590,7 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
       runId,
       startedAt
     });
+    const capturePerformance = capturePerformanceFromOutput(commandOutput);
     runCommitted = true;
     await recordOperation({ operationId: id, command: "capture", status: "ok" });
     return {
@@ -559,7 +604,8 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
       sourceMode: capture.source.kind,
       replayLevel: capture.source.replayLevel,
       policyChecksPassed: true,
-      fullSceneRasterCount: 0
+      fullSceneRasterCount: 0,
+      ...(capturePerformance ? { capturePerformance } : {})
     };
   } catch (error) {
     const showkitError = asShowKitError(error);

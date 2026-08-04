@@ -15,20 +15,10 @@ authenticated flow that you are not allowed to reproduce.
 
 ## Release status
 
-The source repository and checked examples are public before the first npm
-release. Until `@showkit/cli@0.1.0` appears on npm, evaluate the current source
-candidate directly:
-
-```bash
-git clone https://github.com/hyunghwan/showkit.git
-cd showkit
-corepack pnpm install --frozen-lockfile
-pnpm build
-node packages/cli/dist/bin.js doctor --json
-```
-
-The package and skill installation commands below apply after the first npm
-release. Publishing the GitHub repository does not publish the npm package.
+The ShowKit skill is available from the public repository, and
+`@showkit/cli` is available from npm. Installing the skill does not install or
+update the CLI. A GitHub source update and an npm package release remain
+separate publication states.
 
 ## Use ShowKit with a coding agent
 
@@ -104,8 +94,9 @@ static host only after you have reviewed it and chosen to publish separately.
 | Previewed | A local server displayed the built files | The demo is public |
 | Published | You separately copied the reviewed files to a host | ShowKit uploaded them for you |
 
-ShowKit `0.1.x` is local-only. `showkit publish` verifies the local publish gate
-and then reports that Cloud publishing is unavailable; it uploads nothing.
+The current ShowKit release is local-only. `showkit publish` verifies the local
+publish gate and then reports that Cloud publishing is unavailable; it uploads
+nothing.
 
 ## Troubleshooting
 

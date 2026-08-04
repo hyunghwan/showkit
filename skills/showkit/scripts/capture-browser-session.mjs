@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import { readFile, realpath, rm } from "node:fs/promises";
@@ -13,7 +13,22 @@ export const CODEX_BROWSER_ISOLATION_VERSION =
 
 const CODEX_BROWSER_VALIDATION = Symbol("showkit-codex-browser-validation");
 const OPENAI_BROWSER_VERIFIED_BINDINGS = new WeakMap();
+const OPENAI_BROWSER_VERIFIED_RUNTIMES = new WeakMap();
+const OPENAI_BROWSER_CDP_METHODS = new Set([
+  "Page.getFrameTree",
+  "Page.createIsolatedWorld",
+  "Runtime.evaluate"
+]);
+const OPENAI_BROWSER_CDP_RESULT_LIMIT = 2_000_000;
 const TRUSTED_OPENAI_BROWSER_BUILDS = new Map([
+  [
+    "browser@26.727.51351",
+    "f204d340535055781952b10ed396de20b842f00a19e430852f7e121ad1ce91f6"
+  ],
+  [
+    "chrome@26.727.51351",
+    "f204d340535055781952b10ed396de20b842f00a19e430852f7e121ad1ce91f6"
+  ],
   [
     "browser@26.727.40816",
     "8785b5437d98636c3002d3d7e64b98db79c3b66870b1bd3d18dea953a99b1562"
@@ -29,6 +44,245 @@ const MUTATING_ACTION_PATTERN =
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function exactWebOrigin(value) {
+  const url = new URL(value);
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error("The selected browser tab needs an HTTP or HTTPS origin.");
+  }
+  return url.origin;
+}
+
+function isExecutionContextUnavailable(error) {
+  return /(?:Cannot find context|context.*(?:destroyed|invalid|not found)|Inspected target navigated or closed)/i.test(
+    String(error?.message ?? error)
+  );
+}
+
+function isApprovedCdpFallbackError(error) {
+  return /(?:admin-enforced policy could not be verified|Timed out after \d+ms waiting for CDP command (?:Page\.getFrameTree|Page\.createIsolatedWorld|Runtime\.evaluate)|read-only DOM scope.*timed out)/i.test(
+    String(error?.message ?? error)
+  );
+}
+
+function serializeApprovedPageCall(pageFunction, options) {
+  if (typeof pageFunction !== "function") {
+    throw new TypeError("Approved browser evaluation needs a page function.");
+  }
+  const source = Function.prototype.toString.call(pageFunction);
+  if (source.length === 0 || source.length > 600_000 || /\[native code\]/.test(source)) {
+    throw new Error("The approved browser page function is invalid.");
+  }
+  let serializedOptions;
+  try {
+    serializedOptions = JSON.stringify(options);
+  } catch {
+    throw new Error("The approved browser page options are not JSON-safe.");
+  }
+  if (serializedOptions === undefined) serializedOptions = "undefined";
+  if (serializedOptions.length > 1_000_000) {
+    throw new Error("The approved browser page options are too large.");
+  }
+  serializedOptions = serializedOptions
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
+  return `Promise.resolve((${source})(${serializedOptions}))`;
+}
+
+// Low-level runtime constructors are exported so the command-contract test can
+// exercise the CDP allowlist without pretending that a fixture plugin is an
+// attested host. They do not create a host validation token and therefore
+// cannot mark an adapter as verified.
+export async function createApprovedCdpRuntime(
+  tab,
+  capability,
+  approvedOrigin
+) {
+  if (typeof capability?.send !== "function") {
+    throw new Error("The approved Chrome CDP capability is unavailable.");
+  }
+  const initialUrl = await tab?.url?.();
+  if (typeof initialUrl !== "string") {
+    throw new Error("The selected browser page is unavailable.");
+  }
+  const boundOrigin = exactWebOrigin(initialUrl);
+  if (approvedOrigin !== undefined && boundOrigin !== approvedOrigin) {
+    throw new Error(
+      "The selected browser tab left the origin approved for this capture."
+    );
+  }
+  let context;
+
+  const send = async (method, params = {}) => {
+    if (!OPENAI_BROWSER_CDP_METHODS.has(method)) {
+      throw new Error("ShowKit blocked a CDP command outside its read-only allowlist.");
+    }
+    return capability.send(method, params, { timeoutMs: 10_000 });
+  };
+
+  const currentFrame = async () => {
+    const currentUrl = await tab?.url?.();
+    if (
+      typeof currentUrl !== "string" ||
+      exactWebOrigin(currentUrl) !== boundOrigin
+    ) {
+      throw new Error(
+        "The selected browser tab left the origin approved for this capture."
+      );
+    }
+    const response = await send("Page.getFrameTree");
+    const frame = response?.frameTree?.frame;
+    if (
+      typeof frame?.id !== "string" ||
+      frame.id.length === 0 ||
+      typeof frame?.loaderId !== "string" ||
+      frame.loaderId.length === 0
+    ) {
+      throw new Error("Chrome returned an invalid main-frame result.");
+    }
+    let frameOrigin;
+    try {
+      frameOrigin = exactWebOrigin(frame.url);
+    } catch {
+      throw new Error("Chrome returned an invalid main-frame origin.");
+    }
+    if (frameOrigin !== boundOrigin) {
+      throw new Error(
+        "The selected browser frame left the origin approved for this capture."
+      );
+    }
+    return frame;
+  };
+
+  const executionContext = async ({ refresh = false } = {}) => {
+    const frame = await currentFrame();
+    if (
+      refresh ||
+      context?.frameId !== frame.id ||
+      context?.loaderId !== frame.loaderId
+    ) {
+      const response = await send("Page.createIsolatedWorld", {
+        frameId: frame.id,
+        worldName: "showkit-readonly-capture-v1",
+        grantUniveralAccess: false
+      });
+      if (!Number.isInteger(response?.executionContextId)) {
+        throw new Error("Chrome did not create an isolated capture world.");
+      }
+      context = {
+        frameId: frame.id,
+        loaderId: frame.loaderId,
+        executionContextId: response.executionContextId
+      };
+    }
+    return context.executionContextId;
+  };
+
+  const evaluateOnce = async (expression, refresh = false) => {
+    const contextId = await executionContext({ refresh });
+    const response = await send("Runtime.evaluate", {
+      expression,
+      contextId,
+      awaitPromise: true,
+      returnByValue: true,
+      silent: true,
+      userGesture: false,
+      generatePreview: false,
+      disableBreaks: true
+    });
+    if (response?.exceptionDetails) {
+      const description =
+        response.exceptionDetails.exception?.description ??
+        response.exceptionDetails.text ??
+        "The isolated page function failed.";
+      throw new Error(description);
+    }
+    const remote = response?.result;
+    if (!remote || remote.type === "object" && remote.subtype === "error") {
+      throw new Error("Chrome returned an invalid isolated evaluation result.");
+    }
+    if (remote.type === "undefined") return undefined;
+    if (!Object.prototype.hasOwnProperty.call(remote, "value")) {
+      throw new Error("Chrome did not return the isolated result by value.");
+    }
+    let serialized;
+    try {
+      serialized = JSON.stringify(remote.value);
+    } catch {
+      throw new Error("Chrome returned a non-serializable isolated result.");
+    }
+    if (
+      serialized !== undefined &&
+      serialized.length > OPENAI_BROWSER_CDP_RESULT_LIMIT
+    ) {
+      throw new Error("Chrome returned an isolated result above the safety limit.");
+    }
+    return remote.value;
+  };
+
+  return Object.freeze({
+    transport: "approved-cdp-capability",
+    async evaluate(pageFunction, options) {
+      const expression = serializeApprovedPageCall(pageFunction, options);
+      try {
+        return await evaluateOnce(expression);
+      } catch (error) {
+        if (!isExecutionContextUnavailable(error)) throw error;
+        context = undefined;
+        return evaluateOnce(expression, true);
+      }
+    }
+  });
+}
+
+export function createAdaptiveApprovedRuntime(
+  tab,
+  directRuntime,
+  approvedOrigin
+) {
+  let approvedRuntimePromise;
+  const approvedRuntime = async () => {
+    approvedRuntimePromise ??= (async () => {
+      if (
+        typeof tab?.capabilities?.list !== "function" ||
+        typeof tab?.capabilities?.get !== "function"
+      ) {
+        return undefined;
+      }
+      const capabilities = await tab.capabilities.list();
+      if (
+        !Array.isArray(capabilities) ||
+        !capabilities.some((capability) => capability?.id === "cdp")
+      ) {
+        return undefined;
+      }
+      const cdp = await tab.capabilities.get("cdp");
+      return createApprovedCdpRuntime(tab, cdp, approvedOrigin);
+    })();
+    return approvedRuntimePromise;
+  };
+  return Object.freeze({
+    transport: "host-readonly-evaluate+approved-cdp-fallback",
+    async evaluate(pageFunction, options) {
+      const activeApprovedRuntime = await approvedRuntimePromise;
+      if (activeApprovedRuntime) {
+        return activeApprovedRuntime.evaluate(pageFunction, options);
+      }
+      try {
+        return await directRuntime.evaluate(pageFunction, options);
+      } catch (error) {
+        if (!isApprovedCdpFallbackError(error)) throw error;
+        const fallback = await approvedRuntime();
+        if (!fallback) throw error;
+        return fallback.evaluate(pageFunction, options);
+      }
+    }
+  });
 }
 
 function serializeSanitizedNodes(nodes) {
@@ -418,65 +672,222 @@ async function semanticStateSignature(tab) {
   }
 }
 
+async function armCapturedPageChange(tab) {
+  return tab.playwright.evaluate(() => {
+    const world = window;
+    if (typeof world.MutationObserver !== "function") return undefined;
+    const previous = world.__showkitPageChangeObserverV1;
+    previous?.cleanup?.();
+    const token =
+      typeof window.crypto?.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : `change-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const state = {
+      token,
+      revision: 0,
+      waiters: [],
+      cleanup: undefined
+    };
+    const changed = () => {
+      state.revision += 1;
+      const waiters = state.waiters.splice(0);
+      for (const waiter of waiters) waiter(state.revision);
+    };
+    const mutationObserver = new world.MutationObserver(changed);
+    mutationObserver.observe(document.documentElement, {
+      attributes: true,
+      characterData: true,
+      childList: true,
+      subtree: true
+    });
+    const resizeObserver =
+      typeof world.ResizeObserver === "function"
+        ? new world.ResizeObserver(changed)
+        : undefined;
+    resizeObserver?.observe(document.documentElement);
+    if (document.body) resizeObserver?.observe(document.body);
+    const events = ["change", "input", "toggle", "hashchange", "popstate"];
+    for (const event of events) {
+      window.addEventListener(event, changed, true);
+    }
+    state.cleanup = () => {
+      mutationObserver.disconnect();
+      resizeObserver?.disconnect();
+      for (const event of events) {
+        window.removeEventListener(event, changed, true);
+      }
+      for (const waiter of state.waiters.splice(0)) waiter(state.revision);
+      if (world.__showkitPageChangeObserverV1 === state) {
+        delete world.__showkitPageChangeObserverV1;
+      }
+    };
+    Object.defineProperty(world, "__showkitPageChangeObserverV1", {
+      value: state,
+      configurable: true,
+      writable: true
+    });
+    return token;
+  });
+}
+
+async function waitForCapturedPageChange(tab, token, revision, timeoutMs) {
+  return tab.playwright.evaluate(
+    async ({ expectedToken, seenRevision, boundedTimeoutMs }) => {
+      if (typeof expectedToken !== "string") {
+        return { available: false, changed: false, revision: seenRevision };
+      }
+      const state = window.__showkitPageChangeObserverV1;
+      if (!state || state.token !== expectedToken) {
+        return { available: false, changed: false, revision: seenRevision };
+      }
+      if (state.revision > seenRevision) {
+        return {
+          available: true,
+          changed: true,
+          revision: state.revision
+        };
+      }
+      return new Promise((resolve) => {
+        let settled = false;
+        const finish = (nextRevision) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve({
+            available: true,
+            changed: nextRevision > seenRevision,
+            revision: nextRevision
+          });
+        };
+        const timeout = setTimeout(
+          () => finish(state.revision),
+          boundedTimeoutMs
+        );
+        state.waiters.push(finish);
+      });
+    },
+    {
+      expectedToken: token,
+      seenRevision: revision,
+      boundedTimeoutMs: timeoutMs
+    }
+  );
+}
+
+async function releaseCapturedPageChange(tab, token) {
+  if (
+    typeof tab?.playwright?.evaluate !== "function" ||
+    typeof token !== "string"
+  ) {
+    return;
+  }
+  await tab.playwright
+    .evaluate((expectedToken) => {
+      const state = window.__showkitPageChangeObserverV1;
+      if (state?.token === expectedToken) state.cleanup?.();
+    }, token)
+    .catch(() => undefined);
+}
+
 async function waitForCapturedPageVisuals(tab) {
   if (typeof tab.playwright.evaluate !== "function") return;
-  await tab.playwright.evaluate(async () => {
-    await document.fonts?.ready;
-    await new Promise((resolve) => {
-      let attempts = 0;
-      let stableSamples = 0;
+  const stable = await tab.playwright.evaluate(async () => {
+    const timeoutMs = 5_000;
+    const deadline = Date.now() + timeoutMs;
+    let revision = 0;
+    const changed = () => {
+      revision += 1;
+    };
+    const mutationObserver =
+      typeof window.MutationObserver === "function"
+        ? new window.MutationObserver(changed)
+        : undefined;
+    mutationObserver?.observe(document.documentElement, {
+      attributes: true,
+      characterData: true,
+      childList: true,
+      subtree: true
+    });
+    const resizeObserver =
+      typeof window.ResizeObserver === "function"
+        ? new window.ResizeObserver(changed)
+        : undefined;
+    resizeObserver?.observe(document.documentElement);
+    if (document.body) resizeObserver?.observe(document.body);
+    const bounded = (promise) =>
+      Promise.race([
+        promise,
+        new Promise((resolve) =>
+          setTimeout(() => resolve(undefined), Math.max(0, deadline - Date.now()))
+        )
+      ]);
+    const visibleImages = () =>
+      Array.from(document.images).filter((image) => {
+        const rectangle = image.getBoundingClientRect();
+        const style = getComputedStyle(image);
+        return (
+          rectangle.width > 0 &&
+          rectangle.height > 0 &&
+          rectangle.bottom > 0 &&
+          rectangle.right > 0 &&
+          rectangle.top < window.innerHeight &&
+          rectangle.left < window.innerWidth &&
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          style.visibility !== "collapse" &&
+          Number.parseFloat(style.opacity || "1") > 0
+        );
+      });
+    const nextFrame = () =>
+      typeof window.requestAnimationFrame === "function"
+        ? Promise.race([
+            new Promise((resolve) =>
+              window.requestAnimationFrame(() => resolve(true))
+            ),
+            new Promise((resolve) => setTimeout(() => resolve(false), 100))
+          ])
+        : new Promise((resolve) => setTimeout(() => resolve(false), 16));
+    try {
+      if (document.fonts?.ready) await bounded(document.fonts.ready);
+      await bounded(
+        Promise.all(
+          visibleImages().map((image) =>
+            typeof image.decode === "function"
+              ? image.decode().catch(() => undefined)
+              : Promise.resolve()
+          )
+        )
+      );
       let previousSignature;
-      const sample = () => {
-        attempts += 1;
-        const visibleImages = Array.from(document.images).filter((image) => {
-          const rectangle = image.getBoundingClientRect();
-          const style = getComputedStyle(image);
-          return (
-            rectangle.width > 0 &&
-            rectangle.height > 0 &&
-            rectangle.bottom > 0 &&
-            rectangle.right > 0 &&
-            rectangle.top < window.innerHeight &&
-            rectangle.left < window.innerWidth &&
-            style.display !== "none" &&
-            style.visibility !== "hidden" &&
-            style.visibility !== "collapse" &&
-            Number.parseFloat(style.opacity || "1") > 0
-          );
-        });
-        const readyImages = visibleImages.filter(
+      let stableFrames = 0;
+      while (Date.now() < deadline) {
+        await nextFrame();
+        const images = visibleImages();
+        const readyImages = images.filter(
           (image) =>
-            image.complete &&
-            image.naturalWidth > 0 &&
-            image.naturalHeight > 0
+            image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
         ).length;
         const signature = [
-          visibleImages.length,
+          revision,
+          images.length,
           readyImages,
           document.body?.childElementCount ?? 0,
+          document.body?.scrollWidth ?? 0,
           document.body?.scrollHeight ?? 0
         ].join(":");
-        stableSamples =
-          signature === previousSignature ? stableSamples + 1 : 0;
+        stableFrames = signature === previousSignature ? stableFrames + 1 : 0;
         previousSignature = signature;
-        if (
-          attempts >= 5 &&
-          stableSamples >= 3 &&
-          readyImages === visibleImages.length
-        ) {
-          resolve(true);
-          return;
-        }
-        if (attempts >= 50) {
-          resolve(false);
-          return;
-        }
-        setTimeout(sample, 100);
-      };
-      sample();
-    });
-    return true;
+        if (stableFrames >= 2 && readyImages === images.length) return true;
+      }
+      return false;
+    } finally {
+      mutationObserver?.disconnect();
+      resizeObserver?.disconnect();
+    }
   });
+  if (stable === false) {
+    throw new Error("The page did not reach a stable HTML state before capture.");
+  }
 }
 
 function sceneFromKernel(result, anchorId) {
@@ -1310,15 +1721,34 @@ export function createCodexBrowserAdapter({
   pageAssetProvider,
   hostValidation
 }) {
+  const hostVerified =
+    hostValidation?.[CODEX_BROWSER_VALIDATION] === true &&
+    OPENAI_BROWSER_VERIFIED_BINDINGS.get(hostValidation) === tab;
+  const verifiedRuntime = hostVerified
+    ? OPENAI_BROWSER_VERIFIED_RUNTIMES.get(hostValidation)
+    : undefined;
+  const evaluatePage =
+    typeof verifiedRuntime?.evaluate === "function"
+      ? verifiedRuntime.evaluate.bind(verifiedRuntime)
+      : typeof tab?.playwright?.evaluate === "function"
+        ? tab.playwright.evaluate.bind(tab.playwright)
+        : undefined;
+  const runtimeTab = {
+    url: (...args) => tab.url(...args),
+    playwright: {
+      evaluate: evaluatePage,
+      domSnapshot:
+        typeof tab?.playwright?.domSnapshot === "function"
+          ? tab.playwright.domSnapshot.bind(tab.playwright)
+          : undefined
+    }
+  };
   const hasDomAccess =
     tab?.playwright &&
     typeof tab.playwright.domSnapshot === "function" &&
     typeof tab.playwright.locator === "function" &&
     typeof tab.playwright.getByRole === "function" &&
-    typeof tab.playwright.evaluate === "function";
-  const hostVerified =
-    hostValidation?.[CODEX_BROWSER_VALIDATION] === true &&
-    OPENAI_BROWSER_VERIFIED_BINDINGS.get(hostValidation) === tab;
+    typeof evaluatePage === "function";
   const renderedIconReplacements = new Map();
   const renderedIconAttemptedKeys = new Set();
   const captureRenderedIcon = async (candidate) => {
@@ -1337,7 +1767,7 @@ export function createCodexBrowserAdapter({
       context?.assetConsent?.consent === "confirmed";
     if (
       !visibleSession ||
-      typeof tab.playwright.evaluate !== "function" ||
+      typeof evaluatePage !== "function" ||
       typeof tab.playwright.elementScreenshot !== "function"
     ) {
       return [];
@@ -1363,7 +1793,7 @@ export function createCodexBrowserAdapter({
     ]);
     let candidates;
     try {
-      candidates = await tab.playwright.evaluate(
+      candidates = await evaluatePage(
         collectRenderedIconCandidatesInPage,
         {
           knownSources: [...knownSources],
@@ -1452,6 +1882,7 @@ export function createCodexBrowserAdapter({
   const decodeTransferredNodes = async (
     evaluatePage,
     pageFunction,
+    transferReaderFunction,
     options,
     initialResult
   ) => {
@@ -1485,36 +1916,70 @@ export function createCodexBrowserAdapter({
         result.transfer.nodesJsonLength
       );
     } else if (result.transfer?.mode === "chunked-json") {
-      const { chunkSize, htmlLength, nodesJsonLength } = result.transfer;
+      const {
+        chunkSize,
+        htmlLength,
+        nodesJsonLength,
+        captureId,
+        payloadSha256
+      } = result.transfer;
       const totalLength = Math.max(htmlLength, nodesJsonLength);
-      for (let offset = chunkSize; offset < totalLength; offset += chunkSize) {
-        const segment = await evaluatePage(pageFunction, {
-          ...options,
-          transferEncoding: "chunked-json",
-          transferOffset: offset,
-          transferChunkSize: chunkSize
-        });
-        if (
-          !segment?.ok ||
-          segment.scanOnly ||
-          segment.transfer?.mode !== "chunked-json" ||
-          segment.transfer.offset !== offset ||
-          typeof segment.html !== "string" ||
-          typeof segment.nodesJson !== "string"
-        ) {
-          throw new Error("The captured HTML node transfer was interrupted.");
+      const useFrozenTransfer =
+        typeof transferReaderFunction === "function" &&
+        typeof captureId === "string" &&
+        typeof payloadSha256 === "string";
+      try {
+        for (let offset = chunkSize; offset < totalLength; offset += chunkSize) {
+          const segment = useFrozenTransfer
+            ? await evaluatePage(transferReaderFunction, {
+                captureId,
+                offset,
+                chunkSize
+              })
+            : await evaluatePage(pageFunction, {
+                ...options,
+                transferEncoding: "chunked-json",
+                transferOffset: offset,
+                transferChunkSize: chunkSize
+              });
+          if (
+            !segment?.ok ||
+            segment.scanOnly ||
+            segment.transfer?.mode !== "chunked-json" ||
+            segment.transfer.offset !== offset ||
+            segment.transfer.chunkSize !== chunkSize ||
+            segment.transfer.htmlLength !== htmlLength ||
+            segment.transfer.nodesJsonLength !== nodesJsonLength ||
+            (useFrozenTransfer &&
+              (segment.transfer.captureId !== captureId ||
+                segment.transfer.payloadSha256 !== payloadSha256)) ||
+            typeof segment.html !== "string" ||
+            typeof segment.nodesJson !== "string"
+          ) {
+            throw new Error("The captured HTML node transfer was interrupted.");
+          }
+          html += segment.html;
+          nodesJson += segment.nodesJson;
         }
-        html += segment.html;
-        nodesJson += segment.nodesJson;
+      } finally {
+        if (useFrozenTransfer) {
+          await evaluatePage(transferReaderFunction, {
+            captureId,
+            release: true
+          }).catch(() => undefined);
+        }
       }
-      // A live app can reflow between chunk requests. Preserve the first
-      // snapshot's deterministic lengths when later chunks report a small
-      // drift, while still failing closed if data is actually missing.
       if (html.length < htmlLength || nodesJson.length < nodesJsonLength) {
         throw new Error("The captured HTML node transfer is incomplete.");
       }
       html = html.slice(0, htmlLength);
       nodesJson = nodesJson.slice(0, nodesJsonLength);
+      if (
+        typeof payloadSha256 === "string" &&
+        sha256(`${html}\u0000${nodesJson}`) !== payloadSha256
+      ) {
+        throw new Error("The captured HTML node transfer changed content.");
+      }
     }
     let nodes;
     try {
@@ -1551,7 +2016,8 @@ export function createCodexBrowserAdapter({
             executionWorld: OPENAI_BROWSER_ISOLATION_VERSION,
             pluginVersion: hostValidation.pluginVersion,
             pluginName: hostValidation.pluginName,
-            implementationHash: hostValidation.implementationHash
+            implementationHash: hostValidation.implementationHash,
+            transport: hostValidation.transport
           }
         : {
             provider: "openai-browser",
@@ -1589,8 +2055,8 @@ export function createCodexBrowserAdapter({
           (await targetLocator.locator.isVisible()))
       );
     },
-    async evaluateTarget(target, pageFunction, options) {
-      if (typeof tab?.playwright?.evaluate !== "function") {
+    async evaluateTarget(target, pageFunction, options, transferReaderFunction) {
+      if (typeof evaluatePage !== "function") {
         throw new Error(
           "The selected browser cannot provide isolated page evaluation."
         );
@@ -1598,13 +2064,13 @@ export function createCodexBrowserAdapter({
       await viewportLocatorFor(tab, target);
       const pageOptions = {
         ...options,
-        scopeTarget: target
+        scopeTarget: target,
+        transferId: randomUUID()
       };
-      const evaluatePage = (nextPageFunction, nextOptions) =>
-        tab.playwright.evaluate(nextPageFunction, nextOptions);
       return decodeTransferredNodes(
         evaluatePage,
         pageFunction,
+        transferReaderFunction,
         pageOptions,
         await evaluatePage(pageFunction, pageOptions)
       );
@@ -1651,7 +2117,7 @@ export function createCodexBrowserAdapter({
               timeoutMs: 20_000
             });
           }
-          await waitForCapturedPageVisuals(tab);
+          await waitForCapturedPageVisuals(runtimeTab);
           return;
         }
       }
@@ -1670,12 +2136,13 @@ export function createCodexBrowserAdapter({
             waitUntil: "domcontentloaded"
           }
         );
-        await waitForCapturedPageVisuals(tab);
+        await waitForCapturedPageVisuals(runtimeTab);
         return;
       }
       const beforeUrl = await tab.url();
-      const beforeSignature = await visibleStateSignature(tab);
-      const beforeSemanticSignature = await semanticStateSignature(tab);
+      const beforeSignature = await visibleStateSignature(runtimeTab);
+      const beforeSemanticSignature = await semanticStateSignature(runtimeTab);
+      const changeToken = await armCapturedPageChange(runtimeTab);
       let clickError;
       try {
         const actionTarget = await viewportLocatorFor(tab, target);
@@ -1686,28 +2153,62 @@ export function createCodexBrowserAdapter({
       } catch (error) {
         clickError = error;
       }
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const afterUrl = await tab.url();
-        const afterSignature = await visibleStateSignature(tab);
-        const afterSemanticSignature = await semanticStateSignature(tab);
-        if (
-          afterUrl !== beforeUrl ||
-          afterSignature !== beforeSignature ||
-          (beforeSemanticSignature !== undefined &&
-            afterSemanticSignature !== undefined &&
-            afterSemanticSignature !== beforeSemanticSignature)
-        ) {
-          await waitForCapturedPageVisuals(tab);
-          return;
+      let revision = 0;
+      const deadline = Date.now() + 2_000;
+      try {
+        while (Date.now() < deadline) {
+          const afterUrl = await tab.url();
+          if (afterUrl !== beforeUrl) {
+            await waitForCapturedPageVisuals(runtimeTab);
+            return;
+          }
+          const signal = await waitForCapturedPageChange(
+            runtimeTab,
+            changeToken,
+            revision,
+            Math.max(1, deadline - Date.now())
+          );
+          if (!signal?.available) {
+            const navigatedUrl = await tab.url();
+            if (navigatedUrl !== beforeUrl) {
+              await waitForCapturedPageVisuals(runtimeTab);
+              return;
+            }
+            const afterSignature = await visibleStateSignature(runtimeTab);
+            const afterSemanticSignature = await semanticStateSignature(runtimeTab);
+            if (
+              afterSignature !== beforeSignature ||
+              (beforeSemanticSignature !== undefined &&
+                afterSemanticSignature !== undefined &&
+                afterSemanticSignature !== beforeSemanticSignature)
+            ) {
+              await waitForCapturedPageVisuals(runtimeTab);
+              return;
+            }
+            break;
+          }
+          revision = signal.revision;
+          if (!signal.changed) break;
+          const afterSignature = await visibleStateSignature(runtimeTab);
+          const afterSemanticSignature = await semanticStateSignature(runtimeTab);
+          if (
+            afterSignature !== beforeSignature ||
+            (beforeSemanticSignature !== undefined &&
+              afterSemanticSignature !== undefined &&
+              afterSemanticSignature !== beforeSemanticSignature)
+          ) {
+            await waitForCapturedPageVisuals(runtimeTab);
+            return;
+          }
         }
-        if (typeof tab.playwright.waitForTimeout !== "function") break;
-        await tab.playwright.waitForTimeout(100);
+      } finally {
+        await releaseCapturedPageChange(runtimeTab, changeToken);
       }
       if (clickError) throw clickError;
       throw new Error("The selected page control did not change the visible state.");
     },
-    async evaluateTerminal(pageFunction, options) {
-      if (typeof tab?.playwright?.evaluate !== "function") {
+    async evaluateTerminal(pageFunction, options, transferReaderFunction) {
+      if (typeof evaluatePage !== "function") {
         throw new Error(
           "The selected browser cannot provide isolated page evaluation."
         );
@@ -1718,13 +2219,13 @@ export function createCodexBrowserAdapter({
       }
       const pageOptions = {
         ...options,
-        scopeSelector: "body"
+        scopeSelector: "body",
+        transferId: randomUUID()
       };
-      const evaluatePage = (nextPageFunction, nextOptions) =>
-        tab.playwright.evaluate(nextPageFunction, nextOptions);
       return decodeTransferredNodes(
         evaluatePage,
         pageFunction,
+        transferReaderFunction,
         pageOptions,
         await evaluatePage(pageFunction, pageOptions)
       );
@@ -1737,10 +2238,37 @@ export function createCodexBrowserAdapter({
 
 export const createOpenAIBrowserAdapter = createCodexBrowserAdapter;
 
-export function createCodexPageAssetProvider({ tab, approvals = [] }) {
+export function createCodexPageAssetProvider({
+  tab,
+  approvals = [],
+  hostValidation
+}) {
+  const hostVerified =
+    hostValidation?.[CODEX_BROWSER_VALIDATION] === true &&
+    OPENAI_BROWSER_VERIFIED_BINDINGS.get(hostValidation) === tab;
+  const verifiedRuntime = hostVerified
+    ? OPENAI_BROWSER_VERIFIED_RUNTIMES.get(hostValidation)
+    : undefined;
+  const evaluatePage =
+    typeof verifiedRuntime?.evaluate === "function"
+      ? verifiedRuntime.evaluate.bind(verifiedRuntime)
+      : typeof tab?.playwright?.evaluate === "function"
+        ? tab.playwright.evaluate.bind(tab.playwright)
+        : undefined;
   const approved = new Map();
   const visibleSessionReplacements = new Map();
   const visibleSessionAttemptedUrls = new Set();
+  let pageAssetCapabilityPromise;
+  const pageAssetCapability = async () => {
+    pageAssetCapabilityPromise ??= (async () => {
+      const capabilityIds = await tab.capabilities.list();
+      if (!capabilityIds.some((capability) => capability.id === "pageAssets")) {
+        throw new Error("The selected browser does not provide pageAssets.");
+      }
+      return tab.capabilities.get("pageAssets");
+    })();
+    return pageAssetCapabilityPromise;
+  };
   for (const approval of approvals) {
     if (
       !approval ||
@@ -1772,11 +2300,7 @@ export function createCodexPageAssetProvider({ tab, approvals = [] }) {
       throw new Error("Visible session assets need explicit confirmation.");
     }
     if (!visibleSession && approved.size === 0) return [];
-    const capabilityIds = await tab.capabilities.list();
-    if (!capabilityIds.some((capability) => capability.id === "pageAssets")) {
-      throw new Error("The selected browser does not provide pageAssets.");
-    }
-    const capability = await tab.capabilities.get("pageAssets");
+    const capability = await pageAssetCapability();
     const inventory = await capability.list();
     const currentUrl = await tab.url();
     if (typeof currentUrl !== "string" || typeof inventory.pageUrl !== "string") {
@@ -1794,9 +2318,9 @@ export function createCodexPageAssetProvider({ tab, approvals = [] }) {
 
     const renderedAssetSources =
       visibleSession &&
-      typeof tab.playwright?.evaluate === "function"
+      typeof evaluatePage === "function"
         ? new Set(
-            await tab.playwright.evaluate(() => {
+            await evaluatePage(() => {
               const sources = new Set();
               const addSource = (raw) => {
                 if (typeof raw !== "string" || raw.trim() === "") return;
@@ -2035,8 +2559,8 @@ export function createCodexPageAssetProvider({ tab, approvals = [] }) {
       .map((asset) => asset.url);
     const fontFaceDescriptors =
       selectedFontUrls.length > 0 &&
-      typeof tab.playwright?.evaluate === "function"
-        ? await tab.playwright.evaluate((fontUrls) => {
+      typeof evaluatePage === "function"
+        ? await evaluatePage((fontUrls) => {
             const selectedUrls = new Set(
               fontUrls.flatMap((raw) => {
                 try {
@@ -2391,9 +2915,14 @@ export async function verifyCodexBrowserHostIsolation({
       "OpenAI Browser isolation verification needs an absolute installed plugin path."
     );
   }
-  if (typeof tab?.playwright?.evaluate !== "function") {
+  if (
+    !tab?.playwright ||
+    (typeof tab.playwright.evaluate !== "function" &&
+      (typeof tab?.capabilities?.list !== "function" ||
+        typeof tab?.capabilities?.get !== "function"))
+  ) {
     throw new TypeError(
-      "OpenAI Browser isolation verification needs the exact selected tab with read-only evaluate access."
+      "OpenAI Browser isolation verification needs the exact selected tab with an approved isolated evaluation path."
     );
   }
   const resolvedRoot = await realpath(pluginRoot);
@@ -2451,33 +2980,72 @@ export async function verifyCodexBrowserHostIsolation({
       "The installed OpenAI Browser host does not satisfy ShowKit's isolated read-only execution contract."
     );
   }
-  let timeoutId;
-  const timeout = new Promise((_resolve, reject) => {
-    timeoutId = setTimeout(
-      () =>
-        reject(
-          new Error(
-            "The selected OpenAI Browser tab did not answer the isolated-world probe."
-          )
-        ),
-      5_000
-    );
-  });
+  const probeRuntime = async (runtime, probePage) => {
+    let timeoutId;
+    const timeout = new Promise((_resolve, reject) => {
+      timeoutId = setTimeout(
+        () =>
+          reject(
+            new Error(
+              "The selected OpenAI Browser tab did not answer the isolated-world probe."
+            )
+          ),
+        5_000
+      );
+    });
+    try {
+      return await Promise.race([runtime.evaluate(probePage), timeout]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+  const directRuntime =
+    typeof tab.playwright.evaluate === "function"
+      ? Object.freeze({
+          transport: "host-readonly-evaluate",
+          evaluate(pageFunction, options) {
+            return tab.playwright.evaluate(pageFunction, options);
+          }
+        })
+      : undefined;
+  let selectedOrigin;
+  if (typeof tab?.url === "function") {
+    try {
+      selectedOrigin = exactWebOrigin(await tab.url());
+    } catch {
+      selectedOrigin = undefined;
+    }
+  }
+  let runtime = directRuntime;
   let probe;
+  const probePage = () => ({
+    ok: true,
+    documentNodeType: document.nodeType,
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight
+    }
+  });
   try {
-    probe = await Promise.race([
-      tab.playwright.evaluate(() => ({
-        ok: true,
-        documentNodeType: document.nodeType,
-        viewport: {
-          width: window.innerWidth,
-          height: window.innerHeight
-        }
-      })),
-      timeout
-    ]);
-  } finally {
-    clearTimeout(timeoutId);
+    if (!runtime) throw new Error("Direct read-only evaluation is unavailable.");
+    probe = await probeRuntime(runtime, probePage);
+  } catch (directError) {
+    if (
+      typeof tab?.capabilities?.list !== "function" ||
+      typeof tab?.capabilities?.get !== "function"
+    ) {
+      throw directError;
+    }
+    const capabilities = await tab.capabilities.list();
+    if (
+      !Array.isArray(capabilities) ||
+      !capabilities.some((capability) => capability?.id === "cdp")
+    ) {
+      throw directError;
+    }
+    const cdp = await tab.capabilities.get("cdp");
+    runtime = await createApprovedCdpRuntime(tab, cdp, selectedOrigin);
+    probe = await probeRuntime(runtime, probePage);
   }
   if (
     probe?.ok !== true ||
@@ -2491,15 +3059,39 @@ export async function verifyCodexBrowserHostIsolation({
       "The selected OpenAI Browser tab failed the isolated read-only runtime probe."
     );
   }
+  if (
+    runtime === directRuntime &&
+    selectedOrigin !== undefined &&
+    typeof tab?.capabilities?.list === "function" &&
+    typeof tab?.capabilities?.get === "function"
+  ) {
+    try {
+      const capabilities = await tab.capabilities.list();
+      if (
+        Array.isArray(capabilities) &&
+        capabilities.some((capability) => capability?.id === "cdp")
+      ) {
+        runtime = createAdaptiveApprovedRuntime(
+          tab,
+          directRuntime,
+          selectedOrigin
+        );
+      }
+    } catch {
+      // The verified host-owned read-only evaluator remains available.
+    }
+  }
   const validation = Object.freeze({
     [CODEX_BROWSER_VALIDATION]: true,
     provider: "openai-browser",
     pluginName: manifest.name,
     pluginVersion: manifest.version,
     executionWorld: OPENAI_BROWSER_ISOLATION_VERSION,
-    implementationHash
+    implementationHash,
+    transport: runtime.transport
   });
   OPENAI_BROWSER_VERIFIED_BINDINGS.set(validation, tab);
+  OPENAI_BROWSER_VERIFIED_RUNTIMES.set(validation, runtime);
   return validation;
 }
 
@@ -2515,10 +3107,11 @@ export async function readCodexBrowserEnvironment(tab, hostValidation) {
       "Verify the installed OpenAI Browser isolated world for this exact selected tab before reading the page environment."
     );
   }
-  if (typeof tab?.playwright?.evaluate !== "function") {
+  const runtime = OPENAI_BROWSER_VERIFIED_RUNTIMES.get(hostValidation);
+  if (typeof runtime?.evaluate !== "function") {
     throw new Error("Read-only browser DOM access is unavailable.");
   }
-  const environment = await tab.playwright.evaluate(() => ({
+  const environment = await runtime.evaluate(() => ({
     viewport: {
       width: window.innerWidth,
       height: window.innerHeight
@@ -2588,6 +3181,15 @@ export async function captureBrowserSession({
   let envelopePath;
   let phase = "setup";
   let activeStepIndex = -1;
+  const captureStartedAt = performance.now();
+  const capturePerformance = {
+    htmlSceneCount: 0,
+    sceneExtractionMs: 0,
+    assetPreparationCount: 0,
+    assetPreparationMs: 0,
+    actionCount: 0,
+    actionSettleMs: 0
+  };
 
   try {
     if (
@@ -2742,6 +3344,7 @@ export async function captureBrowserSession({
       const anchorId = `sk-${step.id}`;
       phase = "asset-preparation";
       let remoteAssetReplacements = [];
+      const assetPreparationStartedAt = performance.now();
       try {
         remoteAssetReplacements =
           typeof adapter.preparePublicAssets === "function"
@@ -2756,6 +3359,10 @@ export async function captureBrowserSession({
           category: "page-asset-policy",
           stepIndex
         });
+      } finally {
+        capturePerformance.assetPreparationCount += 1;
+        capturePerformance.assetPreparationMs +=
+          performance.now() - assetPreparationStartedAt;
       }
       for (const replacement of remoteAssetReplacements) {
         if (replacement.captureKind?.startsWith("isolated-rendered-")) {
@@ -2769,6 +3376,7 @@ export async function captureBrowserSession({
       const fontFaces =
         fontFacesFromReplacements(remoteAssetReplacements);
       phase = "scene-extraction";
+      const sceneExtractionStartedAt = performance.now();
       const result = await adapter.evaluateTarget(
         step.target,
         cli.extractSceneKernel,
@@ -2783,8 +3391,12 @@ export async function captureBrowserSession({
           remoteAssetPolicy,
           fontFaces,
           remoteAssetReplacements
-        })
+        }),
+        cli.readFrozenSceneTransferKernel
       );
+      capturePerformance.htmlSceneCount += 1;
+      capturePerformance.sceneExtractionMs +=
+        performance.now() - sceneExtractionStartedAt;
       if (!result?.ok) {
         if (result?.blocker) throw policyErrorFromKernel(cli, result.blocker);
         throw browserError(cli, "BrowserSessionInterrupted", { stepIndex });
@@ -2827,7 +3439,10 @@ export async function captureBrowserSession({
         result.sensitiveText?.redactedAttributeCount ?? 0;
 
       phase = "page-action";
+      const actionStartedAt = performance.now();
       await adapter.performAction(step.target, step.actionKind);
+      capturePerformance.actionCount += 1;
+      capturePerformance.actionSettleMs += performance.now() - actionStartedAt;
       if (!(await adapter.isAlive())) {
         throw browserError(cli, "BrowserSessionInterrupted", { stepIndex });
       }
@@ -2857,6 +3472,7 @@ export async function captureBrowserSession({
     }
     phase = "terminal-asset-preparation";
     let terminalRemoteAssetReplacements = [];
+    const terminalAssetPreparationStartedAt = performance.now();
     try {
       terminalRemoteAssetReplacements =
           typeof adapter.preparePublicAssets === "function"
@@ -2871,6 +3487,10 @@ export async function captureBrowserSession({
         category: "page-asset-policy",
         stepIndex: recipe.steps.length
       });
+    } finally {
+      capturePerformance.assetPreparationCount += 1;
+      capturePerformance.assetPreparationMs +=
+        performance.now() - terminalAssetPreparationStartedAt;
     }
     for (const replacement of terminalRemoteAssetReplacements) {
       if (replacement.captureKind?.startsWith("isolated-rendered-")) {
@@ -2884,6 +3504,7 @@ export async function captureBrowserSession({
     const terminalFontFaces =
       fontFacesFromReplacements(terminalRemoteAssetReplacements);
     phase = "terminal-extraction";
+    const terminalExtractionStartedAt = performance.now();
     const terminalResult = await adapter.evaluateTerminal(
       cli.extractSceneKernel,
       kernelOptions(cli, {
@@ -2896,8 +3517,12 @@ export async function captureBrowserSession({
         remoteAssetPolicy,
         fontFaces: terminalFontFaces,
         remoteAssetReplacements: terminalRemoteAssetReplacements
-      })
+      }),
+      cli.readFrozenSceneTransferKernel
     );
+    capturePerformance.htmlSceneCount += 1;
+    capturePerformance.sceneExtractionMs +=
+      performance.now() - terminalExtractionStartedAt;
     if (!terminalResult?.ok) {
       if (terminalResult?.blocker) {
         throw policyErrorFromKernel(cli, terminalResult.blocker);
@@ -2942,12 +3567,22 @@ export async function captureBrowserSession({
     });
     phase = "temporary-handoff";
     envelopePath = await cli.writeSessionEnvelopeTemporary(envelope);
+    const rounded = (value) => Number(value.toFixed(3));
     return {
       status: "captured",
       sourceMode: "agent-browser-session",
       replayLevel: "session-captured",
       captureId: envelope.capture.captureId,
       stepCount: captureSteps.length,
+      capturePerformance: {
+        htmlSceneCount: capturePerformance.htmlSceneCount,
+        sceneExtractionMs: rounded(capturePerformance.sceneExtractionMs),
+        assetPreparationCount: capturePerformance.assetPreparationCount,
+        assetPreparationMs: rounded(capturePerformance.assetPreparationMs),
+        actionCount: capturePerformance.actionCount,
+        actionSettleMs: rounded(capturePerformance.actionSettleMs),
+        totalMs: rounded(performance.now() - captureStartedAt)
+      },
       envelopePath,
       importCommand: [
         "showkit",

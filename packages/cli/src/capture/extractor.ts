@@ -18,6 +18,7 @@ export type SceneKernelOptions = {
   maxSerializedElements?: number;
   transferOffset?: number;
   transferChunkSize?: number;
+  transferId?: string;
   scopeSelector?: string;
   scopeTarget?:
     | {
@@ -110,6 +111,8 @@ export type SceneKernelResult =
             chunkSize: number;
             htmlLength: number;
             nodesJsonLength: number;
+            captureId?: string;
+            payloadSha256?: string;
           }
         | {
             mode: "lzss-json";
@@ -135,6 +138,112 @@ export type SceneKernelResult =
         regionCount: number;
       };
     };
+
+export type FrozenSceneTransferReadOptions = {
+  captureId: string;
+  offset?: number;
+  chunkSize?: number;
+  release?: boolean;
+};
+
+export type FrozenSceneTransferResult =
+  | {
+      ok: false;
+      category: "capture-missing" | "request-invalid";
+    }
+  | {
+      ok: true;
+      scanOnly: false;
+      html: string;
+      nodesJson: string;
+      released?: boolean;
+      transfer: {
+        mode: "chunked-json";
+        captureId: string;
+        payloadSha256: string;
+        offset: number;
+        chunkSize: number;
+        htmlLength: number;
+        nodesJsonLength: number;
+      };
+    };
+
+/**
+ * Reads sanitized HTML and node JSON captured earlier in the same isolated
+ * browser world. This function is serialized by browser adapters, so it must
+ * remain standalone and must never read the live DOM.
+ */
+export function readFrozenSceneTransferKernel(
+  options: FrozenSceneTransferReadOptions
+): FrozenSceneTransferResult {
+  const captureId = options?.captureId;
+  if (
+    typeof captureId !== "string" ||
+    !/^[A-Za-z0-9-]{8,80}$/.test(captureId)
+  ) {
+    return { ok: false, category: "request-invalid" };
+  }
+  type FrozenEntry = {
+    html: string;
+    nodesJson: string;
+    payloadSha256: string;
+  };
+  const world = globalThis as typeof globalThis & {
+    __showkitFrozenHtmlScenesV1?: Record<string, FrozenEntry>;
+  };
+  const entries = world.__showkitFrozenHtmlScenesV1;
+  const entry = entries?.[captureId];
+  if (!entry) return { ok: false, category: "capture-missing" };
+
+  if (options.release === true) {
+    delete entries[captureId];
+    return {
+      ok: true,
+      scanOnly: false,
+      html: "",
+      nodesJson: "",
+      released: true,
+      transfer: {
+        mode: "chunked-json",
+        captureId,
+        payloadSha256: entry.payloadSha256,
+        offset: 0,
+        chunkSize: 1,
+        htmlLength: entry.html.length,
+        nodesJsonLength: entry.nodesJson.length
+      }
+    };
+  }
+
+  const offset = Math.max(0, Math.trunc(options.offset ?? 0));
+  const chunkSize = Math.max(
+    1,
+    Math.min(48_000, Math.trunc(options.chunkSize ?? 48_000))
+  );
+  const totalLength = Math.max(entry.html.length, entry.nodesJson.length);
+  if (offset >= totalLength || offset % chunkSize !== 0) {
+    return { ok: false, category: "request-invalid" };
+  }
+  const result: FrozenSceneTransferResult = {
+    ok: true,
+    scanOnly: false,
+    html: entry.html.slice(offset, offset + chunkSize),
+    nodesJson: entry.nodesJson.slice(offset, offset + chunkSize),
+    transfer: {
+      mode: "chunked-json",
+      captureId,
+      payloadSha256: entry.payloadSha256,
+      offset,
+      chunkSize,
+      htmlLength: entry.html.length,
+      nodesJsonLength: entry.nodesJson.length
+    }
+  };
+  if (offset + chunkSize >= totalLength) {
+    delete entries[captureId];
+  }
+  return result;
+}
 
 /**
  * This function is serialized by Playwright and host browser adapters. Keep all
@@ -272,28 +381,51 @@ export async function extractSceneKernel(
           .join(" ")
       : "";
   };
-  const associatedLabelText = (element: Element): string =>
-    Array.from(pageDocument.querySelectorAll("label"))
-      .filter((label) => {
-        const labelFor = label.getAttribute("for");
-        return (
-          (labelFor !== null &&
-            element.id !== "" &&
-            labelFor === element.id) ||
-          label.contains(element)
-        );
-      })
-      .map((label) => accessibleTextContent(label))
-      .join(" ");
+  const labelTextCache = new Map<Element, string>();
+  const labelsByControlId = new Map<string, Element[]>();
+  for (const label of Array.from(pageDocument.querySelectorAll("label"))) {
+    const labelFor = label.getAttribute("for");
+    if (!labelFor) continue;
+    const labels = labelsByControlId.get(labelFor) ?? [];
+    labels.push(label);
+    labelsByControlId.set(labelFor, labels);
+  }
+  const labelText = (label: Element): string => {
+    if (labelTextCache.has(label)) return labelTextCache.get(label)!;
+    const value = accessibleTextContent(label);
+    labelTextCache.set(label, value);
+    return value;
+  };
+  const associatedLabelText = (element: Element): string => {
+    const labels = new Set<Element>(
+      element.id ? (labelsByControlId.get(element.id) ?? []) : []
+    );
+    let ancestor: Element | null = element.parentElement;
+    while (ancestor) {
+      if (ancestor.tagName.toLowerCase() === "label") labels.add(ancestor);
+      ancestor = ancestor.parentElement;
+    }
+    return [...labels].map(labelText).join(" ");
+  };
+  const explicitLabelNameCache = new Map<Element, string>();
   const explicitLabelName = (element: Element): string => {
+    if (explicitLabelNameCache.has(element)) {
+      return explicitLabelNameCache.get(element)!;
+    }
     const candidate = [
       element.getAttribute("aria-label"),
       labelledText(element),
       associatedLabelText(element)
     ].find((value) => normalizedText(value ?? "") !== "");
-    return normalizedText(candidate ?? "");
+    const value = normalizedText(candidate ?? "");
+    explicitLabelNameCache.set(element, value);
+    return value;
   };
+  const accessibleNameCache = new Map<Element, string>();
   const simpleAccessibleName = (element: Element): string => {
+    if (accessibleNameCache.has(element)) {
+      return accessibleNameCache.get(element)!;
+    }
     const tag = element.tagName.toLowerCase();
     const inputType = (element.getAttribute("type") ?? "").toLowerCase();
     const candidate = [
@@ -307,7 +439,9 @@ export async function extractSceneKernel(
       element.getAttribute("title"),
       accessibleTextContent(element)
     ].find((value) => normalizedText(value ?? "") !== "");
-    return normalizedText(candidate ?? "");
+    const value = normalizedText(candidate ?? "");
+    accessibleNameCache.set(element, value);
+    return value;
   };
   const segmentedAccessibleTextContent = (element: Element): string => {
     if (element.getAttribute("aria-hidden") === "true") return "";
@@ -333,7 +467,10 @@ export async function extractSceneKernel(
     }
     return parts.join(" ");
   };
+  const accessibleNameVariantsCache = new Map<Element, string[]>();
   const simpleAccessibleNameVariants = (element: Element): string[] => {
+    const cached = accessibleNameVariantsCache.get(element);
+    if (cached) return cached;
     const primary = simpleAccessibleName(element);
     const tag = element.tagName.toLowerCase();
     const inputType = (element.getAttribute("type") ?? "").toLowerCase();
@@ -347,13 +484,14 @@ export async function extractSceneKernel(
         : "",
       element.getAttribute("title")
     ].find((value) => normalizedText(value ?? "") !== "");
-    if (authoredName) return [primary];
-    return [
+    const variants = authoredName ? [primary] : [
       ...new Set([
         primary,
         normalizedText(segmentedAccessibleTextContent(element))
       ])
     ];
+    accessibleNameVariantsCache.set(element, variants);
+    return variants;
   };
   let scopeTargetFailureCategory:
     | "target-missing"
@@ -365,7 +503,45 @@ export async function extractSceneKernel(
     if (!target) {
       return pageDocument.querySelector(options.scopeSelector ?? "body");
     }
-    const candidates = Array.from(pageDocument.querySelectorAll("*"));
+    const candidates = (() => {
+      if (target.strategy === "href") {
+        return Array.from(pageDocument.querySelectorAll("a[href]"));
+      }
+      if (target.strategy === "test-id") {
+        return Array.from(pageDocument.querySelectorAll("[data-testid]"));
+      }
+      if (target.strategy === "title") {
+        return Array.from(pageDocument.querySelectorAll("[title]"));
+      }
+      if (target.strategy === "label") {
+        return Array.from(
+          pageDocument.querySelectorAll(
+            "button,input,meter,output,progress,select,textarea"
+          )
+        );
+      }
+      if (target.strategy === "role") {
+        const roleSelectors: Record<string, string> = {
+          button: "button,input,[role]",
+          link: "a[href],[role]",
+          textbox: "textarea,input,[role]",
+          searchbox: "input,[role]",
+          checkbox: "input,[role]",
+          radio: "input,[role]",
+          slider: "input,[role]",
+          spinbutton: "input,[role]",
+          combobox: "select,[role]",
+          listbox: "select,[role]"
+        };
+        return Array.from(
+          pageDocument.querySelectorAll(
+            roleSelectors[target.role] ??
+              "[role],button,a[href],textarea,select,input"
+          )
+        );
+      }
+      return Array.from(pageDocument.querySelectorAll("*"));
+    })();
     const uniqueVisibleMatch = (matches: Element[]): Element | null => {
       const visibleMatches = matches.filter((element) => {
         const style = pageDocument.defaultView?.getComputedStyle(element);
@@ -3396,7 +3572,43 @@ export async function extractSceneKernel(
         offset: transferOffset,
         chunkSize: transferChunkSize,
         htmlLength: serializedHtml.length,
-        nodesJsonLength: serializedNodes.length
+        nodesJsonLength: serializedNodes.length,
+        ...(typeof options.transferId === "string" &&
+        /^[A-Za-z0-9-]{8,80}$/.test(options.transferId)
+          ? (() => {
+              const payloadSha256 = sha256Bytes(
+                utf8Bytes(`${serializedHtml}\u0000${serializedNodes}`)
+              );
+              type FrozenEntry = {
+                html: string;
+                nodesJson: string;
+                payloadSha256: string;
+              };
+              const world = globalThis as typeof globalThis & {
+                __showkitFrozenHtmlScenesV1?: Record<string, FrozenEntry>;
+              };
+              let entries = world.__showkitFrozenHtmlScenesV1;
+              if (!entries) {
+                entries = Object.create(null) as Record<string, FrozenEntry>;
+                Object.defineProperty(world, "__showkitFrozenHtmlScenesV1", {
+                  value: entries,
+                  configurable: true
+                });
+              }
+              for (const existingId of Object.keys(entries)) {
+                delete entries[existingId];
+              }
+              entries[options.transferId] = {
+                html: serializedHtml,
+                nodesJson: serializedNodes,
+                payloadSha256
+              };
+              return {
+                captureId: options.transferId,
+                payloadSha256
+              };
+            })()
+          : {})
       }
     };
   }

@@ -2,10 +2,10 @@
 
 ## Supported versions
 
-Before the first npm release, security fixes are applied to the public `main`
-branch. After `0.1.x` is published, fixes are provided for its latest patch.
-Upgrade to the latest available patch before reporting a problem. Node.js and
-browser support are listed in [`COMPATIBILITY.md`](COMPATIBILITY.md).
+ShowKit `0.2.x` is the current security support window. Fixes are provided for
+its latest patch. Upgrade to the latest available patch before reporting a
+problem. Node.js and browser support are listed in
+[`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 ## Trust boundary
 

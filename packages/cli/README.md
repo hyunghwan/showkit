@@ -6,7 +6,8 @@ semantic HTML and local assets; it does not host an LLM or require an account.
 
 Requires Node.js 22 or 24.
 
-Version `0.1.0` is the first public npm release.
+The CLI and portable skill are released separately. Installing this package
+does not install or update the skill.
 
 ## Install
 
@@ -38,7 +39,7 @@ belong on stderr.
 | `showkit diff --base <artifact.json> --json` | Compare the latest artifact with an earlier manifest |
 | `showkit diff --base <artifact.json> --check --json` | Fail when the demo is out of date |
 | `showkit preview --json` | Serve the latest artifact on `127.0.0.1` |
-| `showkit publish --version <hash> --json` | Recheck the local publish gate; the `0.1.x` local-only release uploads nothing |
+| `showkit publish --version <hash> --json` | Recheck the local publish gate; the current local-only release uploads nothing |
 
 Use `showkit help` to return the command list as JSON.
 

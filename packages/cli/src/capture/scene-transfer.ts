@@ -1,5 +1,9 @@
 import type { SanitizedNode } from "../core/schemas.js";
-import type { SceneKernelResult } from "./extractor.js";
+import { sha256 } from "../core/json.js";
+import type {
+  FrozenSceneTransferResult,
+  SceneKernelResult
+} from "./extractor.js";
 
 type CompleteSceneResult = Extract<
   SceneKernelResult,
@@ -118,7 +122,7 @@ export async function decodeSceneKernelResult(
   evaluateSegment: (
     offset: number,
     chunkSize: number
-  ) => Promise<SceneKernelResult>
+  ) => Promise<FrozenSceneTransferResult>
 ): Promise<SceneKernelResult> {
   if (
     !initialResult.ok ||
@@ -164,9 +168,15 @@ export async function decodeSceneKernelResult(
       const segment = await evaluateSegment(offset, transfer.chunkSize);
       if (
         !segment.ok ||
-        segment.scanOnly ||
         segment.transfer?.mode !== "chunked-json" ||
         segment.transfer.offset !== offset ||
+        segment.transfer.chunkSize !== transfer.chunkSize ||
+        segment.transfer.htmlLength !== transfer.htmlLength ||
+        segment.transfer.nodesJsonLength !== transfer.nodesJsonLength ||
+        (transfer.captureId !== undefined &&
+          segment.transfer.captureId !== transfer.captureId) ||
+        (transfer.payloadSha256 !== undefined &&
+          segment.transfer.payloadSha256 !== transfer.payloadSha256) ||
         typeof segment.html !== "string" ||
         typeof segment.nodesJson !== "string"
       ) {
@@ -183,6 +193,12 @@ export async function decodeSceneKernelResult(
     }
     html = html.slice(0, transfer.htmlLength);
     nodesJson = nodesJson.slice(0, transfer.nodesJsonLength);
+    if (
+      transfer.payloadSha256 !== undefined &&
+      sha256(`${html}\u0000${nodesJson}`) !== transfer.payloadSha256
+    ) {
+      throw new Error("The captured HTML node transfer changed content.");
+    }
   }
 
   const nodes = parseNodes(nodesJson);

@@ -7,6 +7,30 @@ fixes ship as a new version.
 
 - No unreleased changes.
 
+## 0.2.0 - 2026-08-04
+
+- Made verified browser HTML capture faster by reusing isolated browser
+  contexts, freezing large scene transfers, and reporting non-persisted
+  performance diagnostics.
+- Added an exact-site, tab-scoped Chrome CDP fallback limited to
+  `Page.getFrameTree`, `Page.createIsolatedWorld`, and `Runtime.evaluate` when
+  the verified higher-level browser evaluator is unavailable.
+- Added capture-size selection and exact viewport verification for marketer
+  workflows while preserving the selected signed-in tab.
+- Replaced the Shopify product-options gallery entry with the Stripe payments
+  walkthrough used on the ShowKit website.
+- Kept hotspots aligned throughout responsive resize transitions and kept
+  completion cards clear of prominent captured dialogs and menus.
+- Added compact, accessible Back and Restart demo icon controls when completion
+  actions need more room, including visible hover and keyboard-focus labels.
+- Namespaced player asset revisions so cached player files from another demo do
+  not replace the current demo's controls or styles.
+- Updated the ShowKit skill compatibility window to require
+  `@showkit/cli >=0.2.0 <0.3.0` for the new browser and player contracts.
+- Added regression coverage for large HTML scene transfers, browser-session
+  performance, responsive geometry, completion-card clearance, and player
+  asset revisions.
+
 ## 0.1.1 - 2026-08-03
 
 - Added a small, unobtrusive `Powered by ShowKit` link to the bottom-right of

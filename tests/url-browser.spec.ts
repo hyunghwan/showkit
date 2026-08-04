@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test";
 import {
   DEFAULT_SECRET_PATTERN_SOURCES,
-  extractSceneKernel
+  extractSceneKernel,
+  readFrozenSceneTransferKernel
 } from "@showkit/cli";
 import { createHash } from "node:crypto";
+import { captureScene } from "../packages/cli/src/capture/browser.js";
 import {
   collectRenderedIconCandidatesInPage,
   createCodexBrowserAdapter
@@ -776,6 +778,122 @@ test("transfers a deep semantic tree as JSON without flattening it", async ({
   expect(serialized).toMatch(
     /"tag":"main".*"tag":"section".*"tag":"article".*"tag":"button"/
   );
+});
+
+test("streams one frozen HTML scene after the live DOM changes", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <button type="button">Continue</button>
+      ${Array.from(
+        { length: 120 },
+        (_, index) => `<p>Stable product row ${index + 1}</p>`
+      ).join("")}
+    </main>
+  `);
+  const transferId = "frozen-html-scene-0001";
+  const result = await page.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    scopeTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Continue"
+    },
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    transferChunkSize: 64,
+    transferId
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.transfer).toEqual(
+    expect.objectContaining({
+      mode: "chunked-json",
+      captureId: transferId,
+      payloadSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
+  );
+
+  await page.locator("main").evaluate((main) => {
+    main.textContent = "Changed after the HTML scene was frozen";
+  });
+
+  let html = result.html;
+  let nodesJson = result.nodesJson ?? "";
+  if (result.transfer?.mode !== "chunked-json") return;
+  const totalLength = Math.max(
+    result.transfer.htmlLength,
+    result.transfer.nodesJsonLength
+  );
+  for (
+    let offset = result.transfer.chunkSize;
+    offset < totalLength;
+    offset += result.transfer.chunkSize
+  ) {
+    const segment = await page.evaluate(readFrozenSceneTransferKernel, {
+      captureId: transferId,
+      offset,
+      chunkSize: result.transfer.chunkSize
+    });
+    expect(segment.ok).toBe(true);
+    if (!segment.ok) continue;
+    html += segment.html;
+    nodesJson += segment.nodesJson;
+  }
+  html = html.slice(0, result.transfer.htmlLength);
+  nodesJson = nodesJson.slice(0, result.transfer.nodesJsonLength);
+  expect(
+    createHash("sha256").update(`${html}\u0000${nodesJson}`).digest("hex")
+  ).toBe(result.transfer.payloadSha256);
+  expect(html).toContain("Stable product row 1");
+  expect(nodesJson).toContain("Stable product row 20");
+  expect(`${html}\n${nodesJson}`).not.toContain(
+    "Changed after the HTML scene was frozen"
+  );
+  expect(
+    await page.evaluate(readFrozenSceneTransferKernel, {
+      captureId: transferId,
+      release: true
+    })
+  ).toEqual({ ok: false, category: "capture-missing" });
+});
+
+test("recreates the cached isolated world after main-frame navigation", async ({
+  page
+}) => {
+  await page.route("**/showkit-navigation/**", async (route) => {
+    const name = route.request().url().endsWith("/second") ? "Second" : "First";
+    await route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><html lang="en"><body><main><button type="button" style="width:120px;height:40px">${name}</button></main></body></html>`
+    });
+  });
+
+  const captureNamedButton = async (name: string, anchorId: string) => {
+    const target = page.getByRole("button", { name, exact: true });
+    await expect(target).toBeVisible();
+    return captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name
+      },
+      anchorId
+    });
+  };
+
+  await page.goto("http://127.0.0.1:4173/showkit-navigation/first");
+  const first = await captureNamedButton("First", "sk-first");
+  expect(first.scene.html).toContain("First");
+  expect(first.scene.html).toContain('data-showkit-anchor="sk-first"');
+
+  await page.goto("http://127.0.0.1:4173/showkit-navigation/second");
+  const second = await captureNamedButton("Second", "sk-second");
+  expect(second.scene.html).toContain("Second");
+  expect(second.scene.html).toContain('data-showkit-anchor="sk-second"');
+  expect(second.scene.html).not.toContain("First");
 });
 
 test("removes captured margins from positioned nodes to prevent coordinate drift", async ({

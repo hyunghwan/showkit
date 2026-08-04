@@ -195,6 +195,7 @@ test.describe("Milestone 1 local workflow", () => {
   let hotspotsOnlyUrl: string;
   let artifactDirectory: string;
   let firstVersion: string;
+  let baseAssetRevision: string;
   let unchangedDiff: CliResponse;
   let changedDiff: CliResponse;
   let checkedDiff: CliResponse;
@@ -406,8 +407,24 @@ test.describe("Milestone 1 local workflow", () => {
       path.join(artifactDirectory, "styles.css"),
       "utf8"
     );
+    const playerIndex = await readFile(
+      path.join(artifactDirectory, "index.html"),
+      "utf8"
+    );
+    const assetRevisions = Array.from(
+      playerIndex.matchAll(
+        /(?:styles\.css|story\.js|player\.js)\?v=([a-f0-9]{16})/g
+      ),
+      (match) => match[1]
+    );
+    expect(assetRevisions).toHaveLength(3);
+    expect(new Set(assetRevisions).size).toBe(1);
+    baseAssetRevision = assetRevisions[0]!;
     expect(playerStyles).toMatch(
       /\.scene-viewport \*\s*\{[^}]*margin:\s*0;[^}]*padding:\s*0;/s
+    );
+    expect(playerStyles).not.toMatch(
+      /\.welcome-layer\[data-backdrop="(?:light|medium|heavy)"\]\s*\{[^}]*backdrop-filter/s
     );
     const repeatedBuild = runCli(projectDirectory, ["build", "web,markdown"]);
     expect(repeatedBuild.status).toBe("unchanged");
@@ -540,6 +557,15 @@ test.describe("Milestone 1 local workflow", () => {
       runCli(projectDirectory, ["story", "apply", customOverlayStoryPath]).status
     ).toBe("applied");
     const customOverlayBuild = runCli(projectDirectory, ["build", "web"]);
+    const customOverlayIndex = await readFile(
+      path.join(String(customOverlayBuild.path), "index.html"),
+      "utf8"
+    );
+    const customOverlayAssetRevision = customOverlayIndex.match(
+      /styles\.css\?v=([a-f0-9]{16})/
+    )?.[1];
+    expect(customOverlayAssetRevision).toMatch(/^[a-f0-9]{16}$/);
+    expect(customOverlayAssetRevision).not.toBe(baseAssetRevision);
     const customOverlayPreview = await startPortableStaticServer(
       String(customOverlayBuild.path)
     );
@@ -947,11 +973,149 @@ test.describe("Milestone 1 local workflow", () => {
       if (step === 1) {
         await page.setViewportSize({ width: 820, height: 760 });
         await expect(hotspot).toBeVisible();
-      await expect
-        .poll(geometryError, { message: `step ${step} hotspot geometry` })
-        .toBeLessThanOrEqual(4);
+        await expect
+          .poll(geometryError, { message: `step ${step} hotspot geometry` })
+          .toBeLessThanOrEqual(4);
         await expect.poll(async () => (await overlayMetrics()).overflow).toBe(0);
         await expect.poll(async () => (await overlayMetrics()).overlap).toBe(0);
+        await page.evaluate(() => {
+          const viewport = document.querySelector("#scene-viewport");
+          if (!(viewport instanceof HTMLElement)) {
+            throw new Error("Expected the rendered scene viewport");
+          }
+          const samples: number[] = [];
+          const observer = new MutationObserver(() => {
+            const anchor = document.querySelector("[data-showkit-anchor]");
+            const hotspot = document.querySelector("#hotspot");
+            if (!(anchor instanceof HTMLElement) || !(hotspot instanceof HTMLElement)) {
+              return;
+            }
+            const anchorBox = anchor.getBoundingClientRect();
+            const hotspotBox = hotspot.getBoundingClientRect();
+            samples.push(
+              Math.max(
+                Math.abs(
+                  anchorBox.left + anchorBox.width / 2 -
+                    (hotspotBox.left + hotspotBox.width / 2)
+                ),
+                Math.abs(
+                  anchorBox.top + anchorBox.height / 2 -
+                    (hotspotBox.top + hotspotBox.height / 2)
+                )
+              )
+            );
+          });
+          observer.observe(viewport, {
+            attributes: true,
+            attributeFilter: ["style"]
+          });
+          (
+            window as typeof window & {
+              __showkitResizeGeometry?: {
+                observer: MutationObserver;
+                samples: number[];
+              };
+            }
+          ).__showkitResizeGeometry = { observer, samples };
+        });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                (
+                  window as typeof window & {
+                    __showkitResizeGeometry?: { samples: number[] };
+                  }
+                ).__showkitResizeGeometry?.samples.length ?? 0
+            )
+          )
+          .toBeGreaterThan(0);
+        await expect
+          .poll(() =>
+            page.evaluate(() => {
+              const anchor = document.querySelector("[data-showkit-anchor]");
+              const hotspot = document.querySelector("#hotspot");
+              if (
+                !(anchor instanceof HTMLElement) ||
+                !(hotspot instanceof HTMLElement)
+              ) {
+                return Number.POSITIVE_INFINITY;
+              }
+              const anchorBox = anchor.getBoundingClientRect();
+              const hotspotBox = hotspot.getBoundingClientRect();
+              return Math.max(
+                Math.abs(
+                  anchorBox.left + anchorBox.width / 2 -
+                    (hotspotBox.left + hotspotBox.width / 2)
+                ),
+                Math.abs(
+                  anchorBox.top + anchorBox.height / 2 -
+                    (hotspotBox.top + hotspotBox.height / 2)
+                )
+              );
+            })
+          )
+          .toBeLessThanOrEqual(4);
+        const resizeTransitionErrors = await page.evaluate(() => {
+          const state = (
+            window as typeof window & {
+              __showkitResizeGeometry?: {
+                observer: MutationObserver;
+                samples: number[];
+              };
+            }
+          ).__showkitResizeGeometry;
+          state?.observer.disconnect();
+          return state?.samples ?? [];
+        });
+        expect(resizeTransitionErrors.length).toBeGreaterThan(0);
+        expect(Math.max(...resizeTransitionErrors)).toBeLessThanOrEqual(4);
+        const narrowLayout = await page.evaluate(() => {
+          const anchor = document.querySelector("[data-showkit-anchor]");
+          const hotspot = document.querySelector("#hotspot");
+          const tooltip = document.querySelector("#tooltip");
+          if (
+            !(anchor instanceof HTMLElement) ||
+            !(hotspot instanceof HTMLElement) ||
+            !(tooltip instanceof HTMLElement)
+          ) {
+            return null;
+          }
+          const anchorBox = anchor.getBoundingClientRect();
+          const hotspotBox = hotspot.getBoundingClientRect();
+          const tooltipBox = tooltip.getBoundingClientRect();
+          const hit = document.elementFromPoint(
+            hotspotBox.left + hotspotBox.width / 2,
+            hotspotBox.top + hotspotBox.height / 2
+          );
+          return {
+            centerError: Math.max(
+              Math.abs(
+                anchorBox.left + anchorBox.width / 2 -
+                  (hotspotBox.left + hotspotBox.width / 2)
+              ),
+              Math.abs(
+                anchorBox.top + anchorBox.height / 2 -
+                  (hotspotBox.top + hotspotBox.height / 2)
+              )
+            ),
+            hotspotWidth: hotspotBox.width,
+            hotspotHeight: hotspotBox.height,
+            tooltipWidth: tooltipBox.width,
+            receivesPointer:
+              hit === hotspot || (hit !== null && hotspot.contains(hit))
+          };
+        });
+        expect(narrowLayout).not.toBeNull();
+        expect(narrowLayout?.centerError).toBeLessThanOrEqual(4);
+        expect(narrowLayout?.hotspotWidth).toBeGreaterThanOrEqual(24);
+        expect(narrowLayout?.hotspotHeight).toBeGreaterThanOrEqual(24);
+        expect(narrowLayout?.tooltipWidth).toBeLessThanOrEqual(220);
+        expect(narrowLayout?.receivesPointer).toBe(true);
+        await expect.poll(async () => (await overlayMetrics()).overflow).toBe(0);
+        await expect.poll(async () => (await overlayMetrics()).overlap).toBe(0);
+        await page.setViewportSize({ width: 820, height: 760 });
       }
       if (step === 2) {
         const stepBackdrop = page.locator("#step-backdrop");
@@ -1043,6 +1207,263 @@ test.describe("Milestone 1 local workflow", () => {
     ).toBe(true);
     expect(externalRequests).toEqual([]);
     expect(consoleErrors).toEqual([]);
+  });
+
+  test("keeps the completion card clear of a prominent captured dialog", async ({
+    page
+  }) => {
+    const completionDialogOverlap = () =>
+      page.evaluate(() => {
+        const shell = document.querySelector("#scene-shell");
+        const tooltip = document.querySelector("#tooltip");
+        const dialog = document.querySelector(
+          '#scene-viewport [role="alertdialog"]'
+        );
+        if (
+          !(shell instanceof HTMLElement) ||
+          !(tooltip instanceof HTMLElement) ||
+          !(dialog instanceof HTMLElement)
+        ) {
+          return null;
+        }
+        const shellRect = shell.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const dialogRect = dialog.getBoundingClientRect();
+        const overlapWidth = Math.max(
+          0,
+          Math.min(tooltipRect.right, dialogRect.right) -
+            Math.max(tooltipRect.left, dialogRect.left)
+        );
+        const overlapHeight = Math.max(
+          0,
+          Math.min(tooltipRect.bottom, dialogRect.bottom) -
+            Math.max(tooltipRect.top, dialogRect.top)
+        );
+        return {
+          overlap: overlapWidth * overlapHeight,
+          insideShell:
+            tooltipRect.left >= shellRect.left &&
+            tooltipRect.top >= shellRect.top &&
+            tooltipRect.right <= shellRect.right &&
+            tooltipRect.bottom <= shellRect.bottom,
+          obstacleCount: Number(tooltip.dataset.prominentObstacleCount),
+          reportedOverlap: Number(tooltip.dataset.sceneOverlap)
+        };
+      });
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            terminal: { nodes: Array<Record<string, unknown>> };
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.terminal.nodes.push({
+        type: "element",
+        tag: "div",
+        attributes: {
+          role: "alertdialog",
+          "aria-modal": "true"
+        },
+        styles: {
+          position: "absolute",
+          left: "316px",
+          top: "26px",
+          width: "648px",
+          height: "576px",
+          display: "block",
+          background: "rgb(255, 255, 255)",
+          border: "1px solid rgb(120, 120, 120)"
+        },
+        children: []
+      });
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    for (let step = 0; step < 3; step += 1) {
+      await page.locator("#tooltip-next").click();
+    }
+    await expect(page.locator("#step-count")).toHaveText("Complete");
+    await expect
+      .poll(completionDialogOverlap)
+      .toEqual({
+        overlap: 0,
+        insideShell: true,
+        obstacleCount: 1,
+        reportedOverlap: 0
+      });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect
+      .poll(completionDialogOverlap)
+      .toEqual({
+        overlap: 0,
+        insideShell: true,
+        obstacleCount: 1,
+        reportedOverlap: 0
+      });
+
+    const completionLayoutMetrics = () => page.evaluate(() => {
+      const tooltip = document.querySelector("#tooltip");
+      const actions = document.querySelector("#tooltip-actions");
+      const back = document.querySelector("#back");
+      const restart = document.querySelector("#restart");
+      if (
+        !(tooltip instanceof HTMLElement) ||
+        !(actions instanceof HTMLElement) ||
+        !(back instanceof HTMLButtonElement) ||
+        !(restart instanceof HTMLButtonElement)
+      ) {
+        return null;
+      }
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const actionRects = Array.from(actions.children)
+        .filter(
+          (element) =>
+            element instanceof HTMLElement &&
+            !element.hidden &&
+            getComputedStyle(element).display !== "none"
+        )
+        .flatMap((element) =>
+          element.id === "completion-actions"
+            ? Array.from(element.children).map((child) =>
+                child.getBoundingClientRect()
+              )
+            : [element.getBoundingClientRect()]
+        );
+      return {
+        height: tooltipRect.height,
+        actionRows: new Set(actionRects.map((rect) => Math.round(rect.top))).size,
+        controlMode:
+          [back, restart].every((control) => {
+            const icon = control.querySelector(".control-icon");
+            return (
+              icon instanceof SVGElement &&
+              getComputedStyle(icon).display !== "none"
+            );
+          })
+            ? "icons"
+            : "labels",
+        accessibleNames: [
+          back.getAttribute("aria-label"),
+          restart.getAttribute("aria-label")
+        ],
+        actionsInside:
+          actionRects.length > 0 &&
+          actionRects.every(
+            (rect) =>
+              rect.left >= tooltipRect.left &&
+              rect.right <= tooltipRect.right &&
+              rect.top >= tooltipRect.top &&
+              rect.bottom <= tooltipRect.bottom
+          ),
+        minimumTarget: Math.min(
+          ...actionRects.flatMap((rect) => [rect.width, rect.height])
+        )
+      };
+    });
+
+    await page.setViewportSize({ width: 520, height: 650 });
+    await expect
+      .poll(completionDialogOverlap)
+      .toEqual({
+        overlap: 0,
+        insideShell: true,
+        obstacleCount: 1,
+        reportedOverlap: 0
+      });
+    const regularCompletion = await completionLayoutMetrics();
+    expect(regularCompletion).not.toBeNull();
+    expect(regularCompletion?.height).toBeLessThanOrEqual(180);
+    expect(regularCompletion?.actionRows).toBe(1);
+    expect(regularCompletion?.controlMode).toBe("labels");
+    expect(regularCompletion?.accessibleNames).toEqual(["Back", "Restart demo"]);
+    expect(regularCompletion?.actionsInside).toBe(true);
+    expect(regularCompletion?.minimumTarget).toBeGreaterThanOrEqual(24);
+
+    await page.setViewportSize({ width: 342, height: 428 });
+    await expect
+      .poll(completionDialogOverlap)
+      .toEqual({
+        overlap: 0,
+        insideShell: true,
+        obstacleCount: 1,
+        reportedOverlap: 0
+      });
+    const compactCompletion = await completionLayoutMetrics();
+    expect(compactCompletion).not.toBeNull();
+    expect(compactCompletion?.height).toBeLessThanOrEqual(180);
+    expect(compactCompletion?.actionRows).toBe(1);
+    expect(compactCompletion?.controlMode).toBe("icons");
+    expect(compactCompletion?.accessibleNames).toEqual(["Back", "Restart demo"]);
+    expect(compactCompletion?.actionsInside).toBe(true);
+    expect(compactCompletion?.minimumTarget).toBeGreaterThanOrEqual(24);
+
+    const restartIconPaths = await page
+      .locator("#restart .control-icon path")
+      .evaluateAll((paths) =>
+        paths.map((path) => {
+          const bounds = (path as SVGGraphicsElement).getBBox();
+          return {
+            d: path.getAttribute("d"),
+            bounds: { width: bounds.width, height: bounds.height }
+          };
+        })
+      );
+    expect(restartIconPaths).toHaveLength(2);
+    expect(restartIconPaths.every(({ d }) => Boolean(d))).toBe(true);
+    expect(
+      restartIconPaths.some(
+        ({ bounds }) => bounds.width > 0 && bounds.height > 0
+      )
+    ).toBe(true);
+    await page.locator("#restart").focus();
+    await expect(page.locator("#restart")).toBeFocused();
+    const focusedRestartLabel = () =>
+      page.locator("#restart").evaluate((button) => {
+        const style = getComputedStyle(button, "::after");
+        return {
+          content: style.content,
+          opacity: style.opacity,
+          visibility: style.visibility
+        };
+      });
+    await expect.poll(focusedRestartLabel).toEqual(
+      expect.objectContaining({
+        opacity: "1",
+        visibility: "visible"
+      })
+    );
+
+    await page.setViewportSize({ width: 300, height: 428 });
+    await expect
+      .poll(completionDialogOverlap)
+      .toEqual({
+        overlap: 0,
+        insideShell: true,
+        obstacleCount: 1,
+        reportedOverlap: 0
+      });
+    const extraNarrowCompletion = await completionLayoutMetrics();
+    expect(extraNarrowCompletion).not.toBeNull();
+    expect(extraNarrowCompletion?.height).toBeLessThanOrEqual(180);
+    expect(extraNarrowCompletion?.actionRows).toBe(1);
+    expect(extraNarrowCompletion?.controlMode).toBe("icons");
+    expect(extraNarrowCompletion?.accessibleNames).toEqual([
+      "Back",
+      "Restart demo"
+    ]);
+    expect(extraNarrowCompletion?.actionsInside).toBe(true);
+    expect(extraNarrowCompletion?.minimumTarget).toBeGreaterThanOrEqual(24);
+
+    await page.getByRole("button", { name: "Back" }).click();
+    await expect(page.locator("#step-count")).toHaveText("Step 3 of 3");
+    await page.locator("#hotspot").click();
+    await expect(page.locator("#step-count")).toHaveText("Complete");
+    await page.getByRole("button", { name: "Restart demo" }).click();
+    await expect(page.locator("#welcome-layer")).toBeVisible();
   });
 
   test("preserves source-sized controls for tall captures without painting over them", async ({
