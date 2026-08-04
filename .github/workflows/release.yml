@@ -71,7 +71,18 @@ jobs:
               fi
             done
             if [ -z "$prior" ]; then
-              echo "No prior release tag is available for the rollback drill." >&2
+              package_name=$(node -p "require('./packages/cli/package.json').name")
+              prior=$(npm view "$package_name" versions --json | node --input-type=module -e '
+                let input = "";
+                for await (const chunk of process.stdin) input += chunk;
+                const badVersion = process.argv[1];
+                const parsed = JSON.parse(input);
+                const versions = Array.isArray(parsed) ? parsed : [parsed];
+                process.stdout.write(versions.filter((candidate) => candidate !== badVersion).at(-1) ?? "");
+              ' "$version")
+            fi
+            if [ -z "$prior" ]; then
+              echo "No prior release tag or published registry version is available for the rollback drill." >&2
               exit 1
             fi
             pnpm release:rollback -- --bad "$version" --prior "$prior"

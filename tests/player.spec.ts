@@ -11,6 +11,11 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(repositoryRoot, "packages/cli/dist/bin.js");
+const cliVersion = (
+  JSON.parse(
+    await readFile(path.join(repositoryRoot, "packages/cli/package.json"), "utf8")
+  ) as { version: string }
+).version;
 const canary = "SHOWKIT_SECRET_CANARY_7F92D1A4";
 const hostilePageCanary = "SHOWKIT_HOSTILE_PAGE_CANARY_71A4";
 const sensitiveTitleCanary = "SHOWKIT_SECRET_CANARY_TITLE_93C1";
@@ -210,7 +215,7 @@ test.describe("Milestone 1 local workflow", () => {
     expect(doctor.status).toBe("cli-ready");
     expect(doctor).toEqual(
       expect.objectContaining({
-        cliVersion: "0.1.0",
+        cliVersion,
         readiness: expect.objectContaining({
           cli: true,
           capture: expect.objectContaining({

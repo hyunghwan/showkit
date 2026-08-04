@@ -5,7 +5,11 @@ fixes ship as a new version.
 
 ## Unreleased
 
-- Added a small, low-contrast `Powered by ShowKit` link to the bottom-right of
+- No unreleased changes.
+
+## 0.1.1 - 2026-08-03
+
+- Added a small, unobtrusive `Powered by ShowKit` link to the bottom-right of
   generated demos. The link opens `showkit.sqncs.com` in a new tab and stays
   below hotspots, tooltips, controls, and the welcome layer.
 
