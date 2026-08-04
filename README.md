@@ -135,7 +135,9 @@ trust boundary.
 
 ShowKit builds selectable, semantic HTML with local content-addressed assets,
 DOM-anchored hotspots, tooltips, keyboard navigation, progress, Back, Next, and
-Restart demo. The same captured input produces the same artifact hash.
+Restart demo. A small `Powered by ShowKit` link sits below the interactive
+player layers in the bottom-right and opens the ShowKit website in a new tab.
+The same captured input produces the same artifact hash.
 
 Generated files live under `.showkit/artifacts/<content-hash>/`. Copy the whole
 directory to a static host when you are ready to publish it separately.

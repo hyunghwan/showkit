@@ -88,9 +88,11 @@ input and demo content produce the same artifact hash.
 
 The default player fills its embed container, starts with a welcome card,
 keeps step progress on the tooltip's top edge, shows Back and Next during the
-tour, and shows Restart demo only on the final card. Theme values must pass the
-player's WCAG 2.2 AA contrast checks. These checks cover ShowKit player chrome,
-not the accessibility of captured product content.
+tour, and shows Restart demo only on the final card. A small bottom-right
+`Powered by ShowKit` link opens the ShowKit website in a new tab and stays
+below hotspots, tooltips, controls, and the welcome layer. Theme values must
+pass the player's WCAG 2.2 AA contrast checks. These checks cover ShowKit
+player chrome, not the accessibility of captured product content.
 
 ## Exit codes
 

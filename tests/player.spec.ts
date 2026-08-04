@@ -660,6 +660,51 @@ test.describe("Milestone 1 local workflow", () => {
 
     await expect(page.locator("#demo-title")).toBeHidden();
     await expect(page.getByRole("heading", { name: "Open session filters" })).toBeVisible();
+    const watermark = page.getByRole("link", { name: /Powered by ShowKit/ });
+    await expect(watermark).toBeVisible();
+    await expect(watermark).toHaveAttribute("href", "https://showkit.sqncs.com");
+    await expect(watermark).toHaveAttribute("target", "_blank");
+    await expect(watermark).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(watermark).toHaveAttribute("referrerpolicy", "no-referrer");
+    const watermarkLayout = await watermark.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const stage = document.querySelector("#stage-card")?.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const hotspot = document.querySelector("#hotspot");
+      const tooltip = document.querySelector("#tooltip");
+      const chrome = document.querySelector("#chrome-overlay");
+      return {
+        position: style.position,
+        width: rect.width,
+        height: rect.height,
+        rightInset: stage ? stage.right - rect.right : Number.POSITIVE_INFINITY,
+        bottomInset: stage ? stage.bottom - rect.bottom : Number.POSITIVE_INFINITY,
+        insideStage:
+          stage !== undefined &&
+          rect.left >= stage.left &&
+          rect.top >= stage.top &&
+          rect.right <= stage.right &&
+          rect.bottom <= stage.bottom,
+        zIndex: Number(style.zIndex),
+        hotspotZIndex:
+          hotspot instanceof HTMLElement ? Number(getComputedStyle(hotspot).zIndex) : 0,
+        tooltipZIndex:
+          tooltip instanceof HTMLElement ? Number(getComputedStyle(tooltip).zIndex) : 0,
+        chromeZIndex:
+          chrome instanceof HTMLElement ? Number(getComputedStyle(chrome).zIndex) : 0
+      };
+    });
+    expect(watermarkLayout.position).toBe("absolute");
+    expect(watermarkLayout.width).toBeGreaterThanOrEqual(24);
+    expect(watermarkLayout.height).toBeGreaterThanOrEqual(24);
+    expect(watermarkLayout.rightInset).toBeGreaterThanOrEqual(0);
+    expect(watermarkLayout.rightInset).toBeLessThanOrEqual(12);
+    expect(watermarkLayout.bottomInset).toBeGreaterThanOrEqual(0);
+    expect(watermarkLayout.bottomInset).toBeLessThanOrEqual(12);
+    expect(watermarkLayout.insideStage).toBe(true);
+    expect(watermarkLayout.zIndex).toBeLessThan(watermarkLayout.hotspotZIndex);
+    expect(watermarkLayout.zIndex).toBeLessThan(watermarkLayout.tooltipZIndex);
+    expect(watermarkLayout.zIndex).toBeLessThan(watermarkLayout.chromeZIndex);
     await expect(
       page.locator(".scene-viewport").getByRole("button", { name: "Add filter" })
     ).toBeVisible();
