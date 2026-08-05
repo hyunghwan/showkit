@@ -165,7 +165,7 @@ export async function buildDemo(
     source: capture.source,
     replayLevel: capture.source.replayLevel,
     dependencies: {
-      node: { supported: ">=22 <25" },
+      node: { supported: ">=22.12 <25" },
       playwright: {
         ...(capture.source.kind === "playwright-spec"
           ? { capturedWith: capture.source.runtimeVersion }

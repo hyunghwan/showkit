@@ -49,7 +49,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=22 <25"
+    "node": ">=22.12 <25"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node dist/scripts/generate-schemas.js",

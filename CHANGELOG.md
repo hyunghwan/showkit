@@ -18,8 +18,9 @@ fixes ship as a new version.
 - Changed first-run onboarding to install and verify the skill, then ask for a
   product URL before choosing an output folder or demo details. New demos use
   1280×720 by default.
-- Added a no-browser Playwright capture preflight, CommonJS consumer loading,
-  and installed-Chrome doctor checks so a temporary live flow fails before
+- Added a no-browser Playwright capture preflight, CommonJS consumer loading
+  on Node.js 22.12+, and installed-Chrome doctor checks so a temporary live
+  flow fails before
   sign-in when its file or module setup is invalid and does not require a
   redundant bundled Chromium download.
 - Required one retained foreground capture process and one non-persistent

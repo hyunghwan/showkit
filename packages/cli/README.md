@@ -4,7 +4,7 @@ Build a guided interactive HTML demo from bound static source, a verified
 browser session, or an isolated Playwright flow. ShowKit produces portable
 semantic HTML and local assets; it does not host an LLM or require an account.
 
-Requires Node.js 22 or 24.
+Requires Node.js 22.12+ or 24.
 
 The CLI and portable skill are released separately. Installing this package
 does not install or update the skill.

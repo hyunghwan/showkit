@@ -47,7 +47,7 @@ import { createEvidenceGroundedStory } from "./core/story.js";
 import { validateStory } from "./core/validate.js";
 import { satisfiesVersionRange } from "./core/version.js";
 
-const NODE_RANGE = ">=22 <25";
+const NODE_RANGE = ">=22.12 <25";
 const PLAYWRIGHT_RANGE = ">=1.60.0 <2";
 
 async function dependencyUpgradeCommand(packageName: string, range: string): Promise<string> {

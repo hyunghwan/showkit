@@ -12,7 +12,7 @@ CLI, portable agent skill, safe capture boundary, and interactive HTML player.
 
 ## Development setup
 
-Requirements: Node.js 22 or 24 and pnpm 10.
+Requirements: Node.js 22.12+ or 24 and pnpm 10.
 
 ```bash
 corepack pnpm install --frozen-lockfile

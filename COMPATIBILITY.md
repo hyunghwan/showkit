@@ -6,7 +6,7 @@ explicit reader migration before the supported range changes.
 
 | Surface | Supported range |
 |---|---|
-| Node.js | `>=22 <25`; release CI tests 22 and 24 |
+| Node.js | `>=22.12 <25`; release CI tests current 22.x and 24.x |
 | OpenAI Browser or Chrome live capture | Codex or ChatGPT host must pass the installed isolated read-only world check |
 | Claude Cowork and Claude Code | Skill supported; existing Claude-controlled tab capture remains blocked when an isolated page world cannot be verified, then routes automatically to bound source or approved isolated Playwright |
 | Static-source capture | Built into `@showkit/cli`; Playwright is not required |
@@ -44,6 +44,6 @@ choose a capture implementation: it uses available bound source when that
 represents the requested flow, or prepares the separate Playwright route and
 asks only for the required dependency and sign-in permission.
 
-The CI compatibility matrix covers Node.js 22 and 24 on Linux, macOS, and
+The CI compatibility matrix covers current Node.js 22.x and 24.x on Linux, macOS, and
 Windows. The release browser gate covers the Playwright-managed Chromium,
 Firefox, and WebKit versions installed from the lockfile.

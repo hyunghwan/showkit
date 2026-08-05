@@ -65,9 +65,10 @@ describe("public package contract", () => {
 
 describe("supported version ranges", () => {
   it("checks the documented Node and Playwright boundaries", () => {
-    expect(satisfiesVersionRange("v22.0.0", ">=22 <25")).toBe(true);
-    expect(satisfiesVersionRange("v24.99.0", ">=22 <25")).toBe(true);
-    expect(satisfiesVersionRange("v25.0.0", ">=22 <25")).toBe(false);
+    expect(satisfiesVersionRange("v22.11.0", ">=22.12 <25")).toBe(false);
+    expect(satisfiesVersionRange("v22.12.0", ">=22.12 <25")).toBe(true);
+    expect(satisfiesVersionRange("v24.99.0", ">=22.12 <25")).toBe(true);
+    expect(satisfiesVersionRange("v25.0.0", ">=22.12 <25")).toBe(false);
     expect(satisfiesVersionRange("1.60.0", ">=1.60.0 <2")).toBe(true);
     expect(satisfiesVersionRange("1.59.9", ">=1.60.0 <2")).toBe(false);
     expect(satisfiesVersionRange("2.0.0", ">=1.60.0 <2")).toBe(false);

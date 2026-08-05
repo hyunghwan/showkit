@@ -5,7 +5,7 @@ demo. Nothing in this workflow publishes or uploads the result.
 
 ## Requirements
 
-- Node.js 22 or 24
+- Node.js 22.12+ or 24
 - a coding agent that can use the ShowKit skill, or a project where you can
   install `@showkit/cli`
 - public or synthetic content for a first run

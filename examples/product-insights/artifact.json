@@ -9,7 +9,7 @@
       "version": "1.62.0"
     },
     "node": {
-      "supported": ">=22 <25"
+      "supported": ">=22.12 <25"
     },
     "playwright": {
       "capturedWith": "1.62.0",

@@ -45,7 +45,7 @@ vendored under this repository's MIT license.
 
 ### Install and create your first demo
 
-Requirements: Node.js 22 or 24.
+Requirements: Node.js 22.12+ or 24.
 
 In Codex or Claude Code, paste this once:
 
