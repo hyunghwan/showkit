@@ -8,7 +8,9 @@
 | `showkit doctor --capability codex-browser --json` | Backward-compatible alias for the OpenAI browser readiness check |
 | `showkit doctor --capability claude-browser --json` | Reports the blocked built-in Claude Chrome route and the optional isolated Playwright fallback |
 | `showkit doctor --capability playwright --json` | Checks the optional isolated Chromium runtime for headed live capture or CI |
+| `showkit doctor --capability playwright --browser-channel chrome --json` | Checks optional Playwright with installed system Chrome, without requiring bundled Chromium |
 | `showkit init --json` | Creates reversible `.showkit/` project files |
+| `showkit capture <demo.spec.ts> --preflight --json` | Verifies Playwright file discovery and module loading without running the test or opening its configured browser |
 | `showkit capture session <safe-envelope.json> --json` | Rechecks and atomically imports a private browser-session derivative, then deletes the temporary file |
 | `showkit capture static <safe-envelope.json> --json` | Verifies bound project source hashes and atomically imports a source-derived semantic envelope |
 | `showkit capture <spec> --json` | Runs an optional isolated Playwright source flow and saves an immutable safe derivative |

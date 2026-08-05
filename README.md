@@ -47,28 +47,43 @@ vendored under this repository's MIT license.
 
 Requirements: Node.js 22 or 24.
 
-Open Claude Code or Codex and paste this. Your coding agent does the rest.
+In Codex or Claude Code, paste this once:
 
-> Install ShowKit and create a checked local interactive HTML demo of the
-> product flow I have open. First run `npx skills add hyunghwan/showkit`, then
-> find and read the installed ShowKit `SKILL.md` and follow it. Choose the number
-> of steps this flow needs. Preserve supported visible HTML, text, styles, and
-> local assets. Never use screenshots. Stop before saving if private content
-> needs my choice. Set up a compatible `@showkit/cli` in a new output folder.
-> Ask before changing an existing project's dependencies or installing
-> Playwright or a browser. Build, check, and preview the demo locally. Do not
-> publish anything. When you finish, give me the local preview path and a short
-> summary of what ShowKit checked.
+> Install ShowKit for this coding agent. Run
+> `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`,
+> find and read the installed ShowKit `SKILL.md`, and verify the installation.
+> Then ask me exactly: “What product URL or currently open product flow should
+> I use?” Wait for my answer before creating the demo. After I answer, follow
+> the skill, choose a new empty output folder, use 1280×720 by default, and do
+> not ask me to choose a capture implementation.
+
+For Claude Cowork, open **Customize → Plugins**, add the
+`hyunghwan/showkit` marketplace, and install **ShowKit**. Both routes install
+instructions only; they do not install `@showkit/cli`, Playwright, or a browser
+binary.
+
+If the skill is already installed, open the product flow in Chrome and ask
+naturally:
+
+> Use ShowKit for this site. The flow is open in Chrome. Build and preview a
+> checked local interactive HTML demo. Do not publish.
 
 The skill handles setup, installs a compatible `@showkit/cli` runtime in the
-output folder, selects the safest available capture route, checks the demo, and
-returns the local preview path. It asks before changing an existing project's
-dependencies or installing optional Playwright and its browser binary.
+new output folder, selects the safest available capture route, checks the demo,
+and returns the local preview path. It does not ask you to choose between
+capture implementations. If an existing Claude-controlled tab cannot pass
+ShowKit's isolation check, the skill uses available bound source when it
+represents the flow or prepares a separate non-persistent browser. It asks one
+specific permission only if optional Playwright or a browser binary must be
+added, asks before changing an existing project's dependencies, and tells you
+when a separate sign-in is required. That temporary browser is launched once
+and keeps the same context alive from the single sign-in through capture.
 
-The portable skill is documented for Codex, ChatGPT, Claude Code, and the
-Claude Desktop Code tab. Automated installation tests cover Codex and Claude
-Code; app browser routes still have to pass their installed capability checks.
-A local preview is not published.
+The portable skill is documented for Codex, ChatGPT, Claude Cowork, Claude
+Code, and the Claude Desktop Code tab. Automated Skills CLI installation tests
+cover Codex and Claude Code; Cowork uses the Claude plugin marketplace. Every
+app browser route still has to pass its installed capability checks. A local
+preview is not published.
 
 For a guided first run and a clear explanation of each lifecycle state, read
 [`GETTING_STARTED.md`](GETTING_STARTED.md).
@@ -111,8 +126,10 @@ To update an existing demo:
 
 Browser-session capture continues only after the installed host passes
 ShowKit's isolated, read-only check. Claude's built-in browser route is not used
-when that isolation cannot be verified; use static source or approve a separate
-temporary Playwright browser instead.
+when that isolation cannot be verified. The skill chooses available bound
+source when it represents the requested flow; otherwise it prepares a separate
+temporary Playwright browser and asks only for the required install permission
+and separate sign-in.
 
 Choose the number of steps that explains the flow. Five steps may be useful in
 an example, but ShowKit does not pad or truncate every demo to a fixed count.
@@ -156,9 +173,12 @@ Add Playwright only for an approved headed-browser or CI flow:
 
 ```bash
 npm install -D @playwright/test
-npx playwright install chromium
-npx showkit doctor --capability playwright --json
+npx showkit doctor --capability playwright --browser-channel chrome --json
+npx showkit capture ./demo.spec.ts --preflight --json
 ```
+
+This checks installed Google Chrome. If it is unavailable, install bundled
+Chromium and rerun doctor without `--browser-channel chrome`.
 
 The package exposes the `showkit` command, typed contracts from
 `@showkit/cli`, the optional `@showkit/cli/playwright` fixture, and generated

@@ -1,7 +1,7 @@
-# Claude app browser notes
+# Claude Cowork and Claude Code browser notes
 
-Use these notes when Claude Code or the Code tab in Claude Desktop is connected
-to Claude in Chrome.
+Use these notes when Claude Cowork, Claude Code, or the Code tab in Claude
+Desktop is connected to Claude in Chrome.
 
 ## Current capability decision
 
@@ -23,13 +23,14 @@ capture scope, or weaken the capture policy.
 
 Do not run `extractSceneKernel`, an environment probe, or a finalizer through
 `javascript_tool`. Do not create `environmentResult`, `stepResults`, or a
-browser-session envelope from that tool. Return:
+browser-session envelope from that tool. Record this diagnostic, using
+`claude-code` instead when that is the host:
 
 ```json
 {
   "code": "UnsupportedSurface",
   "category": "browser-isolation-unverified",
-  "sourceHost": "claude-code",
+  "sourceHost": "claude-cowork",
   "captureReady": false
 }
 ```
@@ -37,27 +38,38 @@ browser-session envelope from that tool. Return:
 State that no captured product flow, HTML derivative, screenshot, or asset was
 saved and the previous demo did not change.
 
-## Supported routes
+## Automatic recovery
 
-Offer one of these routes:
+The isolation diagnostic is not the end of the task. Do not ask “How do you
+want to get this flow into the demo?” and do not make the person compare
+capture implementations.
 
-1. Use the `static-source` route,
-   `showkit capture static <safe-envelope.json> --json`, from a codebase or
-   checked-in static build. Bind the envelope to current project-relative
-   source-file hashes and report `replayLevel: "source-derived"`.
-2. If terminal and file access are available and the person explicitly
-   approves optional Playwright, follow
-   `examples/headed-chrome-live.md`. It opens a separate visible Chromium or
-   Chrome window with a fresh non-persistent browser context. The person signs
-   in in that temporary window. ShowKit resolves each `captureTarget` through
-   public Playwright `newCDPSession()` and `Page.createIsolatedWorld` before
-   persistence. It does not reuse or copy the person's existing Chrome profile.
-3. Use a trusted project-authored Playwright flow for repeatable CI capture.
-4. Use an OpenAI app Browser or Chrome session only when its installed host
-   passes `verifyOpenAIBrowserHostIsolation()`.
+Follow the automatic recovery order in `../workflow.md`:
+
+1. Use the `static-source` route automatically with already granted bound
+   source when it represents the requested flow without relying on the current
+   signed-in state, and report the result as `source-derived`.
+2. Otherwise use an already available isolated Playwright route.
+3. If optional Playwright or its browser binary is missing, ask only the
+   specific install permission written in `../workflow.md`, including the
+   output folder, exact commands, separate window, and required sign-in.
+4. If neither route is available, give the exact Codex handoff from
+   `../workflow.md`.
+
+After the required permission, continue the workflow without another route
+choice. Use `showkit capture static <safe-envelope.json> --json` for bound
+source, or follow `../examples/headed-chrome-live.md` for live capture. The
+headed route uses public Playwright `newCDPSession()`,
+`Page.createIsolatedWorld`, and a fresh non-persistent browser context. It
+does not reuse or copy the person's existing Chrome profile. Launch that
+context once and keep it alive from the person's single sign-in through the
+final captured step. Do not use a disposable reconnaissance browser before the
+real capture browser.
 
 Do not install Playwright without approval. Do not describe the temporary
-headed browser as the person's existing signed-in Chrome session.
+headed browser as the person's existing signed-in Chrome session. Keep private
+content choice and every state-changing action behind their own exact
+confirmation.
 
 ## Future enablement gate
 

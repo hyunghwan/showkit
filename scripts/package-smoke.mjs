@@ -221,15 +221,20 @@ try {
     .trim();
   for (const requirement of [
     "npx skills add hyunghwan/showkit",
-    "installed ShowKit `SKILL.md`",
+    "Claude Cowork",
+    "Customize → Plugins",
+    "instructions only",
+    "What product URL or currently open product flow should I use?",
+    "1280×720",
+    "Use ShowKit for this site",
+    "flow is open in Chrome",
     "interactive HTML demo",
-    "number of steps",
-    "private content",
     "@showkit/cli",
     "new output folder",
+    "does not ask you to choose",
     "changing an existing project's dependencies",
-    "installing Playwright or a browser",
-    "Build, check, and preview",
+    "specific permission",
+    "same context alive from the single sign-in through capture",
     "Do not publish",
     "local preview path"
   ]) {
@@ -755,6 +760,72 @@ try {
     "-e",
     'const fixture = await import("@showkit/cli/playwright"); if (!fixture.test) process.exit(1);'
   ]);
+  const consumerPackagePath = path.join(installDirectory, "package.json");
+  await writeFile(
+    consumerPackagePath,
+    `${JSON.stringify(
+      {
+        name: "showkit-clean-install-smoke",
+        private: true,
+        type: "commonjs"
+      },
+      null,
+      2
+    )}\n`
+  );
+  const commonJsSpec = path.join(installDirectory, "commonjs.spec.ts");
+  await writeFile(
+    commonJsSpec,
+    'import { test } from "@showkit/cli/playwright";\ntest("loads the fixture", async () => {});\n'
+  );
+  const commonJsPreflight = JSON.parse(
+    run(process.execPath, [
+      cliPath,
+      "capture",
+      commonJsSpec,
+      "--preflight",
+      "--json"
+    ])
+  );
+  if (
+    commonJsPreflight.status !== "source-ready" ||
+    commonJsPreflight.browserLaunchRequested !== false
+  ) {
+    throw new Error("Packed CLI did not preflight a CommonJS Playwright consumer.");
+  }
+  const undiscoverableSource = path.join(
+    installDirectory,
+    "temporary-live.demo.ts"
+  );
+  await writeFile(
+    undiscoverableSource,
+    'import { test } from "@showkit/cli/playwright";\ntest("is intentionally undiscoverable", async () => {});\n'
+  );
+  const undiscoverablePreflight = JSON.parse(
+    runExpecting(
+      process.execPath,
+      [
+        cliPath,
+        "capture",
+        undiscoverableSource,
+        "--preflight",
+        "--json"
+      ],
+      2
+    )
+  );
+  if (
+    undiscoverablePreflight.error?.code !== "DemoFixtureSetupFailed" ||
+    !undiscoverablePreflight.error?.recovery?.includes("*.spec.ts")
+  ) {
+    throw new Error(
+      `Packed CLI did not explain how to recover from an undiscoverable Playwright source. ${JSON.stringify(undiscoverablePreflight)}`
+    );
+  }
+  run(process.execPath, [
+    "-e",
+    'const fixture = require("@showkit/cli/playwright"); if (!fixture.test) process.exit(1);'
+  ]);
 
   process.stdout.write(
     `${JSON.stringify({
@@ -769,6 +840,7 @@ try {
         "help",
         "doctor",
         "init",
+        "capture preflight",
         "capture session",
         "capture static",
         "story apply",

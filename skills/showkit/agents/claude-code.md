@@ -9,15 +9,21 @@ For a page open in Claude in Chrome, read `claude-browser.md` first. The
 installed `javascript_tool` capability must expose a host-validated isolated
 read-only page world. When it runs in page context, extraction through that
 tool is blocked with `UnsupportedSurface`. Do not run the extractor in the
-page's main JavaScript realm. Offer the Playwright-free static-source workflow
-or, after dependency approval, the separate non-persistent headed Chrome
-workflow.
+page's main JavaScript realm. Follow the automatic recovery in
+`claude-browser.md`: use already granted bound source when it represents the
+flow, otherwise use or request the separate non-persistent headed Chrome
+workflow. Do not ask the person to choose a capture implementation.
 
 When the person works without a product repository, use a separate local
 ShowKit output folder. The CLI can initialize and build there. When optional
 Playwright is approved, the agent may create a temporary demo spec in that
-folder and ask the person to sign in in its separate visible browser window.
-Installing this skill does not install the CLI or Playwright.
+folder and ask the person to sign in once in its separate visible browser
+window. Write the final spec before launch and keep the same run-owned browser
+context alive from sign-in through capture. Do not launch a reconnaissance
+script, close its window, and ask for another sign-in. Run the no-browser
+capture preflight first, then keep the real capture in a retained foreground
+process; do not detach it to a background shell that may be killed while the
+person signs in. Installing this skill does not install the CLI or Playwright.
 
 Before applying the first demo content, show the exact default colors and font
 stacks from `SKILL.md` and ask whether to keep them. If the person supplies

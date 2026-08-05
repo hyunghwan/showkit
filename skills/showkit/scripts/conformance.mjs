@@ -11,6 +11,7 @@ const requiredFiles = [
   "agents/browser-capabilities.md",
   "agents/codex-browser.md",
   "agents/claude-code.md",
+  "agents/claude-cowork.md",
   "agents/claude-browser.md",
   "references/cli.md",
   "references/security.md",
@@ -18,6 +19,7 @@ const requiredFiles = [
   "references/visual-fidelity.md",
   "examples/manifest.json",
   "examples/headed-chrome-live.md",
+  "examples/open-chrome-routing.md",
   "examples/static-source.md",
   "examples/url-to-playwright.md",
   "scripts/capture-browser-session.mjs"
@@ -157,7 +159,7 @@ if (
 ) {
   throw new Error("compatibility.json does not cover the supported app hosts.");
 }
-for (const host of ["codex", "claude-code"]) {
+for (const host of ["codex", "claude-code", "claude-cowork"]) {
   const notes = await readFile(path.join(skillRoot, "agents", `${host}.md`), "utf8");
   if (!/approv|permission/i.test(notes) || !/publish|external/i.test(notes)) {
     throw new Error(`${host}.md must preserve dependency and external-action permissions.`);
@@ -203,6 +205,9 @@ for (const requirement of [
   "javascript_tool",
   "browser-isolation-unverified",
   "UnsupportedSurface",
+  "Claude Cowork",
+  "automatic recovery",
+  "Do not ask “How do you",
   "static-source",
   "source-derived",
   "host-validated isolated",
@@ -214,6 +219,21 @@ for (const requirement of [
     throw new Error(`claude-browser.md is missing ${requirement}.`);
   }
 }
+const claudeCoworkNotes = await readFile(
+  path.join(skillRoot, "agents", "claude-cowork.md"),
+  "utf8"
+);
+for (const requirement of [
+  "scripts/conformance.mjs",
+  "checks.skill.installed: false",
+  "compatibility.json",
+  "without running the doctor's `npx skills add` recovery",
+  "Do not install a duplicate skill"
+]) {
+  if (!claudeCoworkNotes.replace(/\s+/g, " ").includes(requirement)) {
+    throw new Error(`claude-cowork.md is missing ${requirement}.`);
+  }
+}
 const browserCapabilities = await readFile(
   path.join(skillRoot, "agents", "browser-capabilities.md"),
   "utf8"
@@ -222,6 +242,7 @@ for (const requirement of [
   "ChatGPT",
   "Codex",
   "Claude Code",
+  "Claude Cowork",
   "Claude Desktop",
   "sourceHost",
   "non-persistent",
@@ -392,10 +413,30 @@ for (const requirement of [
   "captureTarget",
   "non-persistent",
   "Page.createIsolatedWorld",
-  "showkit capture temporary-live.demo.ts --json"
+  "showkit capture temporary-live.spec.ts --preflight --json",
+  "showkit capture temporary-live.spec.ts --json",
+  "retained foreground"
 ]) {
   if (!headedChromeExample.includes(requirement)) {
     throw new Error(`headed-chrome-live.md is missing ${requirement}.`);
+  }
+}
+const openChromeExample = await readFile(
+  path.join(skillRoot, "examples", "open-chrome-routing.md"),
+  "utf8"
+);
+for (const requirement of [
+  "Use ShowKit for this site",
+  "What product URL or currently open product flow should I use?",
+  "1280×720",
+  "Claude Cowork",
+  "verifyOpenAIBrowserHostIsolation()",
+  "Do not respond with",
+  "Details → Approve",
+  "exact confirmation"
+]) {
+  if (!openChromeExample.includes(requirement)) {
+    throw new Error(`open-chrome-routing.md is missing ${requirement}.`);
   }
 }
 if (!skill.includes("installs agent instructions only")) {
@@ -405,10 +446,20 @@ for (const requirement of [
   "Do not make the person install the CLI manually",
   "newly selected output folder",
   "npx skills add hyunghwan/showkit",
+  "Customize → Plugins",
+  "scripts/conformance.mjs",
+  "checks.skill.installed: false",
+  "Do not run the doctor's Skills CLI recovery",
+  "Do not ask an open-ended routing question",
+  "What product URL or currently open product flow should I use?",
+  "1280×720",
+  "one-shot reconnaissance browser",
+  "do not override the host's action-safety policy",
+  "Do not restart the browser",
   "Do not install Playwright for the primary setup",
   "flow-appropriate set of 3 to 7 ordered"
 ]) {
-  if (!skill.includes(requirement)) {
+  if (!skill.replace(/\s+/g, " ").includes(requirement)) {
     throw new Error(`SKILL.md is missing one-command bootstrap guidance: ${requirement}`);
   }
 }
@@ -450,7 +501,13 @@ process.stdout.write(
   `${JSON.stringify({
     ok: true,
     installTestedAgents: ["codex", "claude-code"],
-    documentedHosts: ["codex", "chatgpt", "claude-code", "claude-app"],
+    documentedHosts: [
+      "codex",
+      "chatgpt",
+      "claude-code",
+      "claude-cowork",
+      "claude-app"
+    ],
     browserSurfaces: ["iab", "chrome"],
     sourceModes: [
       "agent-browser-session",

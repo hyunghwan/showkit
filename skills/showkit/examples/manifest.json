@@ -5,6 +5,7 @@
     "static-source.md",
     "headed-chrome-live.md",
     "launch-onboarding.md",
+    "open-chrome-routing.md",
     "url-to-playwright.md"
   ],
   "expectedCommands": [

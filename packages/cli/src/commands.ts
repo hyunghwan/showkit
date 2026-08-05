@@ -146,7 +146,7 @@ function positionalArgs(args: string[]): string[] {
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];
     if (!value) continue;
-    if (value === "--json") continue;
+    if (value === "--json" || value === "--preflight" || value === "--report") continue;
     if (value.startsWith("--")) {
       index += 1;
       continue;
@@ -194,20 +194,39 @@ export async function doctorCommand(args: string[] = []): Promise<CommandResult>
     });
   }
   const playwrightRequired = requestedCapability === "playwright";
+  const browserChannel = argumentValue(args, "--browser-channel") ?? "chromium";
+  if (browserChannel !== "chromium" && browserChannel !== "chrome") {
+    throw new ShowKitError({
+      code: "DependencyMissing",
+      message: "ShowKit does not recognize the requested Playwright browser channel.",
+      exitCode: EXIT_CODES.environment,
+      recovery:
+        "Use `--browser-channel chromium` for bundled Chromium or `--browser-channel chrome` for installed Google Chrome."
+    });
+  }
   const cliPackage = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8")
   ) as { version: string };
   let playwrightVersion: string | undefined;
   let playwrightInstalled = false;
   let browserInstalled = false;
+  let bundledChromiumInstalled = false;
+  let systemChromeInstalled = false;
   try {
     const packagePath = require.resolve("@playwright/test/package.json");
     const packageJson = JSON.parse(await readFile(packagePath, "utf8")) as { version: string };
     playwrightVersion = packageJson.version;
     playwrightInstalled = true;
     const { chromium } = await import("@playwright/test");
-    const browserPath = chromium.executablePath();
-    await access(browserPath);
+    if (browserChannel === "chrome") {
+      const browser = await chromium.launch({ channel: "chrome", headless: true });
+      await browser.close();
+      systemChromeInstalled = true;
+    } else {
+      const browserPath = chromium.executablePath();
+      await access(browserPath);
+      bundledChromiumInstalled = true;
+    }
     browserInstalled = true;
   } catch {
     // Playwright is optional. Its explicit capability check fails below with a
@@ -224,7 +243,9 @@ export async function doctorCommand(args: string[] = []): Promise<CommandResult>
       ? "Install `@playwright/test` in this project, then install Chromium."
       : !playwrightSupported
         ? `Install \`@playwright/test@${PLAYWRIGHT_RANGE}\`. Detected ${playwrightVersion}.`
-        : "Run `pnpm exec playwright install chromium`.";
+        : browserChannel === "chrome"
+          ? "Install Google Chrome, or run `pnpm exec playwright install chromium` and retry without `--browser-channel chrome`."
+          : "Run `pnpm exec playwright install chromium`.";
     throw new ShowKitError({
       code: "DependencyMissing",
       message: !nodeSupported
@@ -239,7 +260,8 @@ export async function doctorCommand(args: string[] = []): Promise<CommandResult>
         playwright: {
           detected: playwrightVersion ?? "not installed",
           supported: PLAYWRIGHT_RANGE,
-          browserInstalled
+          browserInstalled,
+          browserChannel
         }
       }
     });
@@ -293,7 +315,7 @@ export async function doctorCommand(args: string[] = []): Promise<CommandResult>
   const projectInitialized = await pathExists(showkitPath("project.json"));
   const skillInstalled = skill.entries.length > 0;
   const skillRecovery =
-    "Run `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`, then start a new agent session.";
+    "For Codex or Claude Code, run `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`. For Claude Cowork, add the `hyunghwan/showkit` marketplace in Customize > Plugins and install ShowKit. Then start a new agent task.";
   const checks = {
     node: { passed: nodeSupported, version: process.version, supported: NODE_RANGE },
     staticSource: {
@@ -330,10 +352,21 @@ export async function doctorCommand(args: string[] = []): Promise<CommandResult>
       supported: PLAYWRIGHT_RANGE,
       available: playwrightReady
     },
-    chromium: {
+    browser: {
       passed: browserInstalled,
       required: playwrightRequired,
+      channel: browserChannel,
       installed: browserInstalled
+    },
+    chromium: {
+      passed: bundledChromiumInstalled,
+      required: playwrightRequired && browserChannel === "chromium",
+      installed: bundledChromiumInstalled
+    },
+    chrome: {
+      passed: systemChromeInstalled,
+      required: playwrightRequired && browserChannel === "chrome",
+      installed: systemChromeInstalled
     },
     skill: {
       passed: skillInstalled,
@@ -469,6 +502,24 @@ function captureFailure(output: string): ShowKitError {
       ...(category ? { details: { category } } : {})
     });
   }
+  if (/No tests found/i.test(output)) {
+    return new ShowKitError({
+      code: "DemoFixtureSetupFailed",
+      message:
+        "Playwright did not discover this source flow. No browser was opened and no captured page was saved.",
+      recovery:
+        "Rename the file to `*.spec.ts` or configure Playwright `testMatch` to include it, then run `showkit capture <spec> --preflight --json`."
+    });
+  }
+  if (/ERR_PACKAGE_PATH_NOT_EXPORTED|ERR_REQUIRE_ESM|No "exports" main defined/i.test(output)) {
+    return new ShowKitError({
+      code: "DemoFixtureSetupFailed",
+      message:
+        "Playwright could not load the ShowKit fixture in this project module format. No browser was opened and no captured page was saved.",
+      recovery:
+        "Update `@showkit/cli`, or use a new ESM output folder with `npm pkg set type=module`, then run `showkit capture <spec> --preflight --json`."
+    });
+  }
   return new ShowKitError({
     code: "DemoFixtureSetupFailed",
     message: "ShowKit could not run this source flow. No captured page was saved.",
@@ -522,6 +573,7 @@ function capturePerformanceFromOutput(output: string):
 
 export async function captureCommand(args: string[]): Promise<CommandResult> {
   const id = operationId();
+  const preflightOnly = args.includes("--preflight");
   const [specArgument] = positionalArgs(args);
   if (!specArgument) {
     throw new ShowKitError({
@@ -563,9 +615,12 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
           "Install `@playwright/test`, then run `showkit doctor --capability playwright --json`."
       });
     }
+    const playwrightArgs = preflightOnly
+      ? [playwrightCli, "test", specPath, "--list", "--reporter=line"]
+      : [playwrightCli, "test", specPath, "--reporter=line", "--output", playwrightOutput];
     const run = spawnSync(
       process.execPath,
-      [playwrightCli, "test", specPath, "--reporter=line", "--output", playwrightOutput],
+      playwrightArgs,
       {
         cwd: process.cwd(),
         env: {
@@ -579,6 +634,20 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
     const commandOutput = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
     if (run.status !== 0) {
       throw captureFailure(commandOutput);
+    }
+    if (preflightOnly) {
+      await recordOperation({
+        operationId: id,
+        command: "capture-preflight",
+        status: "ok"
+      });
+      return {
+        ok: true,
+        operationId: id,
+        status: "source-ready",
+        sourceHash,
+        browserLaunchRequested: false
+      };
     }
     const envelope = CaptureEnvelopeSchema.parse(
       JSON.parse(await readFile(captureOutput, "utf8"))
@@ -1455,6 +1524,7 @@ export function helpCommand(): CommandResult {
     commands: [
       "showkit doctor --json",
       "showkit init --json",
+      "showkit capture <demo.spec.ts> --preflight --json",
       "showkit capture <demo.spec.ts> --json",
       "showkit capture session <safe-envelope.json> --json",
       "showkit capture static <safe-envelope.json> --json",

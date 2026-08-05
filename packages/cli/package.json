@@ -1,6 +1,6 @@
 {
   "name": "@showkit/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Build a guided interactive HTML demo from a safe browser session, static source, or optional Playwright flow.",
   "license": "MIT",
   "repository": {
@@ -33,11 +33,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
     },
     "./playwright": {
       "types": "./dist/playwright.d.ts",
-      "import": "./dist/playwright.js"
+      "import": "./dist/playwright.js",
+      "require": "./dist/playwright.js"
     },
     "./schema/*": "./dist/schema/*"
   },

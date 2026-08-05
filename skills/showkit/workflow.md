@@ -99,21 +99,72 @@ This proves which source files were bound; it does not prove that a browser
 render matches. Compare the local preview with the intended rendered source
 before reporting visual fidelity as `checked`. Otherwise report `incomplete`.
 
-## Claude app browser routing
+## Claude Cowork and Claude Code browser routing
 
-When Claude's installed built-in Chrome capability exposes only a page-context
-`javascript_tool`, return
-`UnsupportedSurface` with `browser-isolation-unverified`. Its
-`javascript_tool` contract does not provide a host-validated isolated page
-world. Do not run the extractor, environment script, scene script, or finalizer
-in the page's main JavaScript realm. Save nothing and keep the previous demo
-unchanged.
+When Claude's installed Chrome capability exposes only page-context execution,
+record `UnsupportedSurface` with `browser-isolation-unverified`. The existing
+tab may remain useful for ordinary browsing, but it is not a ShowKit capture
+source. Do not run the extractor, environment script, scene script, or
+finalizer in the page's JavaScript realm. Save nothing and keep the previous
+demo unchanged.
 
-Offer static source or, when terminal and file access are available, the
-codebase-free headed Chrome route in `examples/headed-chrome-live.md`. That
-route uses public Playwright APIs, a fresh non-persistent context, and
-`Page.createIsolatedWorld`; it does not use Claude's page-context
-`javascript_tool` for extraction. Do not install Playwright without permission.
+Do not stop with an open-ended capture-method question. Use this automatic
+recovery order:
+
+1. Inspect only the already granted working folder. When its codebase or
+   checked-in static build represents the requested flow without depending on
+   the current signed-in runtime state, use the `static-source` route
+   automatically and report the result as `source-derived`.
+2. Otherwise inspect the selected new output folder and run
+   `showkit doctor --capability playwright --browser-channel chrome --json`.
+   When compatible Playwright and system Chrome are already available, prepare
+   and run the codebase-free headed route in
+   `examples/headed-chrome-live.md` without downloading bundled Chromium.
+3. When that route requires a new dependency or browser download, ask one
+   specific permission:
+
+   > ShowKit cannot safely reuse the existing Claude-controlled Chrome tab. I
+   > can add `@playwright/test` to `<output folder>`, use installed Google
+   > Chrome when available, and download bundled Chromium only if the doctor
+   > still reports that a browser is missing. Then I will open one separate
+   > non-persistent window where you will sign in once. I will keep that same
+   > browser context open through capture. Nothing will be published, and I
+   > will ask before any action that changes data. May I continue?
+
+   Replace `<output folder>` with the selected path and name the exact package
+   manager commands before running them. After approval, continue without
+   asking the person to choose a capture architecture.
+4. If the host cannot use bound source or show a separate local browser, state
+   the missing capability and give one exact handoff:
+
+   > Open the same flow in Codex with Browser or Chrome enabled, then say:
+   > “Use ShowKit for this site. The flow is open in Chrome. Build and preview
+   > a checked local demo. Do not publish.”
+
+The separate route uses public Playwright APIs, a fresh non-persistent context,
+and `Page.createIsolatedWorld`; it does not use Claude's page-context browser
+tool for extraction. Never copy the existing Chrome profile or cookies. Ask
+for exact confirmation immediately before any action that creates, updates,
+sends, publishes, purchases, uploads, downloads, or deletes.
+
+Before launching the temporary browser, collect the URL, requested start and
+end states, known semantic action labels, and any state-changing authorization
+needed to write the final `temporary-live.spec.ts`. Do not create a separate
+one-shot reconnaissance script or browser. Name the final file
+`temporary-live.spec.ts`, then run
+`showkit capture temporary-live.spec.ts --preflight --json`; it must return
+`source-ready` before the person signs in. Start the real `showkit capture`
+once as a retained foreground process with a host timeout longer than the
+sign-in gate. Do not detach it or use a short-lived background shell. Keep its
+run-owned context and page alive while the person signs in, then inspect, act,
+and capture in that same context. If a target detail is still missing,
+keep the process and browser open while asking one specific question; do not
+close and relaunch it. A person's explicit authorization for a named action in
+a stated sandbox applies for that action during the current run unless the
+target or scope changes. It does not override the host's action-safety policy.
+If the host still blocks the action, preserve and capture the nearest permitted
+pre-action state, report that boundary once, and do not restart the browser or
+retry through raw Playwright, a renamed command, or another bypass.
 
 ## Optional isolated Playwright capture
 
@@ -124,6 +175,7 @@ project-authored flow:
 ```text
 showkit doctor --capability playwright --json
 showkit init --json
+showkit capture <demo.spec.ts> --preflight --json
 showkit capture <demo.spec.ts> --json
 showkit story apply <story.json> --json
 showkit validate --json

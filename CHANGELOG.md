@@ -7,6 +7,25 @@ fixes ship as a new version.
 
 - No unreleased changes.
 
+## 0.2.1 - 2026-08-04
+
+- Added a Claude plugin marketplace entry so the ShowKit skill can be installed
+  and discovered in Claude Cowork as well as Claude Code.
+- Made requests such as “Use ShowKit for the site open in Chrome” route by
+  capability automatically. Claude hosts now use available bound source or a
+  separately approved temporary browser instead of ending with an open-ended
+  capture-method question when the existing tab cannot pass isolation checks.
+- Changed first-run onboarding to install and verify the skill, then ask for a
+  product URL before choosing an output folder or demo details. New demos use
+  1280×720 by default.
+- Added a no-browser Playwright capture preflight, CommonJS consumer loading,
+  and installed-Chrome doctor checks so a temporary live flow fails before
+  sign-in when its file or module setup is invalid and does not require a
+  redundant bundled Chromium download.
+- Required one retained foreground capture process and one non-persistent
+  browser context from sign-in through capture, preventing reconnaissance and
+  command timeouts from repeatedly discarding authenticated windows.
+
 ## 0.2.0 - 2026-08-04
 
 - Made verified browser HTML capture faster by reusing isolated browser
