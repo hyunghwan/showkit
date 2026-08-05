@@ -5,7 +5,42 @@ fixes ship as a new version.
 
 ## Unreleased
 
-- No unreleased changes.
+## 0.2.3 - 2026-08-05
+
+- Updated verified Codex Browser and Chrome capture for the current installed
+  OpenAI host build.
+- Made public-page capture tolerate unavailable unused images while still
+  stopping when a visible control needs an asset that cannot be reproduced.
+- Added a bounded readiness wait for semantic targets that appear after page
+  transitions.
+- Made optional Playwright capture drop hidden inputs without treating their
+  unsaved values as visible private content.
+- Made optional Playwright capture localize visible images from an exact
+  requested public page without another prompt. Private-session images still
+  require explicit consent. Public requests use pinned public DNS, default
+  ports, no credentials or referrer, bounded redirects, and verified local
+  bytes while keeping source URLs, cookies, headers, and browser storage out of
+  the demo.
+- Added bounded public stylesheet traversal for visible WOFF2 faces, including
+  verified embedded WOFF2 data, without persisting CSS or data URLs.
+- Added a bounded fallback for opaque public WOFF2 filenames: compare four
+  fixed, non-page text metric samples in a separate network-blocked context and
+  use the bytes only when one unique content hash matches the loaded face.
+- Added network-blocked, JavaScript-disabled rasterization of only the bounded
+  background layer for static complex SVG sprites. Full controls, text regions,
+  and scenes remain semantic HTML and are never rasterized.
+- Prioritized assets inside visible controls, retried a changed public page once,
+  and kept unresolved decorative assets removable while critical assets remain
+  fail-closed.
+- Verified point-in-time signed-out capture flows on Airbnb's responsive HTML
+  list view, eBay, Amazon, and Daum, including a Daum news article and its
+  latest/recommended comment tabs. Airbnb's desktop split-map state remains
+  fail-closed.
+- Added safe capture error categories so an installed skill can distinguish
+  unsupported media, missing assets, and other recovery paths without exposing
+  page content.
+- Added progress messages during longer Playwright captures and verified the
+  current Codex Browser and Chrome plugin build.
 
 ## 0.2.2 - 2026-08-04
 

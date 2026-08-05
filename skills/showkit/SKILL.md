@@ -215,6 +215,32 @@ without blocking the workflow.
    `@showkit/cli/playwright`, wraps product actions in `demo.step()`, and gives
    each step both its Playwright `target` and a serializable `captureTarget`.
    For a codebase-free live page, follow `examples/headed-chrome-live.md`.
+   For an exact public HTTP or HTTPS URL opened in a fresh, signed-out context,
+   add `pageAssetConsent: { mode: "public-page", consent: "requested" }` to
+   the first `demo.step()` when required visible images need local copies. The
+   URL request is sufficient; do not add another image question. For a signed-in
+   or private flow, explain that current visible image bytes will be saved as
+   local content-addressed files and that cookies, headers, browser storage,
+   and source URLs will not be saved. Ask whether to keep those private-session
+   page assets. Only after an explicit yes, use
+   `pageAssetConsent: { mode: "visible-session", consent: "confirmed" }`.
+   Reuse either mode only for the rest of that capture run. If private-session
+   consent is declined, choose another supported page state or stop.
+   Playwright capture defaults to `remoteAssetPolicy: "decorative-remove"`,
+   which may remove only unresolved non-interactive decoration and records the
+   exclusion. Use `remoteAssetPolicy: "strict"` when every decorative asset is
+   required. Targets, controls, and layout-critical assets always fail closed.
+   The public-page route uses a fresh credential-free downloader that rejects
+   local and private addresses; do not replace it with page-context `fetch`.
+   It may read bounded public CSS only to locate a visible WOFF2 font and may
+   compare fixed non-page text metrics for bounded opaque public WOFF2
+   candidates in a separate network-blocked context. Accept only one unique
+   content-hash match and keep candidate reads within the documented limit. It
+   may render only an exact bounded static SVG background layer in a
+   JavaScript-disabled, network-blocked empty context. It never stores CSS, the
+   source SVG, a data URL, a complete control, or a scene raster. Treat video,
+   large canvas, maps, cross-origin frames, closed or interactive shadow
+   surfaces, and unresolved critical assets as `UnsupportedSurface`.
 5. Run `showkit capture <demo.spec.ts> --preflight --json` and require
    `status: "source-ready"` before opening a temporary browser.
 6. Run `showkit capture <demo.spec.ts> --json` as a retained foreground
@@ -333,8 +359,9 @@ without blocking the workflow.
    used by a visible interactive control is not decorative. When `pageAssets`
    does not expose that image and the person confirmed visible-session assets,
    the adapter may preserve only the exact rendered pixels of an isolated,
-   text-free icon element no larger than 64 by 64 CSS pixels. Keep the control,
-   text, layout, and scene as semantic HTML. Never render the complete control,
+   text-free icon element with each axis at or below 96 CSS pixels and total
+   area at or below 4,096 CSS pixels. Keep the control, text, layout, and scene
+   as semantic HTML. Never render the complete control,
    a text region, or the full scene as an image. Stop on
    `UnsupportedSurface` when a layout-critical dependency cannot be reproduced
    instead of building a demo with a fallback font, blank media region, native

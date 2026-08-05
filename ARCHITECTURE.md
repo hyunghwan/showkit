@@ -44,7 +44,15 @@ input and demo content produce the same artifact hash.
 
 The live page, DOM, browser state, network data, and local assets are sensitive
 inputs. ShowKit never persists cookies, headers, browser storage values,
-passwords, tokens, raw DOM, request or response bodies, or remote asset URLs.
+passwords, tokens, raw DOM, general request or response bodies, or remote asset
+URLs. For an exact requested public page, or after explicit private-session
+asset consent, required visible images and WOFF2 fonts may be fetched through a
+fresh credential-free request and persisted only as validated,
+content-addressed bytes. Public CSS may be read transiently only to locate a
+visible font; the stylesheet and its source URL are not captured. Opaque public
+WOFF2 candidates may be disambiguated with fixed non-page text metrics in a
+separate network-blocked context, with an 8 MB aggregate read limit and a
+required single unique content-hash match per matching pass.
 
 Supported output is structured HTML, CSS, semantic elements, and local
 content-addressed assets. ShowKit fails closed when it cannot reproduce a
@@ -61,7 +69,7 @@ accessibility, compliance, or approval status.
 | --- | --- |
 | Static source | Reads explicitly bound, checked-in HTML/CSS or a sanitized envelope; Playwright is not required |
 | Verified browser session | Continues only when the installed host proves isolated, read-only execution |
-| Playwright fixture | Uses public fixture, page, and locator APIs; the optional peer is installed only with approval |
+| Playwright fixture | Uses public fixture, page, and locator APIs; the optional peer is installed only with approval; requested public-page or session-approved visible assets use fresh credential-free public-network requests and verified local bytes |
 
 Trace files are optional diagnostics and never build input. A host that cannot
 prove isolation is unsupported for live capture.

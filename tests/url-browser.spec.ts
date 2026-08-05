@@ -6,6 +6,7 @@ import {
 } from "@showkit/cli";
 import { createHash } from "node:crypto";
 import { captureScene } from "../packages/cli/src/capture/browser.js";
+import { collectVisiblePageAssetInventory } from "../packages/cli/src/capture/page-assets.js";
 import {
   collectRenderedIconCandidatesInPage,
   createCodexBrowserAdapter
@@ -894,6 +895,31 @@ test("recreates the cached isolated world after main-frame navigation", async ({
   expect(second.scene.html).toContain("Second");
   expect(second.scene.html).toContain('data-showkit-anchor="sk-second"');
   expect(second.scene.html).not.toContain("First");
+});
+
+test("preserves an authored submit-button label without retaining typed input values", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <input aria-label="Search catalog" type="search" value="private query">
+      <input type="submit" value="Go">
+    </main>
+  `);
+  const target = page.getByRole("button", { name: "Go", exact: true });
+  const result = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Go"
+    },
+    anchorId: "sk-go"
+  });
+  expect(result.scene.target?.name).toBe("Go");
+  expect(result.scene.html).toContain('type="submit"');
+  expect(result.scene.html).toContain('value="Go"');
+  expect(result.scene.html).not.toContain("private query");
 });
 
 test("removes captured margins from positioned nodes to prevent coordinate drift", async ({
@@ -2062,6 +2088,111 @@ test("preserves visible pseudo-element icons as local semantic children", async 
   ]);
 });
 
+test("bundles a safe base64 SVG data icon without retaining the data source", async ({
+  page
+}) => {
+  const svg =
+    '<svg viewBox="0 0 16 16"><path d="M2 8h12M8 2v12"></path></svg>';
+  const base64 = Buffer.from(svg, "utf8").toString("base64");
+  const sha256 = createHash("sha256")
+    .update(Buffer.from(svg, "utf8"))
+    .digest("hex");
+  await page.setContent(`
+    <main>
+      <button type="button" aria-label="Add item">
+        <span
+          style="
+            background-image:url('data:image/svg+xml;base64,${base64}');
+            display:block;
+            height:16px;
+            width:16px;
+          "
+        ></span>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Add item", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-add-item",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.nodesJson).toContain(`./assets/${sha256}.svg`);
+  expect(result.nodesJson).not.toContain("data:image/svg+xml");
+  expect(result.assetPayloads).toEqual([
+    expect.objectContaining({
+      sha256,
+      mimeType: "image/svg+xml",
+      byteLength: Buffer.byteLength(svg)
+    })
+  ]);
+});
+
+test("bundles a static base64 SVG wordmark while rejecting active SVG content", async ({
+  page
+}) => {
+  const wordmark = '<svg viewBox="0 0 80 20"><text x="0" y="16">Shop</text></svg>';
+  const active = '<svg viewBox="0 0 16 16"><script>alert(1)</script><text x="0" y="12">No</text></svg>';
+  const declared =
+    '<!DOCTYPE svg [<!ENTITY label "No">]><svg viewBox="0 0 16 16"><text x="0" y="12">&label;</text></svg>';
+  const wordmarkBase64 = Buffer.from(wordmark, "utf8").toString("base64");
+  const activeBase64 = Buffer.from(active, "utf8").toString("base64");
+  const declaredBase64 = Buffer.from(declared, "utf8").toString("base64");
+  const sha256 = createHash("sha256")
+    .update(Buffer.from(wordmark, "utf8"))
+    .digest("hex");
+  await page.setContent(`
+    <main>
+      <b
+        aria-label="Shop"
+        style="
+          background-image:url('data:image/svg+xml;base64,${wordmarkBase64}');
+          display:block;
+          height:20px;
+          width:80px;
+        "
+      ></b>
+      <span
+        style="
+          background-image:url('data:image/svg+xml;base64,${activeBase64}');
+          display:block;
+          height:16px;
+          width:16px;
+        "
+      ></span>
+      <span
+        style="
+          background-image:url('data:image/svg+xml;base64,${declaredBase64}');
+          display:block;
+          height:16px;
+          width:16px;
+        "
+      ></span>
+    </main>
+  `);
+  const result = await page.locator("main").evaluate(extractSceneKernel, {
+    ...baseOptions,
+    targetPresent: false,
+    nodeMode: "json"
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.nodesJson).toContain(`./assets/${sha256}.svg`);
+  expect(result.nodesJson).not.toContain(wordmarkBase64);
+  expect(result.nodesJson).not.toContain(activeBase64);
+  expect(result.nodesJson).not.toContain(declaredBase64);
+  expect(result.assetPayloads).toEqual([
+    expect.objectContaining({
+      sha256,
+      mimeType: "image/svg+xml",
+      byteLength: Buffer.byteLength(wordmark)
+    })
+  ]);
+});
+
 test("ignores empty image-set content while preserving its rendered background icon", async ({
   page
 }) => {
@@ -2170,7 +2301,12 @@ test("preserves visible form controls without persisting their values or UA chro
 test("selects only isolated text-free control icons for rendered asset capture", async ({
   page
 }) => {
+  const wordmark = `data:image/svg+xml;base64,${Buffer.from(
+    '<svg viewBox="0 0 80 20"><text x="0" y="16">Shop</text></svg>',
+    "utf8"
+  ).toString("base64")}`;
   await page.setContent(`
+    <style>#generated-skill::before { content: "A"; }</style>
     <main>
       <button aria-label="Attach files" type="button">
         <span
@@ -2231,6 +2367,19 @@ test("selects only isolated text-free control icons for rendered asset capture",
           "
         ></span>
       </button>
+      <a aria-label="Marketplace home" href="#home">
+        <b
+          style="
+            background-image: url('${wordmark}');
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: 80px 20px;
+            display: block;
+            height: 20px;
+            width: 80px;
+          "
+        ></b>
+      </a>
       <button aria-label="Large icon" type="button">
         <span
           style="
@@ -2241,6 +2390,27 @@ test("selects only isolated text-free control icons for rendered asset capture",
             display: block;
             height: 80px;
             width: 80px;
+          "
+        ></span>
+      </button>
+      <button aria-label="Nested skill surface" type="button">
+        <span
+          style="
+            background-image: url('https://cdn.example.test/nested-skill.png');
+            display: block;
+            height: 20px;
+            width: 20px;
+          "
+        ><i></i></span>
+      </button>
+      <button aria-label="Generated skill surface" type="button">
+        <span
+          id="generated-skill"
+          style="
+            background-image: url('https://cdn.example.test/generated-skill.png');
+            display: block;
+            height: 20px;
+            width: 20px;
           "
         ></span>
       </button>
@@ -2276,15 +2446,102 @@ test("selects only isolated text-free control icons for rendered asset capture",
       source: "https://cdn.example.test/gradient-icon.png",
       width: 20,
       height: 20
+    }),
+    expect.objectContaining({
+      source: wordmark,
+      width: 80,
+      height: 20
     })
   ]);
   expect(
     await page.evaluate(collectRenderedIconCandidatesInPage, [
       "https://cdn.example.test/attach.png",
       "https://cdn.example.test/sprite.png",
-      "https://cdn.example.test/gradient-icon.png"
+      "https://cdn.example.test/gradient-icon.png",
+      wordmark
     ])
   ).toEqual([]);
+});
+
+test("allows direct icon capture only when text is not rendered in its bounds", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>#generated::before { content: "A"; }</style>
+    <main>
+      <button aria-label="Home settings" type="button">
+        <span
+          style="
+            background-color:transparent;
+            background-image:url('https://cdn.example.test/settings.svg');
+            background-position:-145px 0;
+            background-repeat:no-repeat;
+            background-size:300px 300px;
+            display:block;
+            height:24px;
+            overflow:hidden;
+            text-indent:-9999px;
+            width:24px;
+          "
+        >Home settings</span>
+      </button>
+      <button aria-label="Visible text" type="button">
+        <span
+          style="
+            background-image:url('https://cdn.example.test/visible.svg');
+            display:block;
+            height:24px;
+            width:24px;
+          "
+        >A</span>
+      </button>
+      <button aria-label="Nested surface" type="button">
+        <span
+          style="
+            background-image:url('https://cdn.example.test/nested.svg');
+            display:block;
+            height:24px;
+            width:24px;
+          "
+        ><i></i></span>
+      </button>
+      <button aria-label="Generated surface" type="button">
+        <span
+          id="generated"
+          style="
+            background-image:url('https://cdn.example.test/generated.svg');
+            display:block;
+            height:24px;
+            width:24px;
+          "
+        ></span>
+      </button>
+    </main>
+  `);
+  const inventory = await page.evaluate(collectVisiblePageAssetInventory);
+  expect(inventory.renderedIcons).toHaveLength(4);
+  expect(inventory.renderedIcons).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      source: "https://cdn.example.test/settings.svg",
+      width: 24,
+      height: 24,
+      directElementSafe: true
+    }),
+    expect.objectContaining({
+      source: "https://cdn.example.test/visible.svg",
+      width: 24,
+      height: 24,
+      directElementSafe: false
+    }),
+    expect.objectContaining({
+      source: "https://cdn.example.test/nested.svg",
+      directElementSafe: false
+    }),
+    expect.objectContaining({
+      source: "https://cdn.example.test/generated.svg",
+      directElementSafe: false
+    })
+  ]));
 });
 
 test("selects pseudo icons whose computed content contains only empty image-set URLs", async ({
@@ -2490,6 +2747,24 @@ test("continues to block a canvas that is not an isolated icon", async ({
       })
     })
   );
+  const target = page.getByRole("button", {
+    name: "Open report",
+    exact: true
+  });
+  await expect(
+    captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Open report"
+      },
+      anchorId: "sk-open-report"
+    })
+  ).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: expect.objectContaining({ category: "canvas" })
+  });
 });
 
 test("keeps the viewport scene and omits offscreen-only content", async ({
@@ -2498,7 +2773,9 @@ test("keeps the viewport scene and omits offscreen-only content", async ({
   await page.setContent(`
     <main>
       <button type="button">Compose</button>
-      <section style="position:absolute;top:2000px">Offscreen private row</section>
+      <section style="position:absolute;top:2000px">
+        Offscreen private row for demo-user@example.invalid
+      </section>
     </main>
   `);
   const result = await page
@@ -2512,6 +2789,34 @@ test("keeps the viewport scene and omits offscreen-only content", async ({
   if (!result.ok || result.scanOnly) return;
   expect(result.html).toContain("Compose");
   expect(result.html).not.toContain("Offscreen private row");
+  expect(JSON.stringify(result)).not.toContain("demo-user@example.invalid");
+});
+
+test("drops hidden inputs without requiring private-content consent", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <h1>Public release notes</h1>
+      <button type="button">Open release</button>
+      <input type="hidden" value="SHOWKIT_SECRET_CANARY_HIDDEN_VALUE">
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Open release", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-open-release",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.excludedSurfaces).toContain("hidden-inputs");
+  expect(result.html).toContain("Open release");
+  expect(result.html).not.toContain('type="hidden"');
+  expect(JSON.stringify(result)).not.toContain(
+    "SHOWKIT_SECRET_CANARY_HIDDEN_VALUE"
+  );
 });
 
 test("requires explicit consent and then changes only captured text", async ({
@@ -2892,6 +3197,59 @@ test("blocks a visible interactive icon when the browser cannot bundle it", asyn
   expect(JSON.stringify(result)).not.toContain("attach.png");
 });
 
+test("restores a named native select when its decorative arrow cannot be bundled", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <label for="category">Category</label>
+      <select
+        id="category"
+        style="
+          appearance: none;
+          background-image: url('https://cdn.example.test/select-arrow.svg');
+          background-position: right 8px center;
+          background-repeat: no-repeat;
+          background-size: 12px 12px;
+        "
+      >
+        <option>All categories</option>
+      </select>
+      <button id="continue" type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      remoteAssetPolicy: "strict",
+      anchorId: "sk-continue"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).not.toContain("select-arrow.svg");
+  const findSelect = (nodes: typeof result.nodes): (typeof result.nodes)[number] | undefined => {
+    for (const node of nodes) {
+      if (node.type === "element" && node.tag === "select") return node;
+      if (node.type === "element") {
+        const nested = findSelect(node.children);
+        if (nested) return nested;
+      }
+    }
+    return undefined;
+  };
+  const select = findSelect(result.nodes);
+  expect(select).toMatchObject({
+    type: "element",
+    tag: "select",
+    styles: expect.objectContaining({ appearance: "auto" })
+  });
+  if (select?.type === "element") {
+    expect(select.styles).not.toHaveProperty("background-position");
+  }
+  expect(result.excludedSurfaces).toContain("remote-decorative-assets");
+});
+
 test("blocks a target that depends on a remote asset", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/remote-critical/index.html");
   const result = await page
@@ -2955,6 +3313,46 @@ test("uses an explicitly approved local bundle for a critical public asset", asy
       byteLength: bytes.byteLength
     })
   ]);
+});
+
+test("rejects a local query-bearing image even after public-page consent", async ({
+  page
+}) => {
+  await page.goto("http://127.0.0.1:4173/remote-consented/index.html");
+  const target = page.getByRole("button", {
+    name: "Open release",
+    exact: true
+  });
+  const captureTarget = {
+    strategy: "role" as const,
+    role: "button",
+    name: "Open release"
+  };
+  await expect(
+    captureScene(page, {
+      target,
+      captureTarget,
+      anchorId: "sk-open-release"
+    })
+  ).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: expect.objectContaining({ category: "remote-asset" })
+  });
+
+  await expect(
+    captureScene(page, {
+      target,
+      captureTarget,
+      anchorId: "sk-open-release",
+      pageAssetConsent: {
+        mode: "public-page",
+        consent: "requested"
+      }
+    })
+  ).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: expect.objectContaining({ category: "remote-asset" })
+  });
 });
 
 test("exposes the failure fixtures without performing an external action", async ({

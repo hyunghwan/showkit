@@ -609,13 +609,24 @@ export const CaptureSourceSchema = z.object({
       .strict()
       .optional(),
     pageAssets: z
-      .object({
-        mode: z.literal("visible-session"),
-        consent: z.literal("confirmed"),
-        localOnly: z.literal(true),
-        assetCount: z.number().int().nonnegative()
-      })
-      .strict()
+      .discriminatedUnion("mode", [
+        z
+          .object({
+            mode: z.literal("public-page"),
+            consent: z.literal("requested"),
+            localOnly: z.literal(true),
+            assetCount: z.number().int().nonnegative()
+          })
+          .strict(),
+        z
+          .object({
+            mode: z.literal("visible-session"),
+            consent: z.literal("confirmed"),
+            localOnly: z.literal(true),
+            assetCount: z.number().int().nonnegative()
+          })
+          .strict()
+      ])
       .optional()
   }).strict()
 }).strict();

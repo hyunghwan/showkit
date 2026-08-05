@@ -11,8 +11,12 @@ export const test = base.extend<{ demo: DemoController }>({
       await use(session);
       completed = true;
     } finally {
-      if (completed) {
-        await session.finalize();
+      try {
+        if (completed) {
+          await session.finalize();
+        }
+      } finally {
+        session.dispose();
       }
     }
   }

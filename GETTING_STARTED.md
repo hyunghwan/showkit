@@ -54,6 +54,13 @@ prove an isolated read-only page world, the skill uses granted bound source or
 one separate non-persistent browser. It asks once before adding optional
 Playwright or a browser and keeps the same temporary context from sign-in
 through capture.
+For an exact requested public URL, the temporary flow keeps required visible
+images as verified local assets without another prompt. Signed-in or private
+session images still require one confirmation. ShowKit does not save their
+source URLs, cookies, headers, or browser storage. This supports public HTML
+flows with semantic controls and safely reproducible local assets; visible
+video, large canvas, maps, cross-origin frames, and other unsupported surfaces
+still stop before capture instead of becoming screenshots.
 
 ## Use the CLI directly
 

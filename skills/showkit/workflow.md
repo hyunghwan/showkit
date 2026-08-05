@@ -199,6 +199,15 @@ test("captures onboarding", async ({ page, demo }) => {
       role: "button",
       name: "Create workspace"
     },
+    // The exact requested public URL authorizes required visible images in
+    // this fresh, signed-out capture run.
+    pageAssetConsent: {
+      mode: "public-page",
+      consent: "requested"
+    },
+    // Optional: require even non-interactive decoration to bundle exactly.
+    // Targets, controls, and layout-critical assets always fail closed.
+    remoteAssetPolicy: "decorative-remove",
     action: () => target.click()
   });
 });
@@ -208,6 +217,22 @@ The `target` performs the Playwright action. ShowKit resolves the serializable
 `captureTarget` again inside its Chromium CDP isolated world before the action.
 Both must match one visible semantic element. Each tooltip must cite the
 evidence IDs captured for that step. Report this route as `ci-replayable`.
+For an exact requested public URL in a fresh, signed-out context, the isolated
+Playwright route may fetch currently visible HTTP or HTTPS image sources with
+`pageAssetConsent: { mode: "public-page", consent: "requested" }` and no extra
+image prompt. Signed-in or private images require explicit visible-session
+consent. The Playwright downloader runs outside page context, pins a public DNS
+result, rejects local and private addresses, sends no cookie, authorization, or
+referrer, and verifies the signature, 1 MB per emitted asset limit, and
+aggregate limit before persisting only the content hash and bytes. Bounded
+public CSS may be read transiently only to locate a visible WOFF2 font; it is
+not captured. Opaque public WOFF2 candidates may be compared with fixed
+non-page text metrics in a separate network-blocked context, with an 8 MB
+aggregate candidate limit per matching pass and a required single unique
+content-hash match.
+ShowKit never saves the source asset URL. Playwright
+capture may remove only unresolved non-interactive decoration and records the
+exclusion. Targets, controls, and layout-critical images still stop capture.
 
 ## Shared completion
 

@@ -191,6 +191,16 @@
       ]
     },
     {
+      "id": "playwright-visible-page-asset",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "public-page consent does not authorize local or private network assets",
+        "UnsupportedSurface remote-asset",
+        "0 captured local response bytes"
+      ]
+    },
+    {
       "id": "private-page-asset",
       "purpose": "assurance",
       "spec": "scripts/test-browser-adapter.mjs",

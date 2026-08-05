@@ -1,6 +1,6 @@
 {
   "schemaVersion": "0.1",
-  "cli": ">=0.2.2 <0.3.0",
+  "cli": ">=0.2.3 <0.3.0",
   "playwright": ">=1.60.0 <2",
   "playwrightRequired": false,
   "node": ">=22.12 <25",

@@ -4,6 +4,16 @@ import type {
   SceneFontFace
 } from "../core/schemas.js";
 
+export type PageAssetConsent =
+  | {
+      mode: "public-page";
+      consent: "requested";
+    }
+  | {
+      mode: "visible-session";
+      consent: "confirmed";
+    };
+
 export type SceneKernelOptions = {
   anchorId?: string;
   targetPresent: boolean;
@@ -53,6 +63,7 @@ export type SceneKernelOptions = {
     mode: "visible-session";
     consent: "confirmed";
   };
+  pageAssetConsent?: PageAssetConsent;
   fontFaces?: SceneFontFace[];
   remoteAssetReplacements?: Array<{
     source: string;
@@ -62,11 +73,14 @@ export type SceneKernelOptions = {
     match?: {
       pseudo?: "before";
       canvasElement?: true;
+      captureSurface?: "element" | "background-image";
       dimensions: { width: number; height: number };
+      boxDimensions?: { width: number; height: number };
       intrinsicDimensions?: { width: number; height: number };
       backgroundPosition?: string;
       backgroundRepeat?: string;
       backgroundSize?: string;
+      transform?: string;
       opacity: string;
       backdropColor: string;
     };
@@ -903,6 +917,19 @@ export async function extractSceneKernel(
   ) {
     return blocked("SensitiveDataDetected", "redaction-consent-required");
   }
+  const pageAssetConsent = options.pageAssetConsent;
+  if (
+    pageAssetConsent !== undefined &&
+    !(
+      (pageAssetConsent.mode === "public-page" &&
+        pageAssetConsent.consent === "requested") ||
+      (pageAssetConsent.mode === "visible-session" &&
+        pageAssetConsent.consent === "confirmed")
+    )
+  ) {
+    return blocked("UnsupportedSurface", "page-asset-consent-invalid");
+  }
+  const pageAssetConsentActive = pageAssetConsent !== undefined;
   const textRedactionActive = redactionRequest !== undefined;
   const blockingSecretPatternSources =
     options.privateContentConsent === undefined
@@ -1021,6 +1048,9 @@ export async function extractSceneKernel(
   };
   collectOpenShadowElements(lightDomElements);
   const allElements = [...lightDomElements, ...openShadowElements];
+  const hiddenInputsPresent = allElements.some((element) =>
+    element.matches('input[type="hidden"]')
+  );
   const capturedTextAttributeNames = new Set([
     "alt",
     "aria-description",
@@ -1265,39 +1295,72 @@ export async function extractSceneKernel(
   ) {
     return blocked("SensitiveDataDetected", "sensitive-input");
   }
-  if (
-    !textRedactionActive &&
-    options.privateContentConsent === undefined &&
-    allElements.some((element) => element.matches('input[type="hidden"]'))
-  ) {
-    return blocked("SensitiveDataDetected", "sensitive-input");
-  }
-
   if (!textRedactionActive && options.scanOnly) {
-    const candidateText = [
-      pageDocument.title,
-      pageDocument.body.innerText,
-      ...openShadowHosts.flatMap((host) =>
-        visibleOpenShadowElements(host)
-          .filter(
-            (element) =>
-              !Array.from(element.children).some(isVisualSurface)
+    const captureAncestry = new Set<Element>();
+    let ancestryElement: Element | null = scopeElement;
+    while (ancestryElement) {
+      captureAncestry.add(ancestryElement);
+      if (ancestryElement.parentElement) {
+        ancestryElement = ancestryElement.parentElement;
+        continue;
+      }
+      const root = ancestryElement.getRootNode();
+      ancestryElement = root instanceof ShadowRoot ? root.host : null;
+    }
+    const intersectsCaptureViewport = (element: Element): boolean => {
+      const rectangle = rectangleFor(element);
+      const computed = computedFor(element);
+      return (
+        computed.display !== "none" &&
+        computed.visibility !== "hidden" &&
+        computed.visibility !== "collapse" &&
+        Number.parseFloat(computed.opacity || "1") > 0 &&
+        rectangle.width > 0 &&
+        rectangle.height > 0 &&
+        rectangle.bottom > 0 &&
+        rectangle.right > 0 &&
+        rectangle.top < window.innerHeight &&
+        rectangle.left < window.innerWidth
+      );
+    };
+    const candidateTextParts = [pageDocument.title];
+    for (const element of allElements) {
+      const intersectsViewport = intersectsCaptureViewport(element);
+      if (!captureAncestry.has(element) && !intersectsViewport) continue;
+      for (const attribute of Array.from(element.attributes)) {
+        if (capturedTextAttributeNames.has(attribute.name)) {
+          candidateTextParts.push(attribute.value);
+        }
+      }
+      if (element.tagName.toLowerCase() === "input") {
+        const inputType = (element.getAttribute("type") ?? "text").toLowerCase();
+        if (["button", "reset", "submit"].includes(inputType)) {
+          candidateTextParts.push(element.getAttribute("value") ?? "");
+        }
+      }
+      if (!intersectsViewport) continue;
+      for (const child of Array.from(element.childNodes)) {
+        if (child.nodeType !== 3 || (child.textContent ?? "").trim() === "") {
+          continue;
+        }
+        const range = pageDocument.createRange();
+        range.selectNodeContents(child);
+        if (
+          Array.from(range.getClientRects()).some(
+            (rectangle) =>
+              rectangle.width > 0 &&
+              rectangle.height > 0 &&
+              rectangle.bottom > 0 &&
+              rectangle.right > 0 &&
+              rectangle.top < window.innerHeight &&
+              rectangle.left < window.innerWidth
           )
-          .map(
-            (element) =>
-              (element as HTMLElement).innerText ||
-              element.textContent ||
-              ""
-          )
-      ),
-      ...allElements.flatMap((element) =>
-        Array.from(element.attributes)
-          .filter((attribute) =>
-            capturedTextAttributeNames.has(attribute.name)
-          )
-          .map((attribute) => attribute.value)
-      )
-    ].join("\n");
+        ) {
+          candidateTextParts.push(child.textContent ?? "");
+        }
+      }
+    }
+    const candidateText = candidateTextParts.join("\n");
     if (
       blockingSecretPatternSources.some((source) =>
         hasSensitivePatternMatch(candidateText, source)
@@ -1399,6 +1462,9 @@ export async function extractSceneKernel(
     }
     const rectangle = rectangleFor(element);
     const dimensions = replacement.match.dimensions;
+    const capturesBackgroundImage =
+      replacement.match.captureSurface === "background-image";
+    const boxDimensions = replacement.match.boxDimensions;
     const renderedWidth =
       pseudo === "before"
         ? Number.parseFloat(computed.width || "0")
@@ -1407,6 +1473,10 @@ export async function extractSceneKernel(
       pseudo === "before"
         ? Number.parseFloat(computed.height || "0")
         : rectangle.height;
+    const elementBoxWidth =
+      element instanceof HTMLElement ? element.offsetWidth : renderedWidth;
+    const elementBoxHeight =
+      element instanceof HTMLElement ? element.offsetHeight : renderedHeight;
     return (
       replacement.captureKind === "isolated-rendered-icon" &&
       replacement.match.pseudo === pseudo &&
@@ -1416,9 +1486,15 @@ export async function extractSceneKernel(
         replacement.match.backgroundPosition &&
       computed.backgroundRepeat === replacement.match.backgroundRepeat &&
       computed.backgroundSize === replacement.match.backgroundSize &&
+      (!capturesBackgroundImage ||
+        (boxDimensions !== undefined &&
+          Math.abs(elementBoxWidth - boxDimensions.width) < 0.5 &&
+          Math.abs(elementBoxHeight - boxDimensions.height) < 0.5 &&
+          computed.transform === replacement.match.transform)) &&
       computed.opacity === replacement.match.opacity &&
-      effectiveBackdropColor(element, pseudo === "before") ===
-        replacement.match.backdropColor
+      (capturesBackgroundImage ||
+        effectiveBackdropColor(element, pseudo === "before") ===
+          replacement.match.backdropColor)
     );
   };
   const replacementFor = (
@@ -1474,7 +1550,7 @@ export async function extractSceneKernel(
       }
     | undefined;
   const supportedDataImagePattern =
-    /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/;
+    /^data:(image\/(?:png|jpeg|webp|gif|svg\+xml));base64,([A-Za-z0-9+/=]+)$/;
   const normalizeDataImageSource = (source: string): string => {
     if (!source.startsWith("data:") || !source.includes("%")) {
       return source;
@@ -1547,6 +1623,81 @@ export async function extractSceneKernel(
     }
     return "";
   };
+  const fetchedImageMatchesType = (
+    bytes: number[],
+    mimeType: AssetPayload["mimeType"]
+  ): boolean => {
+    const ascii = (start: number, end: number): string =>
+      String.fromCharCode(...bytes.slice(start, end));
+    if (mimeType === "image/png") {
+      const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+      return signature.every((value, index) => bytes[index] === value);
+    }
+    if (mimeType === "image/jpeg") {
+      return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    }
+    if (mimeType === "image/webp") {
+      return ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP";
+    }
+    if (mimeType === "image/avif") {
+      return (
+        bytes.length >= 16 &&
+        ascii(4, 8) === "ftyp" &&
+        /^(?:avif|avis)$/.test(ascii(8, 12))
+      );
+    }
+    if (mimeType === "image/gif") {
+      return ["GIF87a", "GIF89a"].includes(ascii(0, 6));
+    }
+    if (mimeType !== "image/svg+xml") return false;
+    let svgText: string;
+    try {
+      svgText = new TextDecoder("utf-8", { fatal: true })
+        .decode(new Uint8Array(bytes))
+        .trim();
+    } catch {
+      return false;
+    }
+    const svgWithoutDeclaration = svgText
+      .replace(/^<\?xml\s+[^?]*\?>\s*/i, "")
+      .replace(
+        /\s+xmlns(?::[A-Za-z][\w.-]*)?\s*=\s*["'][^"']*["']/gi,
+        ""
+      );
+    const svgTags = [
+      ...svgWithoutDeclaration.matchAll(/<\/?([A-Za-z][\w:-]*)\b/g)
+    ].map((match) => match[1]?.toLowerCase() ?? "");
+    const safeSvgTags = new Set([
+      "circle",
+      "defs",
+      "desc",
+      "ellipse",
+      "g",
+      "line",
+      "lineargradient",
+      "path",
+      "polygon",
+      "polyline",
+      "radialgradient",
+      "rect",
+      "stop",
+      "svg",
+      "text",
+      "title"
+    ]);
+    return (
+      /^<svg\b/i.test(svgWithoutDeclaration) &&
+      /<\/svg>\s*$/i.test(svgWithoutDeclaration) &&
+      svgTags.every((tag) => safeSvgTags.has(tag)) &&
+      !/<!DOCTYPE|<!ENTITY|<\?(?!xml\b)/i.test(svgWithoutDeclaration) &&
+      !/<(?:script|style|foreignObject|iframe|object|embed|image|use)\b/i.test(
+        svgWithoutDeclaration
+      ) &&
+      !/\son[a-z]+\s*=|(?:href|xlink:href)\s*=|javascript:|data:|url\s*\(|@import|expression\s*\(|(?:https?:)?\/\//i.test(
+        svgWithoutDeclaration
+      )
+    );
+  };
   const remoteElements = new Set<Element>();
   const hasInteractiveAssetSemantics = (element: Element): boolean =>
     element.closest(
@@ -1566,6 +1717,9 @@ export async function extractSceneKernel(
         "[role='tab']"
       ].join(",")
     ) !== null;
+  const canRestoreNativeSelectAffordance = (element: Element): boolean =>
+    element.tagName.toLowerCase() === "select" &&
+    simpleAccessibleName(element) !== "";
   const isVisibleRemoteAsset = (element: Element): boolean => {
     const rectangle = rectangleFor(element);
     const computed = computedFor(element);
@@ -1583,38 +1737,59 @@ export async function extractSceneKernel(
     );
   };
   const isCriticalRemoteAsset = (element: Element): boolean =>
-    options.remoteAssetPolicy === "strict" ||
-    element.hasAttribute("data-showkit-critical-asset") ||
-    element === targetElement ||
-    (targetElement !== null &&
-      (targetElement.contains(element) || element.contains(targetElement))) ||
-    (hasInteractiveAssetSemantics(element) &&
-      isVisibleRemoteAsset(element));
-  const assetScanElements = options.scanOnly ? allElements : [];
-  for (const element of assetScanElements) {
+    !canRestoreNativeSelectAffordance(element) &&
+    (options.remoteAssetPolicy === "strict" ||
+      element.hasAttribute("data-showkit-critical-asset") ||
+      element === targetElement ||
+      (targetElement !== null &&
+        (targetElement.contains(element) || element.contains(targetElement))) ||
+      (hasInteractiveAssetSemantics(element) &&
+        isVisibleRemoteAsset(element)));
+  const assetStyleProperties = [
+    "background-image",
+    "border-image-source",
+    "content",
+    "cursor",
+    "list-style-image",
+    "mask-image",
+    "-webkit-mask-image"
+  ];
+  const unresolvedAssetSources = (
+    element: Element
+  ): { malformed: boolean; sources: string[] } => {
+    const sources = new Set<string>();
+    let malformed = false;
     const imageSource = imageSourceFor(element);
-    const imageRemote =
-      imageSource !== "" &&
-      !isResolvedAssetSource(imageSource);
-    const computed = computedFor(element);
-    const styleRemote = [
-      computed.getPropertyValue("background-image"),
-      computed.getPropertyValue("border-image-source"),
-      computed.getPropertyValue("content"),
-      computed.getPropertyValue("cursor"),
-      computed.getPropertyValue("list-style-image"),
-      computed.getPropertyValue("mask-image"),
-      computed.getPropertyValue("-webkit-mask-image")
-    ].some((value) => {
-      if (!/url\s*\(/i.test(value)) return false;
-      if (hasOnlyEmptyUrlSources(value)) return false;
-      const sources = styleAssetSources(value);
-      return (
-        sources.length === 0 ||
-        sources.some((source) => !isResolvedAssetSource(source))
-      );
-    });
-    if (imageRemote || styleRemote) {
+    if (imageSource !== "" && !isResolvedAssetSource(imageSource)) {
+      sources.add(imageSource);
+    }
+    const declarations = [
+      computedFor(element),
+      window.getComputedStyle(element, "::before"),
+      window.getComputedStyle(element, "::after")
+    ];
+    for (const declaration of declarations) {
+      for (const property of assetStyleProperties) {
+        const value = declaration.getPropertyValue(property);
+        if (!/url\s*\(/i.test(value) || hasOnlyEmptyUrlSources(value)) {
+          continue;
+        }
+        const discovered = styleAssetSources(value);
+        if (discovered.length === 0) malformed = true;
+        for (const source of discovered) {
+          if (!isResolvedAssetSource(source)) sources.add(source);
+        }
+      }
+    }
+    return { malformed, sources: [...sources] };
+  };
+  const assetScanElements =
+    options.scanOnly || pageAssetConsentActive
+      ? allElements.filter(isVisibleRemoteAsset)
+      : [];
+  for (const element of assetScanElements) {
+    const unresolved = unresolvedAssetSources(element);
+    if (unresolved.malformed || unresolved.sources.length > 0) {
       remoteElements.add(element);
     }
   }
@@ -1642,9 +1817,8 @@ export async function extractSceneKernel(
       "forms",
       "browser-storage",
       "network-data",
-      ...(textRedactionActive
-        ? ["sensitive-text-redacted", "hidden-inputs"]
-        : []),
+      ...(textRedactionActive ? ["sensitive-text-redacted"] : []),
+      ...(hiddenInputsPresent ? ["hidden-inputs"] : []),
       ...(nonVisualUnsupportedElements.length > 0
         ? ["nonvisual-unsupported-surfaces"]
         : []),
@@ -1973,10 +2147,12 @@ export async function extractSceneKernel(
       };
       return undefined;
     }
+    const mimeType = match[1] as AssetPayload["mimeType"];
+    if (!fetchedImageMatchesType(binary, mimeType)) return undefined;
     const hash = sha256Bytes(binary);
     const payload = {
       sha256: hash,
-      mimeType: match[1] as AssetPayload["mimeType"],
+      mimeType,
       byteLength: binary.length,
       base64: match[2]
     };
@@ -2031,7 +2207,9 @@ export async function extractSceneKernel(
         if (isSafeDocumentFragmentSource(raw)) {
           return `url("${raw}")`;
         } else if (raw.startsWith("data:")) {
-          payload = localizeDataImage(raw);
+          payload =
+            localizeDataImage(raw) ??
+            replacementFor(raw, source, computed, pseudo)?.payload;
         } else {
           try {
             payload = replacementFor(
@@ -2067,6 +2245,13 @@ export async function extractSceneKernel(
       ["button", "input", "select", "textarea"].includes(
         source.tagName.toLowerCase()
       );
+    const restoreNativeSelectAffordance =
+      pseudo === undefined &&
+      canRestoreNativeSelectAffordance(source) &&
+      (() => {
+        const unresolved = unresolvedAssetSources(source);
+        return unresolved.malformed || unresolved.sources.length > 0;
+      })();
     for (const property of styleProperties) {
       const value = computed.getPropertyValue(property).trim();
       if (value === "" || /@import|expression\s*\(/i.test(value)) continue;
@@ -2120,7 +2305,19 @@ export async function extractSceneKernel(
       styles["background-position"] = "0px 0px";
       styles["background-repeat"] = "no-repeat";
       styles["background-size"] = "100% 100%";
-      styles.opacity = "1";
+      if (
+        renderedBackgroundReplacement.match?.captureSurface !==
+        "background-image"
+      ) {
+        styles.opacity = "1";
+      }
+    }
+    if (restoreNativeSelectAffordance) {
+      styles.appearance = "auto";
+      styles["-webkit-appearance"] = "auto";
+      delete styles["background-position"];
+      delete styles["background-repeat"];
+      delete styles["background-size"];
     }
     return styles;
   };
@@ -2398,6 +2595,14 @@ export async function extractSceneKernel(
         const value = redactTextValue(placeholder, redactEntireValue);
         if (value !== placeholder) redactedAttributeCount += 1;
         attributes.placeholder = value;
+      }
+      if (["button", "reset", "submit"].includes(inputType)) {
+        const authoredLabel = source.getAttribute("value");
+        if (authoredLabel) {
+          const value = redactTextValue(authoredLabel, redactEntireValue);
+          if (value !== authoredLabel) redactedAttributeCount += 1;
+          attributes.value = value;
+        }
       }
       if (source.hasAttribute("checked")) attributes.checked = "";
       if (source.hasAttribute("readonly")) attributes.readonly = "";
@@ -3332,6 +3537,12 @@ export async function extractSceneKernel(
     const candidate = [
       sanitizedElement.attributes["aria-label"],
       sanitizedLabelName(element),
+      element.tagName.toLowerCase() === "input" &&
+      ["button", "reset", "submit"].includes(
+        (element.getAttribute("type") ?? "text").toLowerCase()
+      )
+        ? sanitizedElement.attributes.value
+        : undefined,
       sanitizedElement.attributes.title,
       sanitizedAccessibleTextParts(sanitizedElement).join(" ")
     ]
@@ -3364,6 +3575,14 @@ export async function extractSceneKernel(
   if (targetElement && (!rectangle || !sanitizedTarget || !targetRole)) {
     return blocked(options.targetErrorCode, "semantic-target-required");
   }
+  const safeEvidenceTexts = [...new Set(evidenceTexts)]
+    .filter(Boolean)
+    .filter(
+      (text) =>
+        !blockingSecretPatternSources.some((source) =>
+          hasSensitivePatternMatch(text, source)
+        )
+    );
   const serializedHtml = serializeNode(transferableRoot);
   const serializedNodes = JSON.stringify([transferableRoot]);
   const capturedSensitiveText: string[] = [];
@@ -3373,7 +3592,14 @@ export async function extractSceneKernel(
       return;
     }
     for (const [name, value] of Object.entries(node.attributes)) {
-      if (capturedTextAttributeNames.has(name)) {
+      if (
+        capturedTextAttributeNames.has(name) ||
+        (node.tag === "input" &&
+          name === "value" &&
+          ["button", "reset", "submit"].includes(
+            node.attributes.type ?? "text"
+          ))
+      ) {
         capturedSensitiveText.push(value);
       }
     }
@@ -3387,7 +3613,7 @@ export async function extractSceneKernel(
     targetElement && sanitizedTarget
       ? accessibleName(targetElement, sanitizedTarget)
       : "",
-    ...evidenceTexts
+    ...safeEvidenceTexts
   ].join("\n");
   if (
     blockingSecretPatternSources.some((source) =>
@@ -3422,7 +3648,7 @@ export async function extractSceneKernel(
           }
         }
       : {}),
-    evidenceTexts: [...new Set(evidenceTexts)].filter(Boolean),
+    evidenceTexts: safeEvidenceTexts,
     assetPayloads: [...assetPayloads.values()].sort((left, right) =>
       left.sha256.localeCompare(right.sha256)
     ),

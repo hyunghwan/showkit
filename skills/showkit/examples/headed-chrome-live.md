@@ -47,6 +47,12 @@ test("captures the selected product flow", async ({ page, demo }) => {
       role: "button",
       name: "Filters"
     },
+    // For the exact requested public URL in this signed-out context, keep
+    // required visible images as local assets without another prompt.
+    pageAssetConsent: {
+      mode: "public-page",
+      consent: "requested"
+    },
     action: () => filters.click()
   });
 });
@@ -59,6 +65,16 @@ Playwright `target` performs the action only after the isolated pre-action
 scene passes policy. The implementation uses the public Playwright
 `newCDPSession()` surface and CDP `Page.createIsolatedWorld`; the demo spec does
 not inject an extractor into the page JavaScript realm.
+
+For the exact requested public URL in a fresh, signed-out context, keep the
+`public-page` block on the first step when required visible images need local
+copies. Do not ask another image question. For a signed-in or private flow,
+explain the local-file effect, ask once before the real capture, and replace it
+with `pageAssetConsent: { mode: "visible-session", consent: "confirmed" }`
+only after an explicit yes. ShowKit fetches visible images without cookies,
+authorization, or a referrer, rejects local and private addresses, verifies
+their bytes, and stores only local content-addressed assets. Do not use a
+screenshot or a blank image region instead.
 
 Run:
 

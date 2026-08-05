@@ -59,9 +59,17 @@
   `Page.createIsolatedWorld`. A browser without that capability fails before
   persistence. Use a fresh non-persistent context for codebase-free live
   capture; do not copy an existing profile.
-- Allow at most 64 captured assets, 1 MB per asset, and 20 MB of aggregate
-  decoded asset payloads. Reject an over-limit or malformed envelope before
-  persistence.
+- Allow at most 64 captured assets, 1 MB per emitted asset, and 20 MB of
+  aggregate decoded asset payloads. The optional Playwright route may read at
+  most 4 MB of public CSS in aggregate, solely to locate a visible WOFF2 face;
+  never persist the CSS, its URL, or a font data URL. Reject an over-limit or
+  malformed envelope before persistence.
+- For an observed public WOFF2 filename that does not identify its loaded
+  family, compare only four fixed non-page text metric samples in a separate
+  network-blocked context. Per matching pass, read at most 24 candidates, 1 MB
+  each and 8 MB in aggregate, and accept only one unique content-hash match.
+  Never use page or user text, browser response bodies, or a relaxed
+  missing-font fallback.
 - Visible URL text may remain selectable text. A remote URL in an image,
   markup request attribute, CSS request source, or another requesting surface
   must still be removed or replaced by an approved local asset before
@@ -86,18 +94,44 @@
   after explicit visible-session asset consent. Reject invalid file signatures
   and files over 1 MB. Persist only verified content-addressed PNG, JPEG, WebP,
   GIF, or safe SVG bytes, never the source URL.
+- In the optional Playwright route, explicit
+  `pageAssetConsent: { mode: "public-page", consent: "requested" }` may bundle
+  only currently visible HTTP or HTTPS image sources from the exact public URL
+  the person asked to capture in a fresh, signed-out browser context. A signed-in
+  or private flow instead requires explicit
+  `pageAssetConsent: { mode: "visible-session", consent: "confirmed" }`.
+  Fetch outside page context in a fresh credential-free request with no cookie,
+  authorization, or referrer. Require a public DNS result, pin the selected
+  address, allow only default HTTP or HTTPS ports, reject local or private
+  addresses and HTTPS downgrade redirects, and apply bounded redirects,
+  timeout, decompression, signature, and size checks. Required loaded WOFF2
+  files use the same boundary. Reuse authorization only within that capture
+  run. Do not save or print the source URL. If the exact bytes are unavailable,
+  keep failing closed.
 - Treat a remote CSS image inside a visible interactive control as critical.
-  When `pageAssets` does not expose its bytes, explicit visible-session asset
-  consent may preserve the exact rendered pixels of a text-free icon element
-  no larger than 64 by 64 CSS pixels. The element must have one direct HTTP or
-  HTTPS background image, fit wholly in the viewport, and contain no SVG,
-  canvas, image, picture, or video descendant. Keep its control and surrounding
-  scene as semantic HTML. Record `isolated-rendered-icons` in excluded surfaces.
-  Stop with `UnsupportedSurface` for any icon outside these constraints; never
-  emit a blank or substituted control icon.
-- The host must capture that icon element directly. Do not take a viewport
-  screenshot and crop it, even transiently. If bounded element capture is
-  unavailable, stop with `UnsupportedSurface`.
+  When original bytes are unavailable or a safe SVG cannot retain exact text,
+  requested public-page or confirmed visible-session consent may preserve the
+  exact rendered pixels of a text-free icon or wordmark element. Keep each axis
+  at or below 96 CSS pixels and its total area at or below 4,096 CSS pixels. The
+  element must have one direct HTTP, HTTPS, or bounded base64 image background,
+  fit wholly in the viewport, and contain no SVG, canvas, image, picture, or
+  video descendant. Keep its control and surrounding scene as semantic HTML.
+  Record `isolated-rendered-assets` in excluded surfaces. Stop with
+  `UnsupportedSurface` for any asset outside these constraints; never emit a
+  blank or substituted control icon.
+- When a downloaded SVG background is static but outside the reusable SVG
+  allowlist, the optional Playwright route may render only that exact background
+  layer in a new JavaScript-disabled context whose network is fully blocked.
+  Persist the resulting bounded PNG, not the SVG source. Do not include the
+  element's text, border, children, control surface, or surrounding scene.
+- For every other rendered-icon fallback, the host must capture the bounded
+  icon element directly. Do not take a viewport screenshot and crop it, even
+  transiently. If bounded element capture is unavailable, stop with
+  `UnsupportedSurface`.
+- When a named native `select` uses an unavailable custom background arrow,
+  drop that decoration and restore the browser's native select affordance.
+  Preserve its semantic options and name; do not apply this exception to other
+  controls.
 - Preserve a visible `img` or SVG `image` only from exact bytes returned by the
   approved page-asset inventory. Do not rasterize an image element, transformed
   accessory, complete control, text region, or scene. If its exact bytes are
