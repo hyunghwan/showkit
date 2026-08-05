@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@10.34.5",
   "engines": {
-    "node": ">=22 <25"
+    "node": ">=22.12 <25"
   },
   "scripts": {
     "build": "pnpm --filter @showkit/cli build",

@@ -1049,7 +1049,7 @@ export const ArtifactManifestSchema = z.object({
     .object({
       node: z
         .object({
-          supported: z.literal(">=22 <25")
+          supported: z.literal(">=22.12 <25")
         })
         .strict(),
       playwright: z

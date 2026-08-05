@@ -92,6 +92,7 @@ try {
         "codex",
         "chatgpt",
         "claude-code",
+        "claude-cowork",
         "claude-app"
       ],
       lifecycle: ["discover", "install", "list", "update", "remove"]

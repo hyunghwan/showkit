@@ -5,7 +5,7 @@ demo. Nothing in this workflow publishes or uploads the result.
 
 ## Requirements
 
-- Node.js 22 or 24
+- Node.js 22.12+ or 24
 - a coding agent that can use the ShowKit skill, or a project where you can
   install `@showkit/cli`
 - public or synthetic content for a first run
@@ -22,32 +22,39 @@ separate publication states.
 
 ## Use ShowKit with a coding agent
 
-1. Install the ShowKit skill:
+1. In Codex or Claude Code, paste this install-first request:
 
-   ```bash
-   npx skills add hyunghwan/showkit
-   ```
+   > Install ShowKit for this coding agent. Run
+   > `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`,
+   > find and read the installed ShowKit `SKILL.md`, and verify the
+   > installation. Then ask me exactly: “What product URL or currently open
+   > product flow should I use?” Wait for my answer before creating anything.
 
    This installs the skill instructions. It does not install or update your
-   project's dependencies.
+   project's dependencies. In Claude Cowork, open **Customize → Plugins**, add
+   the `hyunghwan/showkit` marketplace, and install **ShowKit** instead. The
+   Cowork plugin also installs instructions only.
 
-2. Open a public or synthetic product flow and give your agent this request:
+2. Reply with the public or synthetic product URL, or say that the flow is open
+   in Chrome. If the skill was already installed, this short request is enough:
 
-   > Using ShowKit, create a checked local interactive HTML demo of this
-   > product flow. Choose the number of steps needed to explain it. Preserve
-   > supported visible text and styling, do not use screenshots, and stop
-   > before saving if private content needs my choice. Build and preview it
-   > locally. Do not publish anything.
+   > Use ShowKit for this site. The flow is open in Chrome. Build and preview a
+   > checked local interactive HTML demo. Do not publish.
 
 3. Review the first preview. Confirm the default colors and local font stacks,
    and keep, change, or remove the default completion email link. Check every
    step, Back and Next navigation, keyboard focus, and the final Restart demo
    action.
 
-The skill selects the safest available capture route, asks before adding an
-optional Playwright dependency or browser binary, and reports the local output
-path. If its browser host cannot prove an isolated read-only page world, it
-must use static source or a separately approved Playwright flow.
+The skill selects the safest available capture route and reports the local
+output path. It does not ask you to compare capture implementations. If the
+current browser host cannot prove an isolated read-only page world, the skill
+uses already granted bound source when it represents the flow or prepares a
+separate non-persistent Playwright browser. It asks one specific permission
+before adding optional Playwright or a browser binary and tells you that the
+separate window requires another sign-in. It keeps that one temporary browser
+context alive from sign-in through capture and does not replace a reconnaissance
+window with a second capture window.
 
 ## Use the CLI directly
 
@@ -67,8 +74,8 @@ npx showkit capture static ./safe-envelope.json --json
 
 # Or run a repeatable Playwright flow after installing the optional peer.
 npm install -D @playwright/test
-npx playwright install chromium
-npx showkit doctor --capability playwright --json
+npx showkit doctor --capability playwright --browser-channel chrome --json
+npx showkit capture ./demo.spec.ts --preflight --json
 npx showkit capture ./demo.spec.ts --json
 ```
 

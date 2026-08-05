@@ -1,0 +1,20 @@
+{
+  "name": "showkit",
+  "owner": {
+    "name": "ShowKit"
+  },
+  "metadata": {
+    "description": "Create checked local interactive HTML demos with ShowKit."
+  },
+  "plugins": [
+    {
+      "name": "showkit",
+      "description": "Teach Claude Cowork or Claude Code to route, capture, check, build, and preview a ShowKit demo.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/showkit"
+      ]
+    }
+  ]
+}

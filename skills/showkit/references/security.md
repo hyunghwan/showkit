@@ -20,11 +20,12 @@
   value, and cap their size. Never send `Network`, `Storage`, `Fetch`, cookie,
   `DOMSnapshot`, or another CDP command. Do not expose or persist the raw
   capability.
-- A Claude `javascript_tool` capability that runs in page context has no
-  host-validated isolated-world guarantee. Return
+- A Claude Cowork or Claude Code browser capability that runs scripts in page
+  context has no host-validated isolated-world guarantee. Return
   `UnsupportedSurface` with
   `browser-isolation-unverified` before live Claude environment extraction,
-  scene extraction, actions, or persistence.
+  scene extraction, actions, or persistence. Continue through the skill's
+  automatic safe recovery; never weaken this gate to avoid a routing question.
 - Static-source envelopes must be bound to unique, sorted, project-relative
   source paths and their current SHA-256 values. Report them as
   `source-derived`, not browser-verified.

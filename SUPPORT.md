@@ -41,7 +41,7 @@ sharing it.
 
 ## Supported versions
 
-ShowKit `0.2.x` supports Node.js 22 and 24. Browser-host, Playwright, schema, and
+ShowKit `0.2.x` supports Node.js 22.12+ and 24. Browser-host, Playwright, schema, and
 skill compatibility are listed in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 For vulnerabilities and the product trust boundary, read

@@ -4,7 +4,7 @@ Build a guided interactive HTML demo from bound static source, a verified
 browser session, or an isolated Playwright flow. ShowKit produces portable
 semantic HTML and local assets; it does not host an LLM or require an account.
 
-Requires Node.js 22 or 24.
+Requires Node.js 22.12+ or 24.
 
 The CLI and portable skill are released separately. Installing this package
 does not install or update the skill.
@@ -30,6 +30,7 @@ belong on stderr.
 | --- | --- |
 | `showkit doctor --json` | Report CLI, skill, host, project, and optional Playwright readiness |
 | `showkit init --json` | Create the local `.showkit/` project structure |
+| `showkit capture <demo.spec.ts> --preflight --json` | Verify Playwright discovers and loads the flow without running its test or opening its configured browser |
 | `showkit capture static <safe-envelope.json> --json` | Import a sanitized static-source envelope without Playwright |
 | `showkit capture session <safe-envelope.json> --json` | Import a temporary browser envelope after host isolation succeeds |
 | `showkit capture <demo.spec.ts> --json` | Run an approved Playwright fixture |
@@ -54,9 +55,14 @@ optional peer:
 
 ```bash
 npm install -D @playwright/test
-npx playwright install chromium
-npx showkit doctor --capability playwright --json
+npx showkit doctor --capability playwright --browser-channel chrome --json
 ```
+
+The browser-channel command verifies installed Google Chrome without requiring
+a bundled Chromium download. Omit `--browser-channel chrome` and run
+`npx playwright install chromium` when system Chrome is unavailable. Before a
+person signs in to a temporary browser, run capture once with `--preflight` so
+file discovery and module loading fail before the real test run.
 
 Supported Playwright versions are `>=1.60.0 <2`. ShowKit uses public fixture,
 page, and locator APIs; trace internals are never build input.

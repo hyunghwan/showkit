@@ -81,6 +81,25 @@ const failures = [];
 const packageJson = JSON.parse(
   await readFile(path.join(root, "packages", "cli", "package.json"), "utf8")
 );
+const claudeMarketplace = JSON.parse(
+  await readFile(
+    path.join(root, ".claude-plugin", "marketplace.json"),
+    "utf8"
+  )
+);
+const showkitPlugin = claudeMarketplace.plugins?.find(
+  (plugin) => plugin.name === "showkit"
+);
+if (
+  claudeMarketplace.name !== "showkit" ||
+  showkitPlugin?.source !== "./" ||
+  showkitPlugin?.strict !== false ||
+  !showkitPlugin?.skills?.includes("./skills/showkit")
+) {
+  failures.push(
+    ".claude-plugin/marketplace.json: ShowKit Cowork plugin must expose ./skills/showkit"
+  );
+}
 const versionMatch = /^(\d+)\.(\d+)\.(\d+)$/.exec(packageJson.version);
 if (!versionMatch) {
   failures.push(
@@ -89,9 +108,8 @@ if (!versionMatch) {
 } else {
   const major = Number(versionMatch[1]);
   const minor = Number(versionMatch[2]);
-  const minorBase = `${major}.${minor}.0`;
   const nextMinor = `${major}.${minor + 1}.0`;
-  const expectedSkillRange = `>=${minorBase} <${nextMinor}`;
+  const expectedSkillRange = `>=${packageJson.version} <${nextMinor}`;
   const expectedSupportWindow = `ShowKit \`${major}.${minor}.x\``;
   const changelog = await readFile(path.join(root, "CHANGELOG.md"), "utf8");
   const escapedVersion = packageJson.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

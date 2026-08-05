@@ -21,6 +21,14 @@ describe("public package contract", () => {
 
     expect(packageJson.name).toBe("@showkit/cli");
     expect(Object.keys(packageJson.exports)).toEqual([".", "./playwright", "./schema/*"]);
+    expect(packageJson.exports["."]).toMatchObject({
+      import: "./dist/index.js",
+      require: "./dist/index.js"
+    });
+    expect(packageJson.exports["./playwright"]).toMatchObject({
+      import: "./dist/playwright.js",
+      require: "./dist/playwright.js"
+    });
     expect(packageJson.peerDependencies["@playwright/test"]).toBe(">=1.60.0 <2");
     expect(
       packageJson.peerDependenciesMeta["@playwright/test"]?.optional
@@ -35,6 +43,7 @@ describe("public package contract", () => {
         "commands": [
           "showkit doctor --json",
           "showkit init --json",
+          "showkit capture <demo.spec.ts> --preflight --json",
           "showkit capture <demo.spec.ts> --json",
           "showkit capture session <safe-envelope.json> --json",
           "showkit capture static <safe-envelope.json> --json",
@@ -56,9 +65,10 @@ describe("public package contract", () => {
 
 describe("supported version ranges", () => {
   it("checks the documented Node and Playwright boundaries", () => {
-    expect(satisfiesVersionRange("v22.0.0", ">=22 <25")).toBe(true);
-    expect(satisfiesVersionRange("v24.99.0", ">=22 <25")).toBe(true);
-    expect(satisfiesVersionRange("v25.0.0", ">=22 <25")).toBe(false);
+    expect(satisfiesVersionRange("v22.11.0", ">=22.12 <25")).toBe(false);
+    expect(satisfiesVersionRange("v22.12.0", ">=22.12 <25")).toBe(true);
+    expect(satisfiesVersionRange("v24.99.0", ">=22.12 <25")).toBe(true);
+    expect(satisfiesVersionRange("v25.0.0", ">=22.12 <25")).toBe(false);
     expect(satisfiesVersionRange("1.60.0", ">=1.60.0 <2")).toBe(true);
     expect(satisfiesVersionRange("1.59.9", ">=1.60.0 <2")).toBe(false);
     expect(satisfiesVersionRange("2.0.0", ">=1.60.0 <2")).toBe(false);

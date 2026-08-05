@@ -19,11 +19,18 @@ const temporarySource = await mkdtemp(path.join(os.tmpdir(), "showkit-skill-sour
 const temporaryRemoteRoot = await mkdtemp(path.join(os.tmpdir(), "showkit-skill-remote-"));
 const temporaryHome = await mkdtemp(path.join(os.tmpdir(), "showkit-skill-home-"));
 const temporaryRemote = path.join(temporaryRemoteRoot, "showkit.git");
-await cp(
-  path.join(repositoryRoot, "skills"),
-  path.join(temporarySource, "skills"),
-  { recursive: true }
-);
+await Promise.all([
+  cp(
+    path.join(repositoryRoot, "skills"),
+    path.join(temporarySource, "skills"),
+    { recursive: true }
+  ),
+  cp(
+    path.join(repositoryRoot, ".claude-plugin"),
+    path.join(temporarySource, ".claude-plugin"),
+    { recursive: true }
+  )
+]);
 
 function run(
   command,
@@ -60,8 +67,26 @@ async function firstExisting(paths) {
 }
 
 try {
+  const marketplace = JSON.parse(
+    await readFile(
+      path.join(temporarySource, ".claude-plugin", "marketplace.json"),
+      "utf8"
+    )
+  );
+  const showkitPlugin = marketplace.plugins?.find(
+    (plugin) => plugin.name === "showkit"
+  );
+  if (
+    marketplace.name !== "showkit" ||
+    showkitPlugin?.source !== "./" ||
+    showkitPlugin?.strict !== false ||
+    !showkitPlugin?.skills?.includes("./skills/showkit")
+  ) {
+    throw new Error("Claude marketplace does not expose the ShowKit skill.");
+  }
+
   run("git", ["init"], { cwd: temporarySource });
-  run("git", ["add", "skills"], { cwd: temporarySource });
+  run("git", ["add", "skills", ".claude-plugin"], { cwd: temporarySource });
   run(
     "git",
     [
@@ -114,7 +139,8 @@ try {
     !conformance.ok ||
     conformance.installTestedAgents?.join(",") !==
       "codex,claude-code" ||
-    conformance.documentedHosts?.length !== 4
+    conformance.documentedHosts?.join(",") !==
+      "codex,chatgpt,claude-code,claude-cowork,claude-app"
   ) {
     throw new Error("Installed skill conformance failed.");
   }
@@ -281,6 +307,7 @@ try {
         "codex",
         "chatgpt",
         "claude-code",
+        "claude-cowork",
         "claude-app"
       ],
       lifecycle: [
