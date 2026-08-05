@@ -224,23 +224,36 @@ try {
     "Claude Cowork",
     "Customize → Plugins",
     "instructions only",
+    "not the CLI",
+    "Read and follow the installed `SKILL.md`",
     "What product URL or currently open product flow should I use?",
-    "1280×720",
+    "compatible CLI in a new folder",
+    "required approvals",
     "Use ShowKit for this site",
     "flow is open in Chrome",
     "interactive HTML demo",
     "@showkit/cli",
     "new output folder",
-    "does not ask you to choose",
-    "changing an existing project's dependencies",
-    "specific permission",
-    "same context alive from the single sign-in through capture",
+    "existing project",
+    "optional Playwright or a browser",
     "Do not publish",
-    "local preview path"
+    "opens the local preview",
+    "A local preview is not published"
   ]) {
     if (!quickStartContract.includes(requirement)) {
       throw new Error(
         `README quick start is missing ${requirement}.`
+      );
+    }
+  }
+  for (const duplicatedSkillDetail of [
+    "disposable reconnaissance browser script",
+    "retained foreground process",
+    "same context alive from the single sign-in through capture"
+  ]) {
+    if (quickStartContract.includes(duplicatedSkillDetail)) {
+      throw new Error(
+        `README quick start duplicates skill detail ${duplicatedSkillDetail}.`
       );
     }
   }

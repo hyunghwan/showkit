@@ -11,7 +11,7 @@ explicit reader migration before the supported range changes.
 | Claude Cowork and Claude Code | Skill supported; existing Claude-controlled tab capture remains blocked when an isolated page world cannot be verified, then routes automatically to bound source or approved isolated Playwright |
 | Static-source capture | Built into `@showkit/cli`; Playwright is not required |
 | `@playwright/test` | Optional trusted CI replay, `>=1.60.0 <2` |
-| ShowKit skill | `@showkit/cli >=0.2.1 <0.3.0` |
+| ShowKit skill | `@showkit/cli >=0.2.2 <0.3.0` |
 | Capture and StorySpec schema | `0.1` |
 | Player browsers | Current Playwright Chromium, Firefox, and WebKit in release checks |
 

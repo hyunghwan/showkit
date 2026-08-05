@@ -7,6 +7,12 @@ fixes ship as a new version.
 
 - No unreleased changes.
 
+## 0.2.2 - 2026-08-04
+
+- Shortened the agent install prompt across the public guides and npm README.
+  Browser, capture, and recovery details now stay in the installed skill after
+  it verifies installation and asks for the product URL.
+
 ## 0.2.1 - 2026-08-04
 
 - Added a Claude plugin marketplace entry so the ShowKit skill can be installed
