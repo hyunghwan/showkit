@@ -72,8 +72,10 @@ The command adds the skill, not the CLI. After you answer, the skill creates a
 new output folder, pins a compatible `@showkit/cli`, chooses a supported source,
 checks the demo, and opens the local preview. It asks before changing an
 existing project, adding optional Playwright or a browser, or preserving private
-visible content. If the current tab cannot pass ShowKit's isolation check, the
-skill explains the supported fallback once. A local preview is not published.
+visible content or private-session page images. Required visible images from an
+exact requested public URL are localized without another prompt. If the current
+tab cannot pass ShowKit's isolation check, the skill explains the supported
+fallback once. A local preview is not published.
 
 The portable skill is documented for Codex, ChatGPT, Claude Cowork, Claude
 Code, and the Claude Desktop Code tab. Automated Skills CLI installation tests

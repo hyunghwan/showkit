@@ -110,12 +110,13 @@ A remote CSS image inside a visible interactive control is layout-critical,
 including toolbar, navigation, and action icons. If `pageAssets` does not expose
 its bytes and the person confirmed visible-session assets, the browser adapter
 may preserve the exact rendered pixels of an isolated, text-free icon element
-no larger than 64 by 64 CSS pixels. This produces a local content-addressed
-image asset for that icon only; the control, text, layout, and scene remain
-semantic HTML. Return `UnsupportedSurface` when the element contains text,
-another visual surface, multiple background images, is larger than the limit,
-or cannot be captured exactly. Do not silently remove it or replace it with a
-synthetic icon, and never rasterize a complete control or scene.
+with each axis at or below 96 CSS pixels and total area at or below 4,096 CSS
+pixels. This produces a local content-addressed image asset for that icon only;
+the control, text, layout, and scene remain semantic HTML. Return
+`UnsupportedSurface` when the element contains rendered text, another visual
+surface, multiple background images, exceeds either limit, or cannot be
+captured exactly. Do not silently remove it or replace it with a synthetic
+icon, and never rasterize a complete control or scene.
 
 The selected browser must capture the bounded icon element directly. If direct
 element capture is unavailable, return `UnsupportedSurface`. Never take a

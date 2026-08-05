@@ -81,6 +81,27 @@ file discovery and module loading fail before the real test run.
 Supported Playwright versions are `>=1.60.0 <2`. ShowKit uses public fixture,
 page, and locator APIs; trace internals are never build input.
 
+When an exact requested public page needs a visible remote image, the first
+`demo.step()` accepts
+`pageAssetConsent: { mode: "public-page", consent: "requested" }`. No separate
+image prompt is needed in a fresh, signed-out context. A private or signed-in
+flow instead requires explicit consent and uses
+`pageAssetConsent: { mode: "visible-session", consent: "confirmed" }`. ShowKit
+uses a fresh public-network request with no cookies, authorization, or referrer,
+rejects local and private addresses, verifies the bytes, and stores only
+content-addressed local assets. It does not save the source asset URL. Public
+CSS may be read transiently, up to 4 MB in aggregate, to locate a required
+visible WOFF2 font; the CSS is never captured. A static complex SVG sprite may
+be rendered only as the exact bounded background layer in a network-blocked,
+JavaScript-disabled context; its source bytes are not saved. Missing or invalid
+critical assets still stop the capture. If an observed public WOFF2 filename is
+opaque, ShowKit compares fixed non-page text metrics in a separate
+network-blocked context and accepts only one unique content-hash match.
+Playwright capture removes only unresolved non-interactive decoration by
+default and records that exclusion. Set `remoteAssetPolicy: "strict"` on the
+first `demo.step()` when every visible decorative asset must be reproduced;
+targets, controls, and layout-critical assets always remain fail-closed.
+
 ## Package exports
 
 - `@showkit/cli`: Zod schemas, TypeScript types, static and browser envelope

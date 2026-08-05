@@ -22,6 +22,22 @@ const OPENAI_BROWSER_CDP_METHODS = new Set([
 const OPENAI_BROWSER_CDP_RESULT_LIMIT = 2_000_000;
 const TRUSTED_OPENAI_BROWSER_BUILDS = new Map([
   [
+    "browser@26.730.61639",
+    "091a81603ff202a16ed56557709bf42d97caf8f0dd2e07ae9e26d7c014d71035"
+  ],
+  [
+    "chrome@26.730.61639",
+    "091a81603ff202a16ed56557709bf42d97caf8f0dd2e07ae9e26d7c014d71035"
+  ],
+  [
+    "browser@26.730.61309",
+    "939555af59361e95b1f064181829c9dfc4ac99599d1b9949596900443ac15787"
+  ],
+  [
+    "chrome@26.730.61309",
+    "939555af59361e95b1f064181829c9dfc4ac99599d1b9949596900443ac15787"
+  ],
+  [
     "browser@26.727.51351",
     "f204d340535055781952b10ed396de20b842f00a19e430852f7e121ad1ce91f6"
   ],
@@ -1194,6 +1210,14 @@ export function collectRenderedIconCandidatesInPage(input = []) {
     const match =
       /^url\(\s*["']?([^"')]+)["']?\s*\)$/i.exec(trimmed);
     if (!match) return undefined;
+    if (
+      match[1].length <= 10_000 &&
+      /^data:image\/(?:png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(
+        match[1]
+      )
+    ) {
+      return match[1];
+    }
     try {
       const url = new URL(match[1], document.baseURI);
       if (
@@ -1298,19 +1322,29 @@ export function collectRenderedIconCandidatesInPage(input = []) {
     first.bottom > second.top;
   const hasRenderedTextInside = (rectangle) => {
     return Array.from(document.querySelectorAll("*")).some((element) => {
-      const hasOwnText = Array.from(element.childNodes ?? []).some(
-        (node) =>
-          node.nodeType === 3 &&
-          (node.textContent ?? "").trim() !== ""
-      );
-      if (!hasOwnText) return false;
       const computed = window.getComputedStyle(element);
-      return (
-        computed.display !== "none" &&
-        computed.visibility === "visible" &&
-        Number.parseFloat(computed.opacity || "1") > 0 &&
-        intersects(rectangle, element.getBoundingClientRect())
-      );
+      if (
+        computed.display === "none" ||
+        computed.visibility !== "visible" ||
+        Number.parseFloat(computed.opacity || "1") <= 0
+      ) {
+        return false;
+      }
+      return Array.from(element.childNodes ?? []).some((node) => {
+        if (node.nodeType !== 3 || (node.textContent ?? "").trim() === "") {
+          return false;
+        }
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return Array.from(range.getClientRects()).some(
+          (textRectangle) =>
+            textRectangle.bottom > 0 &&
+            textRectangle.right > 0 &&
+            textRectangle.top < window.innerHeight &&
+            textRectangle.left < window.innerWidth &&
+            intersects(rectangle, textRectangle)
+        );
+      });
     });
   };
 
@@ -1319,7 +1353,18 @@ export function collectRenderedIconCandidatesInPage(input = []) {
     if (!element.closest(interactiveSelector) || !noVisibleText(element)) {
       continue;
     }
-    if (element.querySelector("canvas,img,picture,svg,video")) continue;
+    if (
+      element.children.length > 0 ||
+      element.querySelector("canvas,img,picture,svg,video") ||
+      ["::before", "::after"].some((pseudo) => {
+        const content = window
+          .getComputedStyle(element, pseudo)
+          .content.trim();
+        return !["none", "normal"].includes(content);
+      })
+    ) {
+      continue;
+    }
     const computed = window.getComputedStyle(element);
     const source = directBackgroundSource(computed.backgroundImage);
     if (!source || known.has(source)) continue;
@@ -1328,8 +1373,8 @@ export function collectRenderedIconCandidatesInPage(input = []) {
     if (
       rectangle.width < 4 ||
       rectangle.height < 4 ||
-      rectangle.width > 64 ||
-      rectangle.height > 64 ||
+      rectangle.width > 96 ||
+      rectangle.height > 96 ||
       rectangle.width * rectangle.height > 4_096 ||
       rectangle.top < 0 ||
       rectangle.left < 0 ||
@@ -1492,8 +1537,8 @@ export function collectRenderedIconCandidatesInPage(input = []) {
       !emptyVisualContent(pseudo.content) ||
       pseudoWidth < 4 ||
       pseudoHeight < 4 ||
-      pseudoWidth > 64 ||
-      pseudoHeight > 64 ||
+      pseudoWidth > 96 ||
+      pseudoHeight > 96 ||
       pseudoWidth * pseudoHeight > 4_096 ||
       left < 0 ||
       top < 0 ||
@@ -1765,8 +1810,11 @@ export function createCodexBrowserAdapter({
     const visibleSession =
       context?.assetConsent?.mode === "visible-session" &&
       context?.assetConsent?.consent === "confirmed";
+    const requestedPublicPage =
+      context?.assetConsent?.mode === "public-page" &&
+      context?.assetConsent?.consent === "requested";
     if (
-      !visibleSession ||
+      (!visibleSession && !requestedPublicPage) ||
       typeof evaluatePage !== "function" ||
       typeof tab.playwright.elementScreenshot !== "function"
     ) {
@@ -1824,8 +1872,8 @@ export function createCodexBrowserAdapter({
         typeof candidate.match !== "object" ||
         candidate.width < 4 ||
         candidate.height < 4 ||
-        candidate.width > 64 ||
-        candidate.height > 64 ||
+        candidate.width > (candidate.match?.canvasElement ? 64 : 96) ||
+        candidate.height > (candidate.match?.canvasElement ? 64 : 96) ||
         candidate.width * candidate.height > 4_096 ||
         candidate.match?.imageElement === true ||
         knownSources.has(candidate.source) ||
@@ -2042,6 +2090,31 @@ export function createCodexBrowserAdapter({
     },
     async targetStatus(target) {
       const status = await viewportLocatorFor(tab, target);
+      return {
+        matchedCount: status.matchedCount,
+        visibleCount: status.count
+      };
+    },
+    async waitForTargetStatus(
+      target,
+      { timeoutMs = 1_500, pollMs = 50 } = {}
+    ) {
+      const timeout =
+        Number.isInteger(timeoutMs) && timeoutMs >= 0
+          ? Math.min(timeoutMs, 5_000)
+          : 1_500;
+      const poll =
+        Number.isInteger(pollMs) && pollMs > 0
+          ? Math.min(pollMs, 250)
+          : 50;
+      const deadline = performance.now() + timeout;
+      let status;
+      do {
+        status = await viewportLocatorFor(tab, target);
+        if (status.count === 1) break;
+        if (performance.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, poll));
+      } while (true);
       return {
         matchedCount: status.matchedCount,
         visibleCount: status.count
@@ -2489,7 +2562,7 @@ export function createCodexPageAssetProvider({
       const metadata = `${asset.name} ${asset.url}`;
       const safeTransformQuery = Array.from(assetUrl.searchParams).every(
         ([name, value]) => {
-          if (name === "w" || name === "h") {
+          if (name === "w" || name === "h" || name === "im_w") {
             return (
               /^\d{1,4}$/.test(value) &&
               Number(value) >= 1 &&
@@ -2711,13 +2784,8 @@ export function createCodexPageAssetProvider({
       inventoryId: inventory.id
     });
     try {
-      if (
-        !visibleSession &&
-        (bundle.failures.length > 0 ||
-          bundle.assets.length !== selected.length)
-      ) {
-        throw new Error("The browser could not bundle every approved page asset.");
-      }
+      // Keep exact successful bytes. Scene extraction still fails closed when
+      // an unavailable asset is required by a visible control.
       const selectedById = new Map(selected.map((asset) => [asset.id, asset]));
       const directory = path.resolve(bundle.directoryPath);
       const replacements = [];
@@ -2823,6 +2891,7 @@ export function createCodexPageAssetProvider({
             "rect",
             "stop",
             "svg",
+            "text",
             "title"
           ]);
           const isSvg =
@@ -3317,12 +3386,14 @@ export async function captureBrowserSession({
       }
       phase = "target-check";
       const targetStatus =
-        typeof adapter.targetStatus === "function"
-          ? await adapter.targetStatus(step.target)
-          : {
-              matchedCount: await adapter.targetCount(step.target),
-              visibleCount: await adapter.targetCount(step.target)
-            };
+        typeof adapter.waitForTargetStatus === "function"
+          ? await adapter.waitForTargetStatus(step.target)
+          : typeof adapter.targetStatus === "function"
+            ? await adapter.targetStatus(step.target)
+            : {
+                matchedCount: await adapter.targetCount(step.target),
+                visibleCount: await adapter.targetCount(step.target)
+              };
       const count = targetStatus.visibleCount;
       const visible =
         count === 1 ? await adapter.targetVisible(step.target) : false;

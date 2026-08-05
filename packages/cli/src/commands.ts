@@ -15,7 +15,7 @@ import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { buildDemo } from "./build/build.js";
 import { commitCaptureEnvelope } from "./capture/session-import.js";
 import { validateAgentBrowserCaptureEnvelope } from "./capture/session-envelope.js";
@@ -49,6 +49,82 @@ import { satisfiesVersionRange } from "./core/version.js";
 
 const NODE_RANGE = ">=22.12 <25";
 const PLAYWRIGHT_RANGE = ">=1.60.0 <2";
+const CAPTURE_PROCESS_BUFFER_LIMIT = 10 * 1024 * 1024;
+
+type BufferedProcessResult = {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+};
+
+async function runBufferedProcess(
+  command: string,
+  args: string[],
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    maxBuffer: number;
+  }
+): Promise<BufferedProcessResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let exceededBuffer = false;
+    const collect = (
+      chunks: Buffer[],
+      chunk: Buffer,
+      nextSize: number
+    ): number => {
+      if (exceededBuffer) return nextSize;
+      const size = nextSize + chunk.byteLength;
+      if (size > options.maxBuffer) {
+        exceededBuffer = true;
+        child.kill("SIGTERM");
+        return size;
+      }
+      chunks.push(chunk);
+      return size;
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBytes = collect(stdoutChunks, chunk, stdoutBytes);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderrBytes = collect(stderrChunks, chunk, stderrBytes);
+    });
+    child.once("error", reject);
+    child.once("close", (status) => {
+      if (exceededBuffer) {
+        reject(
+          new ShowKitError({
+            code: "DemoFixtureSetupFailed",
+            message:
+              "ShowKit stopped the source flow because its process output exceeded the safety limit. No captured page was saved.",
+            exitCode: EXIT_CODES.validation,
+            recovery:
+              "Remove verbose logging from the source flow, then capture again."
+          })
+        );
+        return;
+      }
+      resolve({
+        status,
+        stdout: Buffer.concat(stdoutChunks, stdoutBytes).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks, stderrBytes).toString("utf8")
+      });
+    });
+  });
+}
+
+function captureProgress(message: string): void {
+  process.stderr.write(`[ShowKit] ${message}\n`);
+}
 
 async function dependencyUpgradeCommand(packageName: string, range: string): Promise<string> {
   if (await pathExists(path.join(projectRoot(), "pnpm-lock.yaml"))) {
@@ -488,12 +564,9 @@ function captureFailure(output: string): ShowKitError {
   );
   if (code) {
     const definition = definitions[code]!;
-    const category = [
-      "browser-isolation-unavailable",
-      "target-locator-mismatch"
-    ].find((candidate) =>
-      output.includes(`[SHOWKIT-CATEGORY:${candidate}]`)
-    );
+    const category = output.match(
+      /\[SHOWKIT-CATEGORY:([a-z0-9-]{1,80})\]/
+    )?.[1];
     return new ShowKitError({
       code,
       message: definition.message,
@@ -618,23 +691,44 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
     const playwrightArgs = preflightOnly
       ? [playwrightCli, "test", specPath, "--list", "--reporter=line"]
       : [playwrightCli, "test", specPath, "--reporter=line", "--output", playwrightOutput];
-    const run = spawnSync(
-      process.execPath,
-      playwrightArgs,
-      {
+    captureProgress(
+      preflightOnly
+        ? "Checking the source flow before opening a browser."
+        : "Capturing the product flow in a local browser."
+    );
+    const progressStartedAt = Date.now();
+    const progressTimer = preflightOnly
+      ? undefined
+      : setInterval(() => {
+          const elapsedSeconds = Math.max(
+            1,
+            Math.round((Date.now() - progressStartedAt) / 1_000)
+          );
+          captureProgress(`Capture is still running (${elapsedSeconds}s).`);
+        }, 10_000);
+    progressTimer?.unref();
+    let run: BufferedProcessResult;
+    try {
+      run = await runBufferedProcess(process.execPath, playwrightArgs, {
         cwd: process.cwd(),
         env: {
           ...process.env,
           SHOWKIT_CAPTURE_OUTPUT: captureOutput
         },
-        encoding: "utf8",
-        maxBuffer: 10 * 1024 * 1024
-      }
-    );
+        maxBuffer: CAPTURE_PROCESS_BUFFER_LIMIT
+      });
+    } finally {
+      if (progressTimer) clearInterval(progressTimer);
+    }
     const commandOutput = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
     if (run.status !== 0) {
       throw captureFailure(commandOutput);
     }
+    captureProgress(
+      preflightOnly
+        ? "The source flow is ready."
+        : "The browser flow finished. Checking the captured files."
+    );
     if (preflightOnly) {
       await recordOperation({
         operationId: id,

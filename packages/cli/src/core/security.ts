@@ -212,10 +212,19 @@ export function inspectCaptureContentPolicy(capture: CaptureSource): {
         return;
       }
       for (const [name, value] of Object.entries(node.attributes)) {
+        const safeInputButtonValue =
+          node.tag === "input" &&
+          name === "value" &&
+          ["button", "reset", "submit"].includes(
+            node.attributes.type ?? "text"
+          );
         if (capturedTextAttributeNames.has(name)) {
           sensitiveContent.push(value);
         }
-        if (!isAllowedNodeAttribute(name)) {
+        if (safeInputButtonValue) {
+          sensitiveContent.push(value);
+        }
+        if (!isAllowedNodeAttribute(name) && !safeInputButtonValue) {
           nodePolicyPassed = false;
         }
         if (

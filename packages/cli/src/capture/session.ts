@@ -1,4 +1,4 @@
-import type { Locator, Page, TestInfo } from "@playwright/test";
+import type { Locator, Page, Request, TestInfo } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { contentHash, sha256, writeJsonAtomic } from "../core/json.js";
@@ -22,6 +22,7 @@ import {
   assertCaptureSafeForPersistence,
   containsConfiguredSensitiveText
 } from "../core/security.js";
+import type { PageAssetConsent } from "./extractor.js";
 
 function assetExtension(
   mimeType: AssetPayload["mimeType"]
@@ -37,11 +38,35 @@ function assetExtension(
   }[mimeType];
 }
 
+function mergeCaptureAssets(
+  target: Map<string, AssetPayload>,
+  assets: AssetPayload[]
+): void {
+  for (const asset of assets) target.set(asset.sha256, asset);
+  const totalBytes = [...target.values()].reduce(
+    (total, asset) => total + asset.byteLength,
+    0
+  );
+  if (target.size > 64 || totalBytes > 20 * 1_048_576) {
+    throw new ShowKitError({
+      code: "CaptureTooLarge",
+      message:
+        "[SHOWKIT:CaptureTooLarge] The captured product flow exceeds the page asset limit. No captured page was saved.",
+      exitCode: EXIT_CODES.validation,
+      recovery:
+        "Reduce the number or size of visible page assets, then capture again.",
+      details: { category: "asset-total-limit" }
+    });
+  }
+}
+
 export type DemoStepOptions = {
   id: string;
   title: string;
   target: Locator;
   captureTarget: SemanticCaptureTarget;
+  pageAssetConsent?: PageAssetConsent;
+  remoteAssetPolicy?: "strict" | "decorative-remove";
   action: () => Promise<unknown>;
 };
 
@@ -56,11 +81,16 @@ export class CaptureSession implements DemoController {
   readonly #steps: CaptureStep[] = [];
   readonly #stepTargets: SemanticCaptureTarget[] = [];
   readonly #assets = new Map<string, AssetPayload>();
+  readonly #excludedSurfaces = new Set<string>();
   readonly #startedAt = performance.now();
   #sceneExtractionCount = 0;
   #sceneExtractionMs = 0;
   #actionCount = 0;
   #actionMs = 0;
+  #pageAssetConsent: PageAssetConsent | undefined;
+  #remoteAssetPolicy: "strict" | "decorative-remove" = "decorative-remove";
+  readonly #observedPublicFontSources = new Set<string>();
+  readonly #fontRequestListener: (request: Request) => void;
   #fixtureSeed:
     | {
         schemaVersion: typeof SCHEMA_VERSION;
@@ -90,6 +120,32 @@ export class CaptureSession implements DemoController {
     this.#page = page;
     this.#testInfo = testInfo;
     this.#outputPath = process.env.SHOWKIT_CAPTURE_OUTPUT;
+    this.#fontRequestListener = (request): void => {
+      if (
+        !this.active ||
+        request.resourceType() !== "font" ||
+        this.#observedPublicFontSources.size >= 64
+      ) {
+        return;
+      }
+      const raw = request.url();
+      if (raw.length > 10_000) return;
+      try {
+        const url = new URL(raw);
+        if (
+          !["http:", "https:"].includes(url.protocol) ||
+          url.username !== "" ||
+          url.password !== "" ||
+          url.hash !== ""
+        ) {
+          return;
+        }
+        this.#observedPublicFontSources.add(url.href);
+      } catch {
+        // Malformed font request URLs are ignored and capture remains fail-closed.
+      }
+    };
+    if (this.active) this.#page.on("request", this.#fontRequestListener);
   }
 
   get active(): boolean {
@@ -175,21 +231,78 @@ export class CaptureSession implements DemoController {
       DemoFixtureSchema.shape.steps.element.shape.target.parse(
         options.captureTarget
       );
+    if (
+      options.pageAssetConsent &&
+      this.#pageAssetConsent &&
+      (options.pageAssetConsent.mode !== this.#pageAssetConsent.mode ||
+        options.pageAssetConsent.consent !== this.#pageAssetConsent.consent)
+    ) {
+      throw new ShowKitError({
+        code: "DemoFixtureSetupFailed",
+        message:
+          "[SHOWKIT:DemoFixtureSetupFailed] A capture flow cannot change page asset consent after it starts. No captured page was saved.",
+        exitCode: EXIT_CODES.validation,
+        recovery:
+          "Set one page asset consent mode on the first `demo.step()` and reuse it for the rest of the flow."
+      });
+    }
+    if (options.pageAssetConsent && this.#steps.length > 0) {
+      throw new ShowKitError({
+        code: "DemoFixtureSetupFailed",
+        message:
+          "[SHOWKIT:DemoFixtureSetupFailed] Page asset consent must be set on the first capture step. No captured page was saved.",
+        exitCode: EXIT_CODES.validation,
+        recovery:
+          "Move `pageAssetConsent` to the first `demo.step()`, then capture again."
+      });
+    }
+    if (options.pageAssetConsent) {
+      this.#pageAssetConsent = options.pageAssetConsent;
+    }
+    if (
+      options.remoteAssetPolicy &&
+      this.#steps.length > 0 &&
+      options.remoteAssetPolicy !== this.#remoteAssetPolicy
+    ) {
+      throw new ShowKitError({
+        code: "DemoFixtureSetupFailed",
+        message:
+          "[SHOWKIT:DemoFixtureSetupFailed] A capture flow cannot change its remote asset policy after it starts. No captured page was saved.",
+        exitCode: EXIT_CODES.validation,
+        recovery:
+          "Set `remoteAssetPolicy` on the first `demo.step()` and reuse it for the rest of the flow."
+      });
+    }
+    if (options.remoteAssetPolicy) {
+      this.#remoteAssetPolicy = options.remoteAssetPolicy;
+    }
     const anchorId = `sk-${options.id}`;
     const extractionStartedAt = performance.now();
-    const { scene, evidenceTexts, assets } = await captureScene(
-      this.#page,
-      {
-        target: options.target,
-        captureTarget,
-        anchorId,
-        stepIndex: this.#steps.length
-      }
-    );
+    const {
+      scene,
+      evidenceTexts,
+      assets,
+      excludedSurfaces
+    } = await captureScene(this.#page, {
+      target: options.target,
+      captureTarget,
+      anchorId,
+      stepIndex: this.#steps.length,
+      ...(this.#pageAssetConsent
+        ? {
+            pageAssetConsent: this.#pageAssetConsent,
+            observedPublicFontSources: () => [
+              ...this.#observedPublicFontSources
+            ]
+          }
+        : {}),
+      remoteAssetPolicy: this.#remoteAssetPolicy
+    });
     this.#sceneExtractionCount += 1;
     this.#sceneExtractionMs += performance.now() - extractionStartedAt;
-    for (const asset of assets) {
-      this.#assets.set(asset.sha256, asset);
+    mergeCaptureAssets(this.#assets, assets);
+    for (const surface of excludedSurfaces) {
+      this.#excludedSurfaces.add(surface);
     }
     const actionStartedAt = performance.now();
     await options.action();
@@ -238,12 +351,30 @@ export class CaptureSession implements DemoController {
     }
 
     const terminalExtractionStartedAt = performance.now();
-    const { scene: terminalScene, assets } = await captureScene(this.#page);
+    const {
+      scene: terminalScene,
+      assets,
+      excludedSurfaces
+    } = await captureScene(
+      this.#page,
+      {
+        ...(this.#pageAssetConsent
+          ? {
+              pageAssetConsent: this.#pageAssetConsent,
+              observedPublicFontSources: () => [
+                ...this.#observedPublicFontSources
+              ]
+            }
+          : {}),
+        remoteAssetPolicy: this.#remoteAssetPolicy
+      }
+    );
     this.#sceneExtractionCount += 1;
     this.#sceneExtractionMs +=
       performance.now() - terminalExtractionStartedAt;
-    for (const asset of assets) {
-      this.#assets.set(asset.sha256, asset);
+    mergeCaptureAssets(this.#assets, assets);
+    for (const surface of excludedSurfaces) {
+      this.#excludedSurfaces.add(surface);
     }
     const specContents = await readFile(this.#testInfo.file, "utf8");
     const require = createRequire(import.meta.url);
@@ -302,21 +433,24 @@ export class CaptureSession implements DemoController {
       })),
       redaction: {
         policyChecksPassed: true as const,
-        excludedSurfaces: [
-          "scripts",
-          "inline-handlers",
-          "forms",
-          "remote-assets",
-          "browser-storage",
-          "network-data"
-        ],
+        excludedSurfaces: [...this.#excludedSurfaces].sort(),
         fullSceneRasterCount: 0 as const,
         sensitiveText: {
           mode: "blocked-by-default" as const,
           redactedTextNodeCount: 0,
           redactedAttributeCount: 0,
           regionCount: 0
-        }
+        },
+        ...(this.#pageAssetConsent
+          ? {
+              pageAssets: {
+                mode: this.#pageAssetConsent.mode,
+                consent: this.#pageAssetConsent.consent,
+                localOnly: true as const,
+                assetCount: assetPayloads.length
+              }
+            }
+          : {})
       }
     };
     const capture: CaptureSource = CaptureSourceSchema.parse({
@@ -349,6 +483,11 @@ export class CaptureSession implements DemoController {
         totalMs: rounded(performance.now() - this.#startedAt)
       })}`
     );
+  }
+
+  dispose(): void {
+    this.#page.off("request", this.#fontRequestListener);
+    this.#observedPublicFontSources.clear();
   }
 }
 

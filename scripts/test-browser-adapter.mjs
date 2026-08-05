@@ -291,6 +291,42 @@ const trustedPluginRoot = process.env.SHOWKIT_TEST_SKIP_INSTALLED_HOST === "1"
     "cache",
     "openai-bundled",
     "browser",
+    "26.730.61639"
+  ),
+  path.join(
+    os.homedir(),
+    ".codex",
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "chrome",
+    "26.730.61639"
+  ),
+  path.join(
+    os.homedir(),
+    ".codex",
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "browser",
+    "26.730.61309"
+  ),
+  path.join(
+    os.homedir(),
+    ".codex",
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "chrome",
+    "26.730.61309"
+  ),
+  path.join(
+    os.homedir(),
+    ".codex",
+    "plugins",
+    "cache",
+    "openai-bundled",
+    "browser",
     "26.727.51351"
   ),
   path.join(
@@ -1256,19 +1292,26 @@ const publicInventoryAsset = {
   kind: "image",
   name: "hero.png",
   sources: [{ kind: "attribute" }],
-  url: "https://assets.example.test/hero.png?w=1280&q=80&auto=format&dpr=2"
+  url: "https://assets.example.test/hero.png?im_w=1280&q=80&auto=format&dpr=2"
+};
+const unavailablePublicInventoryAsset = {
+  id: "later-state-image",
+  kind: "image",
+  name: "later.png",
+  sources: [{ kind: "attribute" }],
+  url: "https://assets.example.test/later.png?im_w=640"
 };
 const pageAssetCapability = {
   async list() {
     return {
-      assets: [publicInventoryAsset],
+      assets: [publicInventoryAsset, unavailablePublicInventoryAsset],
       id: "inventory-1",
       inlineSvgs: [],
       pageUrl: "https://app.example.test/dashboard?session=runtime-only",
       summary: {
-        byKind: { image: 1 },
+        byKind: { image: 2 },
         inlineSvgCount: 0,
-        totalCount: 1
+        totalCount: 2
       }
     };
   },
@@ -1285,13 +1328,18 @@ const pageAssetCapability = {
         }
       ],
       directoryPath: assetDirectory,
-      failures: [],
+      failures: [
+        {
+          id: unavailablePublicInventoryAsset.id,
+          reason: "The exact public image bytes were unavailable."
+        }
+      ],
       manifestPath: path.join(assetDirectory, "manifest.json"),
       summary: {
         downloadedCount: 1,
         elapsedMs: 1,
-        failedCount: 0,
-        requestedCount: 1
+        failedCount: 1,
+        requestedCount: 2
       }
     };
   }
@@ -2727,6 +2775,43 @@ assert.equal(
   }),
   true
 );
+let eventualTargetChecks = 0;
+const eventualTargetLocator = {
+  async count() {
+    eventualTargetChecks += 1;
+    return eventualTargetChecks >= 3 ? 1 : 0;
+  },
+  async isVisible() {
+    return true;
+  }
+};
+const eventualTargetAdapter = createCodexBrowserAdapter({
+  tab: {
+    playwright: {
+      getByRole() {
+        return eventualTargetLocator;
+      }
+    },
+    async url() {
+      return "https://app.example.test/start";
+    }
+  },
+  browserSurface: "iab",
+  browserName: "Codex Browser",
+  viewport: { width: 1280, height: 720 }
+});
+assert.deepEqual(
+  await eventualTargetAdapter.waitForTargetStatus(
+    {
+      strategy: "role",
+      role: "button",
+      name: "Ready after navigation"
+    },
+    { timeoutMs: 250, pollMs: 1 }
+  ),
+  { matchedCount: 1, visibleCount: 1 }
+);
+assert.ok(eventualTargetChecks >= 3);
 await viewportNavigationAdapter.performAction(
   {
     strategy: "role",
@@ -2876,9 +2961,11 @@ process.stdout.write(
     semanticNavigationWait: true,
     capturedVisualReadiness: true,
     viewportTargetDisambiguation: true,
+    delayedTargetReadiness: true,
     observedStateChangeWait: true,
     actionabilityTimeoutStateCheck: true,
     publicPageAssetBundled: true,
+    partialPublicAssetBundleAccepted: true,
     publicTransformQueryRestricted: true,
     publicAssetApprovalUnion: true,
     avifPageAssetBundled: true,

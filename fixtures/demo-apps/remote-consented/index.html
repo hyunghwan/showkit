@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Consented page asset</title>
+  </head>
+  <body>
+    <main>
+      <h1>Release overview</h1>
+      <button type="button">
+        <img
+          src="/remote-consented/approved-icon.svg?fname=public-icon"
+          alt=""
+          width="48"
+          height="48"
+        />
+        Open release
+      </button>
+      <p id="status">Ready to open</p>
+    </main>
+    <script>
+      document.querySelector("button").addEventListener("click", () => {
+        document.querySelector("#status").textContent = "Release opened";
+      });
+    </script>
+  </body>
+</html>
