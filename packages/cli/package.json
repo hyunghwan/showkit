@@ -1,6 +1,6 @@
 {
   "name": "@showkit/cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Build a guided interactive HTML demo from a safe browser session, static source, or optional Playwright flow.",
   "license": "MIT",
   "repository": {

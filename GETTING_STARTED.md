@@ -24,11 +24,13 @@ separate publication states.
 
 1. In Codex or Claude Code, paste this install-first request:
 
-   > Install ShowKit for this coding agent. Run
-   > `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`,
-   > find and read the installed ShowKit `SKILL.md`, and verify the
-   > installation. Then ask me exactly: “What product URL or currently open
-   > product flow should I use?” Wait for my answer before creating anything.
+   > Install the ShowKit skill (not the CLI): run
+   > `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`.
+   > Read and follow the installed `SKILL.md`, verify the skill, then ask me
+   > exactly: “What product URL or currently open product flow should I use?”
+   > After I answer, follow the skill to set up a compatible CLI in a new folder
+   > and create, check, and preview the local demo. Ask only for required
+   > approvals. Do not publish.
 
    This installs the skill instructions. It does not install or update your
    project's dependencies. In Claude Cowork, open **Customize → Plugins**, add
@@ -46,15 +48,12 @@ separate publication states.
    step, Back and Next navigation, keyboard focus, and the final Restart demo
    action.
 
-The skill selects the safest available capture route and reports the local
-output path. It does not ask you to compare capture implementations. If the
-current browser host cannot prove an isolated read-only page world, the skill
-uses already granted bound source when it represents the flow or prepares a
-separate non-persistent Playwright browser. It asks one specific permission
-before adding optional Playwright or a browser binary and tells you that the
-separate window requires another sign-in. It keeps that one temporary browser
-context alive from sign-in through capture and does not replace a reconnaissance
-window with a second capture window.
+The skill chooses a supported source and reports the local output path. It does
+not ask you to compare capture implementations. If the current browser cannot
+prove an isolated read-only page world, the skill uses granted bound source or
+one separate non-persistent browser. It asks once before adding optional
+Playwright or a browser and keeps the same temporary context from sign-in
+through capture.
 
 ## Use the CLI directly
 

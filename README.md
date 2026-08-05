@@ -49,13 +49,13 @@ Requirements: Node.js 22.12+ or 24.
 
 In Codex or Claude Code, paste this once:
 
-> Install ShowKit for this coding agent. Run
-> `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`,
-> find and read the installed ShowKit `SKILL.md`, and verify the installation.
-> Then ask me exactly: “What product URL or currently open product flow should
-> I use?” Wait for my answer before creating the demo. After I answer, follow
-> the skill, choose a new empty output folder, use 1280×720 by default, and do
-> not ask me to choose a capture implementation.
+> Install the ShowKit skill (not the CLI): run
+> `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`.
+> Read and follow the installed `SKILL.md`, verify the skill, then ask me
+> exactly: “What product URL or currently open product flow should I use?”
+> After I answer, follow the skill to set up a compatible CLI in a new folder
+> and create, check, and preview the local demo. Ask only for required
+> approvals. Do not publish.
 
 For Claude Cowork, open **Customize → Plugins**, add the
 `hyunghwan/showkit` marketplace, and install **ShowKit**. Both routes install
@@ -68,16 +68,12 @@ naturally:
 > Use ShowKit for this site. The flow is open in Chrome. Build and preview a
 > checked local interactive HTML demo. Do not publish.
 
-The skill handles setup, installs a compatible `@showkit/cli` runtime in the
-new output folder, selects the safest available capture route, checks the demo,
-and returns the local preview path. It does not ask you to choose between
-capture implementations. If an existing Claude-controlled tab cannot pass
-ShowKit's isolation check, the skill uses available bound source when it
-represents the flow or prepares a separate non-persistent browser. It asks one
-specific permission only if optional Playwright or a browser binary must be
-added, asks before changing an existing project's dependencies, and tells you
-when a separate sign-in is required. That temporary browser is launched once
-and keeps the same context alive from the single sign-in through capture.
+The command adds the skill, not the CLI. After you answer, the skill creates a
+new output folder, pins a compatible `@showkit/cli`, chooses a supported source,
+checks the demo, and opens the local preview. It asks before changing an
+existing project, adding optional Playwright or a browser, or preserving private
+visible content. If the current tab cannot pass ShowKit's isolation check, the
+skill explains the supported fallback once. A local preview is not published.
 
 The portable skill is documented for Codex, ChatGPT, Claude Cowork, Claude
 Code, and the Claude Desktop Code tab. Automated Skills CLI installation tests

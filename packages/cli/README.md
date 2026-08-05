@@ -21,6 +21,20 @@ npx showkit init --json
 Installing the ShowKit skill does not install this package or update project
 dependencies.
 
+For a coding-agent workflow, paste this into Codex or Claude Code:
+
+> Install the ShowKit skill (not the CLI): run
+> `npx skills add hyunghwan/showkit --skill showkit --agent codex --agent claude-code --global --yes --copy`.
+> Read and follow the installed `SKILL.md`, verify the skill, then ask me
+> exactly: “What product URL or currently open product flow should I use?”
+> After I answer, follow the skill to set up a compatible CLI in a new folder
+> and create, check, and preview the local demo. Ask only for required
+> approvals. Do not publish.
+
+In Claude Cowork, add the `hyunghwan/showkit` marketplace from
+**Customize → Plugins** and install **ShowKit**. The skill and plugin install
+instructions only; they do not install this package.
+
 ## Commands
 
 Commands write one JSON result to stdout. Human progress and recovery guidance
