@@ -550,7 +550,7 @@ function cssAttributeValue(value) {
 // This function is serialized into the isolated read-only browser world. Keep
 // its accessible-name rules aligned with simpleAccessibleNameVariants in the
 // CLI extractor so target discovery and capture accept the same exact name.
-function testIdAccessibleNameIndexes({ testId, name }) {
+function targetAccessibleNameIndexes({ strategy, testId, path, name }) {
   const pageDocument = document;
   const normalizedText = (value) => value.replace(/\s+/g, " ").trim();
   const accessibleTextContent = (
@@ -709,12 +709,28 @@ function testIdAccessibleNameIndexes({ testId, name }) {
         ];
   };
   const expectedName = normalizedText(name);
-  const candidates = Array.from(
-    pageDocument.querySelectorAll("[data-testid]")
-  ).filter((element) => element.getAttribute("data-testid") === testId);
+  const candidates =
+    strategy === "href"
+      ? Array.from(pageDocument.querySelectorAll("a[href]"))
+      : Array.from(pageDocument.querySelectorAll("[data-testid]")).filter(
+          (element) => element.getAttribute("data-testid") === testId
+        );
   const indexes = [];
   for (const [index, element] of candidates.entries()) {
-    if (simpleAccessibleNameVariants(element).includes(expectedName)) {
+    const pathMatches = (() => {
+      if (strategy !== "href") return true;
+      const href = element.getAttribute("href") ?? "";
+      if (href === path) return true;
+      try {
+        return new URL(href, pageDocument.baseURI).pathname === path;
+      } catch {
+        return false;
+      }
+    })();
+    if (
+      pathMatches &&
+      simpleAccessibleNameVariants(element).includes(expectedName)
+    ) {
       indexes.push(index);
     }
   }
@@ -733,7 +749,7 @@ function locatorFor(tab, target) {
         `[data-testid=${cssAttributeValue(target.testId)}]`
       );
     case "href":
-      return tab.playwright.locator(`a[href=${cssAttributeValue(target.path)}]`);
+      return tab.playwright.locator("a[href]");
     case "label":
       return tab.playwright.getByLabel(target.name, { exact: true });
     case "title":
@@ -750,13 +766,26 @@ function locatorFor(tab, target) {
 async function viewportLocatorFor(tab, target) {
   const locator = locatorFor(tab, target);
   const locatorCount = await locator.count();
-  const matchingIndexes =
-    target.strategy === "test-id"
-      ? await tab.playwright.evaluate(testIdAccessibleNameIndexes, {
-          testId: target.testId,
+  const evaluatedIndexes =
+    target.strategy === "test-id" || target.strategy === "href"
+      ? await tab.playwright.evaluate(targetAccessibleNameIndexes, {
+          strategy: target.strategy,
+          ...(target.strategy === "test-id"
+            ? { testId: target.testId }
+            : { path: target.path }),
           name: target.name
         })
       : Array.from({ length: locatorCount }, (_, index) => index);
+  const matchingIndexes = Array.isArray(evaluatedIndexes)
+    ? [
+        ...new Set(
+          evaluatedIndexes.filter(
+            (index) =>
+              Number.isInteger(index) && index >= 0 && index < locatorCount
+          )
+        )
+      ]
+    : [];
   const matchedCount = matchingIndexes.length;
   if (matchedCount === 0) {
     return { count: 0, matchedCount: 0, locator };
@@ -994,9 +1023,14 @@ async function waitForCapturedPageVisuals(tab) {
   const stable = await tab.playwright.evaluate(async () => {
     const timeoutMs = 5_000;
     const deadline = Date.now() + timeoutMs;
+    const startedAt = Date.now();
+    const minimumSettleMs = 320;
+    const quietWindowMs = 220;
     let revision = 0;
+    let lastChangeAt = startedAt;
     const changed = () => {
       revision += 1;
+      lastChangeAt = Date.now();
     };
     const mutationObserver =
       typeof window.MutationObserver === "function"
@@ -1062,22 +1096,65 @@ async function waitForCapturedPageVisuals(tab) {
       let stableFrames = 0;
       while (Date.now() < deadline) {
         await nextFrame();
+        const now = Date.now();
         const images = visibleImages();
         const readyImages = images.filter(
           (image) =>
             image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
         ).length;
+        const activeFiniteAnimations =
+          typeof document.getAnimations === "function"
+            ? document.getAnimations().filter((animation) => {
+                if (!["pending", "running"].includes(animation.playState)) {
+                  return false;
+                }
+                const timing = animation.effect?.getComputedTiming?.();
+                const endTime = Number(timing?.endTime);
+                if (!Number.isFinite(endTime) || endTime > timeoutMs) {
+                  return false;
+                }
+                const target = animation.effect?.target;
+                if (!(target instanceof Element)) return true;
+                const rectangle = target.getBoundingClientRect();
+                const style = getComputedStyle(target);
+                return (
+                  rectangle.width > 0 &&
+                  rectangle.height > 0 &&
+                  rectangle.bottom > 0 &&
+                  rectangle.right > 0 &&
+                  rectangle.top < window.innerHeight &&
+                  rectangle.left < window.innerWidth &&
+                  style.display !== "none" &&
+                  style.visibility !== "hidden" &&
+                  Number.parseFloat(style.opacity || "1") > 0
+                );
+              }).length
+            : 0;
         const signature = [
           revision,
           images.length,
           readyImages,
+          activeFiniteAnimations,
           document.body?.childElementCount ?? 0,
           document.body?.scrollWidth ?? 0,
           document.body?.scrollHeight ?? 0
         ].join(":");
-        stableFrames = signature === previousSignature ? stableFrames + 1 : 0;
+        if (signature === previousSignature) {
+          stableFrames += 1;
+        } else {
+          stableFrames = 0;
+          lastChangeAt = now;
+        }
         previousSignature = signature;
-        if (stableFrames >= 2 && readyImages === images.length) return true;
+        if (
+          stableFrames >= 2 &&
+          readyImages === images.length &&
+          activeFiniteAnimations === 0 &&
+          now - startedAt >= minimumSettleMs &&
+          now - lastChangeAt >= quietWindowMs
+        ) {
+          return true;
+        }
       }
       return false;
     } finally {
@@ -1088,6 +1165,46 @@ async function waitForCapturedPageVisuals(tab) {
   if (stable === false) {
     throw new Error("The page did not reach a stable HTML state before capture.");
   }
+}
+
+async function positionCapturedTarget(locatorTab, evaluationTab, target) {
+  const status = await viewportLocatorFor(locatorTab, target);
+  if (status.count !== 1 || typeof status.locator?.evaluate !== "function") {
+    return false;
+  }
+  const moved = await status.locator
+    .evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      if (
+        rectangle.width <= 0 ||
+        rectangle.height <= 0 ||
+        rectangle.height >= window.innerHeight * 0.7
+      ) {
+        return false;
+      }
+      let current = element;
+      while (current instanceof Element) {
+        const position = getComputedStyle(current).position;
+        if (position === "fixed" || position === "sticky") return false;
+        current = current.parentElement;
+      }
+      const margin = Math.min(
+        96,
+        Math.max(48, Math.round(window.innerHeight * 0.12))
+      );
+      const nearTop = rectangle.top < margin && window.scrollY > 1;
+      const nearBottom = rectangle.bottom > window.innerHeight - margin;
+      if (!nearTop && !nearBottom) return false;
+      element.scrollIntoView({
+        behavior: "instant",
+        block: "center",
+        inline: "nearest"
+      });
+      return true;
+    })
+    .catch(() => false);
+  if (moved) await waitForCapturedPageVisuals(evaluationTab);
+  return moved;
 }
 
 function sceneFromKernel(result, anchorId) {
@@ -1403,7 +1520,10 @@ export function collectRenderedIconCandidatesInPage(input = []) {
       return match[1];
     }
     try {
-      const url = new URL(match[1], document.baseURI);
+      const url = new URL(
+        match[1],
+        document.baseURI || document.URL || window.location.href
+      );
       if (
         !["http:", "https:"].includes(url.protocol) ||
         url.username ||
@@ -1531,6 +1651,144 @@ export function collectRenderedIconCandidatesInPage(input = []) {
       });
     });
   };
+
+  const privateUseGlyph = (content) => {
+    const match = /^(["'])([\s\S]{1,8}?)\1(?:\s*\/\s*["'][\s\S]*["'])?$/.exec(
+      content.trim()
+    );
+    if (!match?.[2]) return undefined;
+    const glyphs = Array.from(match[2]).filter(
+      (character) => !/\s/u.test(character)
+    );
+    if (
+      glyphs.length < 1 ||
+      glyphs.length > 2 ||
+      glyphs.some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return !(
+          (codePoint >= 0xe000 && codePoint <= 0xf8ff) ||
+          (codePoint >= 0xf0000 && codePoint <= 0xffffd) ||
+          (codePoint >= 0x100000 && codePoint <= 0x10fffd)
+        );
+      })
+    ) {
+      return undefined;
+    }
+    return glyphs.join("");
+  };
+
+  for (const element of Array.from(
+    document.querySelectorAll(interactiveSelector)
+  )) {
+    if (candidates.length >= 64) break;
+    if (
+      !noVisibleText(element) ||
+      element.children.length > 0 ||
+      element.querySelector("canvas,img,picture,svg,video")
+    ) {
+      continue;
+    }
+    const computed = window.getComputedStyle(element);
+    const pseudoEntry = ["before", "after"]
+      .map((name) => {
+        const style = window.getComputedStyle(element, `::${name}`);
+        return { name, style, glyph: privateUseGlyph(style.content) };
+      })
+      .find((entry) => entry.glyph !== undefined);
+    if (!pseudoEntry) continue;
+    const rectangle = element.getBoundingClientRect();
+    const backdropColor = effectiveBackdropColor(element);
+    if (
+      rectangle.width < 4 ||
+      rectangle.height < 4 ||
+      rectangle.width > 96 ||
+      rectangle.height > 96 ||
+      rectangle.width * rectangle.height > 4_096 ||
+      rectangle.top < 0 ||
+      rectangle.left < 0 ||
+      rectangle.bottom > window.innerHeight ||
+      rectangle.right > window.innerWidth ||
+      computed.display === "none" ||
+      computed.visibility !== "visible" ||
+      Number.parseFloat(computed.opacity || "1") <= 0 ||
+      !ancestorsHaveFullOpacity(element) ||
+      backdropColor === undefined ||
+      computed.transform !== "none" ||
+      computed.filter !== "none" ||
+      computed.boxShadow !== "none" ||
+      !transparent(computed.backgroundColor) ||
+      [
+        computed.borderTopWidth,
+        computed.borderRightWidth,
+        computed.borderBottomWidth,
+        computed.borderLeftWidth
+      ].some((width) => Number.parseFloat(width || "0") !== 0)
+    ) {
+      continue;
+    }
+    const glyphKey = Array.from(pseudoEntry.glyph)
+      .map((character) => (character.codePointAt(0) ?? 0).toString(16))
+      .join("-");
+    const source = [
+      "showkit:rendered-font-icon",
+      pseudoEntry.name,
+      glyphKey,
+      pseudoEntry.style.fontFamily,
+      pseudoEntry.style.fontSize,
+      pseudoEntry.style.fontWeight,
+      pseudoEntry.style.color,
+      pseudoEntry.style.transform,
+      pseudoEntry.style.opacity,
+      pseudoEntry.style.filter,
+      pseudoEntry.style.boxShadow
+    ].join(":");
+    if (known.has(source)) continue;
+    const match = {
+      fontGlyphElement: true,
+      fontGlyphPseudo: pseudoEntry.name,
+      fontGlyphContent: pseudoEntry.style.content,
+      fontGlyphFamily: pseudoEntry.style.fontFamily,
+      fontGlyphSize: pseudoEntry.style.fontSize,
+      fontGlyphWeight: pseudoEntry.style.fontWeight,
+      fontGlyphColor: pseudoEntry.style.color,
+      fontGlyphTransform: pseudoEntry.style.transform,
+      fontGlyphOpacity: pseudoEntry.style.opacity,
+      fontGlyphFilter: pseudoEntry.style.filter,
+      fontGlyphBoxShadow: pseudoEntry.style.boxShadow,
+      dimensions: {
+        width: rectangle.width,
+        height: rectangle.height
+      },
+      opacity: computed.opacity,
+      backdropColor
+    };
+    const candidateKey = [
+      source,
+      rectangle.width.toFixed(2),
+      rectangle.height.toFixed(2),
+      match.opacity,
+      match.backdropColor
+    ].join("|");
+    if (
+      knownCandidateKeys.has(candidateKey) ||
+      seenCandidateKeys.has(candidateKey)
+    ) {
+      continue;
+    }
+    candidates.push({
+      candidateKey,
+      deviceScaleFactor: window.devicePixelRatio || 1,
+      source,
+      left: rectangle.left,
+      top: rectangle.top,
+      x: rectangle.left + rectangle.width / 2,
+      y: rectangle.top + rectangle.height / 2,
+      width: rectangle.width,
+      height: rectangle.height,
+      match
+    });
+    seenCandidateKeys.add(candidateKey);
+  }
 
   for (const element of Array.from(document.querySelectorAll("*"))) {
     if (candidates.length >= 64) break;
@@ -2312,6 +2570,9 @@ export function createCodexBrowserAdapter({
           (await targetLocator.locator.isVisible()))
       );
     },
+    async prepareTargetForCapture(target) {
+      return positionCapturedTarget(tab, runtimeTab, target);
+    },
     async evaluateTarget(target, pageFunction, options, transferReaderFunction) {
       if (typeof evaluatePage !== "function") {
         throw new Error(
@@ -2399,6 +2660,18 @@ export function createCodexBrowserAdapter({
       const beforeUrl = await tab.url();
       const beforeSignature = await visibleStateSignature(runtimeTab);
       const beforeSemanticSignature = await semanticStateSignature(runtimeTab);
+      const changedFromBaseline = async () => {
+        const currentUrl = await tab.url();
+        if (currentUrl !== beforeUrl) return true;
+        const currentSignature = await visibleStateSignature(runtimeTab);
+        const currentSemanticSignature = await semanticStateSignature(runtimeTab);
+        return (
+          currentSignature !== beforeSignature ||
+          (beforeSemanticSignature !== undefined &&
+            currentSemanticSignature !== undefined &&
+            currentSemanticSignature !== beforeSemanticSignature)
+        );
+      };
       const changeToken = await armCapturedPageChange(runtimeTab);
       let clickError;
       try {
@@ -2411,13 +2684,13 @@ export function createCodexBrowserAdapter({
         clickError = error;
       }
       let revision = 0;
-      const deadline = Date.now() + 2_000;
+      const deadline = Date.now() + 3_000;
       try {
         while (Date.now() < deadline) {
           const afterUrl = await tab.url();
           if (afterUrl !== beforeUrl) {
             await waitForCapturedPageVisuals(runtimeTab);
-            return;
+            if (await changedFromBaseline()) return;
           }
           const signal = await waitForCapturedPageChange(
             runtimeTab,
@@ -2426,36 +2699,17 @@ export function createCodexBrowserAdapter({
             Math.max(1, deadline - Date.now())
           );
           if (!signal?.available) {
-            const navigatedUrl = await tab.url();
-            if (navigatedUrl !== beforeUrl) {
+            if (await changedFromBaseline()) {
               await waitForCapturedPageVisuals(runtimeTab);
-              return;
-            }
-            const afterSignature = await visibleStateSignature(runtimeTab);
-            const afterSemanticSignature = await semanticStateSignature(runtimeTab);
-            if (
-              afterSignature !== beforeSignature ||
-              (beforeSemanticSignature !== undefined &&
-                afterSemanticSignature !== undefined &&
-                afterSemanticSignature !== beforeSemanticSignature)
-            ) {
-              await waitForCapturedPageVisuals(runtimeTab);
-              return;
+              if (await changedFromBaseline()) return;
             }
             break;
           }
           revision = signal.revision;
           if (!signal.changed) break;
-          const afterSignature = await visibleStateSignature(runtimeTab);
-          const afterSemanticSignature = await semanticStateSignature(runtimeTab);
-          if (
-            afterSignature !== beforeSignature ||
-            (beforeSemanticSignature !== undefined &&
-              afterSemanticSignature !== undefined &&
-              afterSemanticSignature !== beforeSemanticSignature)
-          ) {
+          if (await changedFromBaseline()) {
             await waitForCapturedPageVisuals(runtimeTab);
-            return;
+            if (await changedFromBaseline()) return;
           }
         }
       } finally {
@@ -2494,6 +2748,130 @@ export function createCodexBrowserAdapter({
 }
 
 export const createOpenAIBrowserAdapter = createCodexBrowserAdapter;
+
+export function collectPageFontFaceDescriptors(fontUrls) {
+  const pageBaseUrl =
+    document.baseURI || document.URL || window.location.href;
+  const selectedUrls = new Set(
+    fontUrls.flatMap((raw) => {
+      try {
+        return [new URL(raw, pageBaseUrl).href];
+      } catch {
+        return [];
+      }
+    })
+  );
+  const descriptors = [];
+  const visited = new Set();
+  const visitSheet = (sheet) => {
+    if (!sheet || visited.has(sheet)) return;
+    visited.add(sheet);
+    let rules;
+    try {
+      rules = Array.from(sheet.cssRules ?? []);
+    } catch {
+      return;
+    }
+    for (const rule of rules) {
+      if (rule.styleSheet) visitSheet(rule.styleSheet);
+      const visitRule = (candidate) => {
+        if (
+          candidate.type !== CSSRule.FONT_FACE_RULE ||
+          !candidate.style
+        ) {
+          for (const nested of Array.from(candidate.cssRules ?? [])) {
+            if (nested.styleSheet) visitSheet(nested.styleSheet);
+            visitRule(nested);
+          }
+          return;
+        }
+        const sources = [
+          ...candidate.style
+            .getPropertyValue("src")
+            .matchAll(/url\s*\(\s*["']?([^"')]+)["']?\s*\)/gi)
+        ];
+        for (const sourceMatch of sources) {
+          let source;
+          try {
+            source = new URL(sourceMatch[1], pageBaseUrl).href;
+          } catch {
+            continue;
+          }
+          if (!selectedUrls.has(source)) continue;
+          const family = candidate.style
+            .getPropertyValue("font-family")
+            .trim()
+            .replace(/^(["'])(.*)\1$/, "$2");
+          const style = candidate.style
+            .getPropertyValue("font-style")
+            .trim()
+            .toLowerCase();
+          const weight = candidate.style
+            .getPropertyValue("font-weight")
+            .trim()
+            .toLowerCase();
+          const stretch = candidate.style
+            .getPropertyValue("font-stretch")
+            .trim()
+            .toLowerCase();
+          const display = candidate.style
+            .getPropertyValue("font-display")
+            .trim()
+            .toLowerCase();
+          const unicodeRange = candidate.style
+            .getPropertyValue("unicode-range")
+            .trim();
+          if (!family || !/^[^{};@<>"'\\\r\n]{1,120}$/.test(family)) {
+            continue;
+          }
+          descriptors.push({
+            source,
+            family,
+            style: ["normal", "italic", "oblique"].includes(style)
+              ? style
+              : "normal",
+            weight: /^(?:normal|bold|[1-9]00(?: [1-9]00)?)$/.test(weight)
+              ? weight
+              : "normal",
+            stretch:
+              /^(?:normal|(?:ultra-|extra-|semi-)?(?:condensed|expanded)|\d{1,3}%)$/.test(
+                stretch
+              )
+                ? stretch
+                : "normal",
+            display: ["auto", "block", "swap", "fallback", "optional"].includes(
+              display
+            )
+              ? display
+              : "block",
+            ...(unicodeRange &&
+            /^U\+[0-9A-F?*]{1,6}(?:\s*-\s*[0-9A-F?*]{1,6})?(?:\s*,\s*U\+[0-9A-F?*]{1,6}(?:\s*-\s*[0-9A-F?*]{1,6})?)*$/i.test(
+              unicodeRange
+            )
+              ? { unicodeRange }
+              : {})
+          });
+        }
+      };
+      if (rule.type !== CSSRule.FONT_FACE_RULE && !rule.cssRules) continue;
+      visitRule(rule);
+    }
+  };
+  const visitRoot = (root) => {
+    for (const sheet of Array.from(root.styleSheets ?? [])) {
+      visitSheet(sheet);
+    }
+    for (const sheet of Array.from(root.adoptedStyleSheets ?? [])) {
+      visitSheet(sheet);
+    }
+    for (const element of Array.from(root.querySelectorAll?.("*") ?? [])) {
+      if (element.sheet) visitSheet(element.sheet);
+      if (element.shadowRoot) visitRoot(element.shadowRoot);
+    }
+  };
+  visitRoot(document);
+  return descriptors.slice(0, 32);
+}
 
 export function createCodexPageAssetProvider({
   tab,
@@ -2582,7 +2960,10 @@ export function createCodexPageAssetProvider({
               const addSource = (raw) => {
                 if (typeof raw !== "string" || raw.trim() === "") return;
                 try {
-                  const source = new URL(raw, document.baseURI);
+                  const source = new URL(
+                    raw,
+                    document.baseURI || document.URL || window.location.href
+                  );
                   if (["http:", "https:", "blob:"].includes(source.protocol)) {
                     sources.add(source.href);
                   }
@@ -2821,7 +3202,12 @@ export function createCodexPageAssetProvider({
             const selectedUrls = new Set(
               fontUrls.flatMap((raw) => {
                 try {
-                  return [new URL(raw, document.baseURI).href];
+                  return [
+                    new URL(
+                      raw,
+                      document.baseURI || document.URL || window.location.href
+                    ).href
+                  ];
                 } catch {
                   return [];
                 }
@@ -2863,7 +3249,9 @@ export function createCodexPageAssetProvider({
                     try {
                       source = new URL(
                         sourceMatch[1],
-                        document.baseURI
+                        document.baseURI ||
+                          document.URL ||
+                          window.location.href
                       ).href;
                     } catch {
                       continue;
@@ -3594,6 +3982,11 @@ export async function captureBrowserSession({
           targetCount: targetStatus.matchedCount,
           visibleTargetCount: count
         });
+      }
+
+      phase = "target-positioning";
+      if (typeof adapter.prepareTargetForCapture === "function") {
+        await adapter.prepareTargetForCapture(step.target);
       }
 
       const anchorId = `sk-${step.id}`;

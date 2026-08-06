@@ -32,15 +32,24 @@ not a promise to clone every website or to produce pixel-identical output.
    snapshot. Do not use an arbitrary sleep as proof that the page is ready.
    Resolve the complete labeled interaction box for compound controls. Do not
    anchor a demo to a nested add, chevron, or disclosure icon when its labeled
-   wrapper performs the same action.
-3. Inspect a bounded dependency summary for only the visible capture range:
+   wrapper performs the same action. If a compact disclosure control and its
+   visible label are sibling elements that form one interaction, use their
+   combined visible rectangle. Center a non-fixed target that sits within the
+   top or bottom capture margin before extraction; keep fixed and sticky
+   controls in place.
+3. After each action, wait for a durable visible state. Require a bounded quiet
+   window after page mutations and resizing, loaded visible images, ready
+   fonts, and completed finite layout animations. Re-check the URL and visible
+   semantic state after settling. A transient state that returns to the
+   pre-action state is a failed action, not a captured product state.
+4. Inspect a bounded dependency summary for only the visible capture range:
    non-generic fonts; image, background-image, mask-image, and list-image
    dependencies; inline SVG and `use` references; visible pseudo-element
    content; styled controls with `appearance: none`; and unsupported surfaces.
-4. Keep the dependency summary structural. Do not print private visible text,
+5. Keep the dependency summary structural. Do not print private visible text,
    raw DOM, original asset URLs, signed queries, headers, cookies, or browser
    storage.
-5. Stop before persistence when a layout-critical dependency cannot be
+6. Stop before persistence when a layout-critical dependency cannot be
    reproduced as safe HTML, CSS, or an approved local content-addressed asset.
    Use `UnsupportedSurface`; never substitute a generic icon, native control,
    fallback font, blank media region, or full-scene screenshot.
@@ -111,8 +120,24 @@ Check all of the following:
 - grid line placement, flex order, and layout-only generated items that affect
   automatic placement, including items exposed through `display: contents`
 - visible task text, line count, wrapping, clipping, baseline, and font metrics
+- after `document.fonts.ready`, the generated preview reports
+  `#scene-viewport[data-text-layout="checked"]`; require
+  `data-text-metric-drift-count`, `data-text-multi-line-fragment-count`, and
+  `data-text-collision-count`, and `data-suppressed-placeholder-count` to all be
+  `0` on every step and the completion scene. Inspect the generated HTML itself;
+  a source screenshot or capture
+  result is not evidence that the HTML passed. `pending` is not a pass.
+  `failed` is a material mismatch.
 - every layout-critical image, icon, mask, inline SVG, and pseudo-element
+- a private-use control icon whose font bytes are unavailable is preserved only
+  through the bounded text-free direct-element rule in `security.md`; under
+  `decorative-remove`, a pseudo glyph on an independently visible text control
+  may be omitted and must report `decorative-icon-font-glyphs`; a missing glyph
+  box is always a material mismatch
 - recognizable semantics and appearance of controls
+- descendants of a source element hidden by a zero-scale transform remain
+  hidden; never flatten that parent into `display: contents` and expose a badge,
+  label, or ornament that the source viewport did not show
 - semantic target bounds and hotspot alignment
 - the complete visible interaction box remains highlighted and uncovered; for
   a visually hidden radio or checkbox input, use its visible associated label
@@ -128,6 +153,19 @@ Check all of the following:
 
 For width-bound text, compare `Range.getClientRects()`. For a bordered control,
 compare visible child `getBoundingClientRect()` values relative to the control.
+Each generated `[data-showkit-text]` wrapper must represent exactly one source
+line fragment. Preserve collapsed leading and trailing inline space inside that
+fragment. A text-only redaction may adjust only its synthetic mask tracking to
+fill the captured fragment width; it must not keep the original text or move
+the source element.
+When the documented asset provider rejects an otherwise visible WOFF2 because
+its response type is unsupported, the player may fit the source-declared local
+fallback inside the recorded line rectangle. This is allowed only when both
+axis scale factors remain from `0.8` through `1.25`, translation is no more
+than `8` CSS pixels, the text stays selectable, and the generated HTML audit
+still reports zero drift, multi-line wrappers, and collisions. Record the
+number in `data-text-metric-fit-count`. Do not fetch the font body through an
+undocumented path, increase the capture resolution, or accept a larger fit.
 The current target must remain visible and undimmed inside the spotlight.
 For CSS generated content, preserve only the visual content before an optional
 alternative-text `/` value. Keep an empty generated item only when its box
@@ -142,6 +180,9 @@ Report visual fidelity as `checked` only when:
 - the requested task and ordered steps are preserved
 - task-relevant visible text is present, with the same line count and no new
   clipping
+- the generated HTML typography audit is `checked` with zero metric drift,
+  multi-line wrappers, new text collisions, and suppressed placeholders on
+  every scene
 - primary layout and hotspot geometry differ by no more than 4 CSS pixels at
   the capture viewport
 - each visible control keeps its recognizable affordance
@@ -169,13 +210,19 @@ When the comparison fails:
 2. Wait again for the concrete layout, font, and lazy-asset ready signals.
 3. Verify that the required consent, `createOpenAIPageAssetProvider`, and
    `pageAssetConsent` were connected for the current capture.
-4. Recapture once through the normal extractor and rebuild the demo.
-5. Use another supported semantic target or route only when it preserves the
+4. When the generated HTML reports text metric drift, verify that every
+   visible non-system font has an exact `fontFaces` entry and local WOFF2 asset.
+   A downloaded font file without its family, weight, and style mapping does
+   not satisfy this check. If the documented provider rejected the WOFF2
+   response type, use only the bounded generated-HTML metric fit above; if its
+   limits are exceeded, keep the scene failed.
+5. Recapture once through the normal extractor and rebuild the demo.
+6. Use another supported semantic target or route only when it preserves the
    person's requested outcome.
-6. If a compressed browser response exceeds one evaluate result, continue
+7. If a compressed browser response exceeds one evaluate result, continue
    through the bounded chunked transfer path. Keep the same element and 25 MB
    envelope limits; do not relax them or switch to a screenshot scene.
-7. If a material mismatch remains, stop with `UnsupportedSurface`, keep the
+8. If a material mismatch remains, stop with `UnsupportedSurface`, keep the
    previous demo unchanged, and report the unmet criterion. Do not add a
    site-specific workaround.
 

@@ -138,7 +138,12 @@ for (const guidance of [
   "flow-appropriate",
   "Do not pad or truncate",
   "visual fidelity status",
-  "capture viewport"
+  "capture viewport",
+  "durable visible state",
+  "transient state",
+  "full labeled interaction box",
+  "private-use icon glyph",
+  "data-suppressed-placeholder-count"
 ]) {
   if (!skill.replace(/\s+/g, " ").includes(guidance)) {
     throw new Error(`SKILL.md is missing general visual-fidelity guidance: ${guidance}`);
@@ -275,6 +280,16 @@ for (const requirement of [
   "pseudo-element",
   "appearance: none",
   "same CSS viewport",
+  "document.fonts.ready",
+  "data-text-layout",
+  "data-text-metric-drift-count",
+  "data-text-metric-fit-count",
+  "data-text-multi-line-fragment-count",
+  "data-text-collision-count",
+  "Inspect the generated HTML itself",
+  "0.8` through `1.25",
+  "8` CSS pixels",
+  "increase the capture resolution",
   "4 CSS pixels",
   "full-scene screenshot",
   "UnsupportedSurface",
@@ -461,6 +476,17 @@ for (const requirement of [
 ]) {
   if (!skill.replace(/\s+/g, " ").includes(requirement)) {
     throw new Error(`SKILL.md is missing one-command bootstrap guidance: ${requirement}`);
+  }
+}
+for (const requirement of [
+  '#scene-viewport[data-text-layout="checked"]',
+  "data-text-metric-drift-count",
+  "data-text-metric-fit-count",
+  "data-text-multi-line-fragment-count",
+  "data-text-collision-count"
+]) {
+  if (!skill.includes(requirement)) {
+    throw new Error(`SKILL.md is missing generated HTML typography guidance: ${requirement}`);
   }
 }
 for (const forbidden of ["Build 5 ordered", "exactly five steps"]) {

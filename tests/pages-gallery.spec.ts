@@ -74,7 +74,7 @@ test("selects the three current landing-page demos", async ({ page }) => {
   const frame = page.locator("#showkit-demo");
   await expect(frame).toHaveAttribute(
     "src",
-    "https://showkit.sqncs.com/demos/travel-search/?release=2026-08-05-linear-agent-project"
+    "https://showkit.sqncs.com/demos/travel-search/?release=2026-08-06-capture-fidelity"
   );
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(
     "Explore flexible travel dates"

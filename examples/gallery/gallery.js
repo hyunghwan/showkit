@@ -1,4 +1,4 @@
-const release = "2026-08-05-linear-agent-project";
+const release = "2026-08-06-capture-fidelity";
 const origin = "https://showkit.sqncs.com";
 
 const demos = {

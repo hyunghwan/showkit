@@ -73,6 +73,17 @@ export type SceneKernelOptions = {
     match?: {
       pseudo?: "before";
       canvasElement?: true;
+      fontGlyphElement?: true;
+      fontGlyphPseudo?: "before" | "after";
+      fontGlyphContent?: string;
+      fontGlyphFamily?: string;
+      fontGlyphSize?: string;
+      fontGlyphWeight?: string;
+      fontGlyphColor?: string;
+      fontGlyphTransform?: string;
+      fontGlyphOpacity?: string;
+      fontGlyphFilter?: string;
+      fontGlyphBoxShadow?: string;
       captureSurface?: "element" | "background-image";
       dimensions: { width: number; height: number };
       boxDimensions?: { width: number; height: number };
@@ -276,6 +287,16 @@ export async function extractSceneKernel(
     providedOptions !== undefined
       ? (scopeOrOptions as Element).ownerDocument
       : document;
+  const pageBaseUrl =
+    [
+      pageDocument.baseURI,
+      pageDocument.URL,
+      pageDocument.defaultView?.location.href
+    ].find(
+      (candidate) =>
+        typeof candidate === "string" &&
+        /^(?:https?|file):/i.test(candidate)
+    ) ?? "about:blank";
   const normalizedText = (value: string): string =>
     value.replace(/\s+/g, " ").trim();
   const visibleTextContent = (element: Element): string => {
@@ -609,7 +630,7 @@ export async function extractSceneKernel(
             path =
               href === target.path
                 ? href
-                : new URL(href, pageDocument.baseURI).pathname;
+                : new URL(href, pageBaseUrl).pathname;
           } catch {
             return false;
           }
@@ -973,7 +994,8 @@ export async function extractSceneKernel(
     return false;
   };
   const maskText = (value: string): string =>
-    Array.from(value)
+    value
+      .split("")
       .map((character) => (/\s/u.test(character) ? character : "•"))
       .join("");
   const paymentCardPatternSource = "\\b(?:\\d[ -]*?){13,19}\\b";
@@ -1421,6 +1443,152 @@ export async function extractSceneKernel(
   const targetGeometryElement = targetElement
     ? visibleAssociatedControlLabel(targetElement) ?? targetElement
     : null;
+  const visibleRectangle = (rectangle: DOMRect | DOMRectReadOnly) => {
+    const left = Math.max(0, rectangle.left);
+    const top = Math.max(0, rectangle.top);
+    const right = Math.min(window.innerWidth, rectangle.right);
+    const bottom = Math.min(window.innerHeight, rectangle.bottom);
+    return {
+      x: left,
+      y: top,
+      left,
+      top,
+      right,
+      bottom,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top)
+    };
+  };
+  const unionRectangles = (
+    rectangles: Array<{
+      left: number;
+      top: number;
+      right: number;
+      bottom: number;
+    }>
+  ) => {
+    if (rectangles.length === 0) return undefined;
+    const left = Math.min(...rectangles.map((rectangle) => rectangle.left));
+    const top = Math.min(...rectangles.map((rectangle) => rectangle.top));
+    const right = Math.max(...rectangles.map((rectangle) => rectangle.right));
+    const bottom = Math.max(...rectangles.map((rectangle) => rectangle.bottom));
+    return {
+      x: left,
+      y: top,
+      left,
+      top,
+      right,
+      bottom,
+      width: right - left,
+      height: bottom - top
+    };
+  };
+  const visibleSiblingLabelRectangle = (
+    element: Element
+  ): ReturnType<typeof unionRectangles> => {
+    const targetRectangle = visibleRectangle(rectangleFor(element));
+    const targetName = normalizedText(simpleAccessibleName(element)).toLowerCase();
+    const targetVisibleText = normalizedText(visibleTextContent(element));
+    if (
+      targetName === "" ||
+      targetVisibleText !== "" ||
+      (targetRectangle.width >= 32 && targetRectangle.height >= 32)
+    ) {
+      return undefined;
+    }
+    const scopes = [
+      element.parentElement,
+      element.parentElement?.parentElement,
+      element.parentElement?.parentElement?.parentElement
+    ].filter(
+      (scope): scope is HTMLElement => scope !== null && scope !== undefined
+    );
+    const candidates = new Set<Element>();
+    const maximumCompoundWidth = Math.min(1200, window.innerWidth);
+    for (const scope of scopes) {
+      for (const candidate of Array.from(scope.children)) {
+        if (!candidate.contains(element) && !element.contains(candidate)) {
+          candidates.add(candidate);
+        }
+      }
+    }
+    return [...candidates]
+      .flatMap((candidate) => {
+        const candidateText = normalizedText(visibleTextContent(candidate));
+        const normalizedCandidate = candidateText.toLowerCase();
+        if (
+          candidateText === "" ||
+          candidateText.length > 80 ||
+          !(
+            targetName === normalizedCandidate ||
+            targetName.startsWith(`${normalizedCandidate} `) ||
+            targetName.endsWith(` ${normalizedCandidate}`)
+          )
+        ) {
+          return [];
+        }
+        const candidateRectangle = visibleRectangle(rectangleFor(candidate));
+        if (
+          candidateRectangle.width <= 0 ||
+          candidateRectangle.height <= 0 ||
+          candidateRectangle.width > maximumCompoundWidth ||
+          candidateRectangle.height > Math.max(96, targetRectangle.height * 2)
+        ) {
+          return [];
+        }
+        const verticalOverlap = Math.max(
+          0,
+          Math.min(targetRectangle.bottom, candidateRectangle.bottom) -
+            Math.max(targetRectangle.top, candidateRectangle.top)
+        );
+        const horizontalGap = Math.max(
+          0,
+          Math.max(targetRectangle.left, candidateRectangle.left) -
+            Math.min(targetRectangle.right, candidateRectangle.right)
+        );
+        if (
+          verticalOverlap <
+            Math.min(targetRectangle.height, candidateRectangle.height) * 0.5 ||
+          horizontalGap > 16
+        ) {
+          return [];
+        }
+        const union = unionRectangles([
+          targetRectangle,
+          candidateRectangle
+        ]);
+        if (
+          !union ||
+          union.width > maximumCompoundWidth ||
+          union.height > Math.max(96, targetRectangle.height * 2)
+        ) {
+          return [];
+        }
+        return [{ rectangle: union, area: union.width * union.height }];
+      })
+      .sort((left, right) => left.area - right.area)[0]?.rectangle;
+  };
+  const siblingLabelRectangle = targetElement
+    ? visibleSiblingLabelRectangle(targetElement)
+    : undefined;
+  const targetInteractionRectangle = targetGeometryElement
+    ? siblingLabelRectangle ?? visibleRectangle(rectangleFor(targetGeometryElement))
+    : undefined;
+  const needsSyntheticInteractionBox =
+    targetElement !== null &&
+    targetInteractionRectangle !== undefined &&
+    (siblingLabelRectangle !== undefined ||
+      (targetGeometryElement === targetElement &&
+        (Math.abs(targetInteractionRectangle.x - rectangleFor(targetElement).x) >
+          0.5 ||
+          Math.abs(targetInteractionRectangle.y - rectangleFor(targetElement).y) >
+            0.5 ||
+          Math.abs(
+            targetInteractionRectangle.width - rectangleFor(targetElement).width
+          ) > 0.5 ||
+          Math.abs(
+            targetInteractionRectangle.height - rectangleFor(targetElement).height
+          ) > 0.5)));
   if (targetElement) {
     const rectangle = rectangleFor(targetElement);
     const style = computedFor(targetElement);
@@ -1512,6 +1680,32 @@ export async function extractSceneKernel(
     }
     const rectangle = rectangleFor(element);
     const dimensions = replacement.match.dimensions;
+    if (replacement.match.fontGlyphElement === true) {
+      const pseudoName = replacement.match.fontGlyphPseudo;
+      if (!pseudoName || pseudo !== undefined) return false;
+      const pseudoComputed = window.getComputedStyle(
+        element,
+        `::${pseudoName}`
+      );
+      return (
+        replacement.captureKind === "isolated-rendered-icon" &&
+        Math.abs(rectangle.width - dimensions.width) < 0.5 &&
+        Math.abs(rectangle.height - dimensions.height) < 0.5 &&
+        pseudoComputed.content === replacement.match.fontGlyphContent &&
+        pseudoComputed.fontFamily === replacement.match.fontGlyphFamily &&
+        pseudoComputed.fontSize === replacement.match.fontGlyphSize &&
+        pseudoComputed.fontWeight === replacement.match.fontGlyphWeight &&
+        pseudoComputed.color === replacement.match.fontGlyphColor &&
+        pseudoComputed.transform ===
+          replacement.match.fontGlyphTransform &&
+        pseudoComputed.opacity === replacement.match.fontGlyphOpacity &&
+        pseudoComputed.filter === replacement.match.fontGlyphFilter &&
+        pseudoComputed.boxShadow ===
+          replacement.match.fontGlyphBoxShadow &&
+        computed.opacity === replacement.match.opacity &&
+        effectiveBackdropColor(element) === replacement.match.backdropColor
+      );
+    }
     const capturesBackgroundImage =
       replacement.match.captureSurface === "background-image";
     const boxDimensions = replacement.match.boxDimensions;
@@ -1571,6 +1765,20 @@ export async function extractSceneKernel(
         )
       )
     );
+  };
+  const renderedFontIconReplacementFor = (
+    element: Element,
+    computed = computedFor(element)
+  ) => {
+    for (const replacements of remoteAssetReplacements.values()) {
+      const replacement = replacements.find(
+        (candidate) =>
+          candidate.match?.fontGlyphElement === true &&
+          matchesRenderedReplacement(candidate, element, computed)
+      );
+      if (replacement) return replacement;
+    }
+    return undefined;
   };
   type SanitizedElementNode = Extract<
     SanitizedNode,
@@ -1646,7 +1854,7 @@ export async function extractSceneKernel(
         continue;
       }
       try {
-        sources.push(new URL(raw, pageDocument.baseURI).href);
+        sources.push(new URL(raw, pageBaseUrl).href);
       } catch {
         sources.push(raw);
       }
@@ -1675,7 +1883,7 @@ export async function extractSceneKernel(
         "";
       if (raw.startsWith("data:")) return raw;
       try {
-        return raw ? new URL(raw, pageDocument.baseURI).href : "";
+        return raw ? new URL(raw, pageBaseUrl).href : "";
       } catch {
         return raw;
       }
@@ -1758,6 +1966,7 @@ export async function extractSceneKernel(
     );
   };
   const remoteElements = new Set<Element>();
+  let removedDecorativePrivateUseGlyph = false;
   const hasInteractiveAssetSemantics = (element: Element): boolean =>
     element.closest(
       [
@@ -1886,6 +2095,9 @@ export async function extractSceneKernel(
         : []),
       ...(safeTextShadowHosts.length > 0
         ? ["text-only-open-shadow-roots"]
+        : []),
+      ...(removedDecorativePrivateUseGlyph
+        ? ["decorative-icon-font-glyphs"]
         : []),
       ...(remoteElements.size > 0
         ? ["remote-decorative-assets"]
@@ -2018,6 +2230,7 @@ export async function extractSceneKernel(
     "box-sizing",
     "clip-path",
     "color",
+    "direction",
     "display",
     "fill",
     "fill-opacity",
@@ -2029,8 +2242,14 @@ export async function extractSceneKernel(
     "flex-shrink",
     "flex-wrap",
     "font-family",
+    "font-feature-settings",
+    "font-kerning",
+    "font-optical-sizing",
     "font-size",
+    "font-stretch",
     "font-style",
+    "font-variant",
+    "font-variation-settings",
     "font-weight",
     "gap",
     "grid-auto-columns",
@@ -2044,6 +2263,7 @@ export async function extractSceneKernel(
     "grid-template-columns",
     "grid-template-rows",
     "height",
+    "hyphens",
     "justify-content",
     "justify-items",
     "justify-self",
@@ -2085,6 +2305,7 @@ export async function extractSceneKernel(
     "text-align",
     "text-decoration",
     "text-overflow",
+    "text-rendering",
     "text-transform",
     "top",
     "transform",
@@ -2093,6 +2314,7 @@ export async function extractSceneKernel(
     "white-space",
     "width",
     "word-break",
+    "unicode-bidi",
     "-webkit-appearance",
     "-webkit-mask-image",
     "-webkit-mask-position",
@@ -2104,13 +2326,21 @@ export async function extractSceneKernel(
   let redactedAttributeCount = 0;
   const inheritedStyleProperties = new Set([
     "color",
+    "direction",
     "fill",
     "fill-opacity",
     "fill-rule",
     "font-family",
+    "font-feature-settings",
+    "font-kerning",
+    "font-optical-sizing",
     "font-size",
+    "font-stretch",
     "font-style",
+    "font-variant",
+    "font-variation-settings",
     "font-weight",
+    "hyphens",
     "letter-spacing",
     "line-height",
     "stroke",
@@ -2119,7 +2349,9 @@ export async function extractSceneKernel(
     "stroke-opacity",
     "stroke-width",
     "text-align",
+    "text-rendering",
     "text-transform",
+    "unicode-bidi",
     "white-space",
     "word-break"
   ]);
@@ -2301,7 +2533,7 @@ export async function extractSceneKernel(
         } else {
           try {
             payload = replacementFor(
-              new URL(raw, pageDocument.baseURI).href,
+              new URL(raw, pageBaseUrl).href,
               source,
               computed,
               pseudo
@@ -2399,6 +2631,19 @@ export async function extractSceneKernel(
       ) {
         styles.opacity = "1";
       }
+    }
+    const renderedFontIconReplacement =
+      pseudo === undefined
+        ? renderedFontIconReplacementFor(source, computed)
+        : undefined;
+    if (renderedFontIconReplacement) {
+      persistBundledAsset(renderedFontIconReplacement.payload);
+      styles["background-image"] =
+        `url("${localAssetPath(renderedFontIconReplacement.payload)}")`;
+      styles["background-position"] = "0px 0px";
+      styles["background-repeat"] = "no-repeat";
+      styles["background-size"] = "100% 100%";
+      styles.color = "transparent";
     }
     if (restoreNativeSelectAffordance) {
       styles.appearance = "auto";
@@ -2504,12 +2749,102 @@ export async function extractSceneKernel(
       .slice(0, 200);
     return decoded.trim() === "" ? "" : decoded;
   };
+  const isInsideVisuallyClippedTextContainer = (
+    element: Element
+  ): boolean => {
+    let current: Element | null = element;
+    while (current && current !== pageDocument.body) {
+      const computed = computedFor(current);
+      const rectangle = rectangleFor(current);
+      const clipsOverflow = [
+        computed.getPropertyValue("overflow"),
+        computed.getPropertyValue("overflow-x"),
+        computed.getPropertyValue("overflow-y")
+      ].some((value) => ["clip", "hidden"].includes(value.trim()));
+      const clippedShape =
+        computed.getPropertyValue("clip-path").trim() !== "none" ||
+        computed.getPropertyValue("clip").trim() !== "auto";
+      if (
+        rectangle.width <= 2 &&
+        rectangle.height <= 2 &&
+        clipsOverflow &&
+        clippedShape
+      ) {
+        return true;
+      }
+      current = current.parentElement;
+    }
+    return false;
+  };
   const pseudoNode = (
     source: Element,
     pseudo: "::before" | "::after"
   ): SanitizedElementNode | null => {
     const computed = window.getComputedStyle(source, pseudo);
+    if (renderedFontIconReplacementFor(source)) return null;
     const text = pseudoText(computed.content);
+    const visiblePseudoGlyphs = Array.from(text).filter(
+      (character) => !/\s/u.test(character)
+    );
+    const hasOnlyPrivateUseGlyphs =
+      visiblePseudoGlyphs.length > 0 &&
+      visiblePseudoGlyphs.every((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return (
+          (codePoint >= 0xe000 && codePoint <= 0xf8ff) ||
+          (codePoint >= 0xf0000 && codePoint <= 0xffffd) ||
+          (codePoint >= 0x100000 && codePoint <= 0x10fffd)
+        );
+      });
+    if (hasOnlyPrivateUseGlyphs) {
+      const family = firstFontFamily(
+        computed.getPropertyValue("font-family")
+      );
+      if (family === "" || !bundledFontFamilies.has(family)) {
+        const hasVisibleText = [
+          source,
+          ...Array.from(source.querySelectorAll("*"))
+        ].some((textParent) =>
+          !isInsideVisuallyClippedTextContainer(textParent) &&
+          Array.from(textParent.childNodes).some((child) => {
+            if (
+              child.nodeType !== 3 ||
+              (child.textContent ?? "").trim() === ""
+            ) {
+              return false;
+            }
+            const range = pageDocument.createRange();
+            range.selectNodeContents(child);
+            return Array.from(range.getClientRects()).some(
+              (rectangle) =>
+                rectangle.width > 0 &&
+                rectangle.height > 0 &&
+                rectangle.bottom > 0 &&
+                rectangle.right > 0 &&
+                rectangle.top < window.innerHeight &&
+                rectangle.left < window.innerWidth
+            );
+          })
+        );
+        const textBearingSemanticControl =
+          hasVisibleText &&
+          source.matches(
+            "a[href],button,[role='button'],[role='link'],[role='menuitem'],[role='tab']"
+          );
+        if (
+          options.remoteAssetPolicy === "decorative-remove" &&
+          textBearingSemanticControl
+        ) {
+          removedDecorativePrivateUseGlyph = true;
+          return null;
+        }
+        serializationBlocker ??= {
+          code: "UnsupportedSurface",
+          category: "icon-font"
+        };
+        return null;
+      }
+    }
     const hasAsset =
       computed.backgroundImage !== "none" ||
       computed.maskImage !== "none" ||
@@ -2679,7 +3014,8 @@ export async function extractSceneKernel(
       ]);
       attributes.type = safeInputTypes.has(inputType) ? inputType : "text";
       const placeholder = source.getAttribute("placeholder");
-      if (placeholder) {
+      const liveValue = (source as HTMLInputElement).value;
+      if (placeholder && liveValue === "") {
         const value = redactTextValue(placeholder, redactEntireValue);
         if (value !== placeholder) redactedAttributeCount += 1;
         attributes.placeholder = value;
@@ -2697,7 +3033,8 @@ export async function extractSceneKernel(
     }
     if (source.tagName === "TEXTAREA") {
       const placeholder = source.getAttribute("placeholder");
-      if (placeholder) {
+      const liveValue = (source as HTMLTextAreaElement).value;
+      if (placeholder && liveValue === "") {
         const value = redactTextValue(placeholder, redactEntireValue);
         if (value !== placeholder) redactedAttributeCount += 1;
         attributes.placeholder = value;
@@ -2886,7 +3223,8 @@ export async function extractSceneKernel(
       if (
         options.nodeMode === "json" &&
         text.trim() !== "" &&
-        source.parentElement
+        source.parentElement &&
+        !isInsideVisuallyClippedTextContainer(source.parentElement)
       ) {
         const range = pageDocument.createRange();
         range.selectNodeContents(source);
@@ -2915,35 +3253,354 @@ export async function extractSceneKernel(
           }
           const sourceWhiteSpace =
             computed.getPropertyValue("white-space").trim() || "normal";
-          const textNode: SanitizedElementNode = {
-            type: "element",
-            tag: "span",
-            attributes: {
-              "data-showkit-text": ""
-            },
-            styles: {
-              "clip-path": "inset(-4px 0 -4px 0)",
-              display: "block",
-              ...(textLineRectangles.length === 1
-                ? { "line-height": `${textRectangle.height}px` }
-                : {}),
-              overflow: "visible",
-              "white-space":
-                textLineRectangles.length === 1 &&
-                (sourceWhiteSpace === "normal" ||
-                  sourceWhiteSpace === "pre-line")
-                  ? "nowrap"
-                  : sourceWhiteSpace
-            },
-            children: [{ type: "text", text }]
+          const lineRectangles = textLineRectangles
+            .slice()
+            .sort((left, right) => left.top - right.top || left.left - right.left)
+            .reduce<
+              Array<{
+                left: number;
+                top: number;
+                right: number;
+                bottom: number;
+                width: number;
+                height: number;
+              }>
+            >((lines, rectangle) => {
+              const center = rectangle.top + rectangle.height / 2;
+              const line = lines.find(
+                (candidate) =>
+                  center >= candidate.top - 0.75 &&
+                  center <= candidate.bottom + 0.75
+              );
+              if (!line) {
+                lines.push({
+                  left: rectangle.left,
+                  top: rectangle.top,
+                  right: rectangle.right,
+                  bottom: rectangle.bottom,
+                  width: rectangle.width,
+                  height: rectangle.height
+                });
+                return lines;
+              }
+              line.left = Math.min(line.left, rectangle.left);
+              line.top = Math.min(line.top, rectangle.top);
+              line.right = Math.max(line.right, rectangle.right);
+              line.bottom = Math.max(line.bottom, rectangle.bottom);
+              line.width = line.right - line.left;
+              line.height = line.bottom - line.top;
+              return lines;
+            }, []);
+          const fragmentOffsets: Array<{ start: number; end: number }> = [];
+          let fragmentStart = 0;
+          const probe = pageDocument.createRange();
+          const rangeStaysOnLine = (
+            start: number,
+            end: number,
+            line: (typeof lineRectangles)[number]
+          ): boolean => {
+            probe.setStart(source, start);
+            probe.setEnd(source, end);
+            const lineCenter = line.top + line.height / 2;
+            return Array.from(probe.getClientRects())
+              .filter((rectangle) => rectangle.width > 0 && rectangle.height > 0)
+              .every(
+                (rectangle) =>
+                  Math.abs(
+                    rectangle.top + rectangle.height / 2 - lineCenter
+                  ) <= Math.max(1, line.height / 2 + 0.75)
+              );
           };
-          nodeRectangles.set(textNode, {
-            x: textRectangle.x,
-            y: textRectangle.y,
-            width: textRectangle.width,
-            height: textRectangle.height
-          });
-          return textNode;
+          for (const line of lineRectangles.slice(0, -1)) {
+            let low = fragmentStart;
+            let high = originalText.length;
+            while (low < high) {
+              const middle = Math.ceil((low + high) / 2);
+              if (rangeStaysOnLine(fragmentStart, middle, line)) {
+                low = middle;
+              } else {
+                high = middle - 1;
+              }
+            }
+            if (low <= fragmentStart) break;
+            fragmentOffsets.push({ start: fragmentStart, end: low });
+            fragmentStart = low;
+          }
+          if (fragmentStart < originalText.length) {
+            fragmentOffsets.push({
+              start: fragmentStart,
+              end: originalText.length
+            });
+          }
+          const normalizeFragmentWhiteSpace = (value: string): string => {
+            if (["pre", "pre-wrap", "break-spaces"].includes(sourceWhiteSpace)) {
+              return value.replace(/\r\n?|\n/g, "");
+            }
+            if (sourceWhiteSpace === "pre-line") {
+              return value
+                .replace(/\r\n?|\n/g, "")
+                .replace(/[\t\f ]+/g, " ");
+            }
+            return value.replace(/[\t\n\f\r ]+/g, " ");
+          };
+          const collapsedWhiteSpace = ![
+            "pre",
+            "pre-wrap",
+            "break-spaces"
+          ].includes(sourceWhiteSpace);
+          const textNodes: Array<{
+            node: SanitizedElementNode;
+            decorations: SanitizedElementNode[];
+            start: number;
+            end: number;
+          }> = [];
+          for (const [fragmentIndex, fragment] of fragmentOffsets.entries()) {
+            const sourceFragmentText = originalText.slice(
+              fragment.start,
+              fragment.end
+            );
+            let normalizedSourceFragment = normalizeFragmentWhiteSpace(
+              sourceFragmentText
+            );
+            let fragmentText = normalizeFragmentWhiteSpace(
+              text.slice(fragment.start, fragment.end)
+            );
+            const fragmentRange = pageDocument.createRange();
+            fragmentRange.setStart(source, fragment.start);
+            fragmentRange.setEnd(source, fragment.end);
+            const expectedLine = lineRectangles[fragmentIndex];
+            if (!expectedLine) continue;
+            const matchesExpectedLine = (rectangle: DOMRect): boolean =>
+              Math.abs(
+                rectangle.top + rectangle.height / 2 -
+                  (expectedLine.top + expectedLine.height / 2)
+              ) <= Math.max(1, expectedLine.height / 2 + 0.75);
+            const fragmentRectangles = Array.from(
+              fragmentRange.getClientRects()
+            ).filter(
+              (rectangle) =>
+                rectangle.width > 0 &&
+                rectangle.height > 0 &&
+                matchesExpectedLine(rectangle)
+            );
+            const sameRectangle = (left: DOMRect, right: DOMRect): boolean =>
+              Math.max(
+                Math.abs(left.left - right.left),
+                Math.abs(left.top - right.top),
+                Math.abs(left.width - right.width),
+                Math.abs(left.height - right.height)
+              ) <= 0.25;
+            let syntheticHyphenRectangle: DOMRect | undefined;
+            if (
+              ["auto", "manual"].includes(
+                computed.getPropertyValue("hyphens").trim()
+              ) &&
+              fragmentRectangles.length > 1
+            ) {
+              const nextFragment = fragmentOffsets[fragmentIndex + 1];
+              if (nextFragment) {
+                const nextRange = pageDocument.createRange();
+                nextRange.setStart(source, nextFragment.start);
+                nextRange.setEnd(source, nextFragment.end);
+                const nextRectangles = Array.from(
+                  nextRange.getClientRects()
+                ).filter(
+                  (rectangle) =>
+                    rectangle.width > 0 && rectangle.height > 0
+                );
+                syntheticHyphenRectangle = fragmentRectangles.find(
+                  (rectangle) =>
+                    nextRectangles.some((candidate) =>
+                      sameRectangle(rectangle, candidate)
+                    )
+                );
+              }
+            }
+            const textRectangles = fragmentRectangles.filter(
+              (rectangle) => rectangle !== syntheticHyphenRectangle
+            );
+            const fragmentRectangle = textRectangles.reduce<
+              | {
+                  x: number;
+                  y: number;
+                  left: number;
+                  top: number;
+                  right: number;
+                  bottom: number;
+                  width: number;
+                  height: number;
+                }
+              | undefined
+            >((merged, rectangle) => {
+              if (!merged) {
+                return {
+                  x: rectangle.x,
+                  y: rectangle.y,
+                  left: rectangle.left,
+                  top: rectangle.top,
+                  right: rectangle.right,
+                  bottom: rectangle.bottom,
+                  width: rectangle.width,
+                  height: rectangle.height
+                };
+              }
+              merged.left = Math.min(merged.left, rectangle.left);
+              merged.top = Math.min(merged.top, rectangle.top);
+              merged.right = Math.max(merged.right, rectangle.right);
+              merged.bottom = Math.max(merged.bottom, rectangle.bottom);
+              merged.x = merged.left;
+              merged.y = merged.top;
+              merged.width = merged.right - merged.left;
+              merged.height = merged.bottom - merged.top;
+              return merged;
+            }, undefined);
+            if (
+              !fragmentRectangle ||
+              fragmentRectangle.width <= 0 ||
+              fragmentRectangle.height <= 0
+            ) {
+              continue;
+            }
+            if (collapsedWhiteSpace) {
+              let contentStart = fragment.start;
+              let contentEnd = fragment.end;
+              while (
+                contentStart < contentEnd &&
+                /[\t\n\f\r ]/.test(originalText[contentStart] ?? "")
+              ) {
+                contentStart += 1;
+              }
+              while (
+                contentEnd > contentStart &&
+                /[\t\n\f\r ]/.test(originalText[contentEnd - 1] ?? "")
+              ) {
+                contentEnd -= 1;
+              }
+              if (contentStart === contentEnd) {
+                normalizedSourceFragment = " ";
+                fragmentText = " ";
+              } else {
+                const edgeContributesWidth = (
+                  start: number,
+                  end: number
+                ): boolean => {
+                  const interiorRange = pageDocument.createRange();
+                  interiorRange.setStart(source, start);
+                  interiorRange.setEnd(source, end);
+                  const interiorRectangle =
+                    interiorRange.getBoundingClientRect();
+                  return (
+                    fragmentRectangle.width - interiorRectangle.width > 0.25
+                  );
+                };
+                const keepLeadingSpace =
+                  contentStart > fragment.start &&
+                  edgeContributesWidth(contentStart, fragment.end);
+                const keepTrailingSpace =
+                  contentEnd < fragment.end &&
+                  edgeContributesWidth(fragment.start, contentEnd);
+                if (!keepLeadingSpace) {
+                  normalizedSourceFragment = normalizedSourceFragment.replace(
+                    /^ /,
+                    ""
+                  );
+                  fragmentText = fragmentText.replace(/^ /, "");
+                }
+                if (!keepTrailingSpace) {
+                  normalizedSourceFragment = normalizedSourceFragment.replace(
+                    / $/,
+                    ""
+                  );
+                  fragmentText = fragmentText.replace(/ $/, "");
+                }
+              }
+            }
+            if (fragmentText === "") continue;
+            const textNode: SanitizedElementNode = {
+              type: "element",
+              tag: "span",
+              attributes: {
+                "data-showkit-text":
+                  fragmentText === normalizedSourceFragment ? "" : "redacted"
+              },
+              styles: {
+                "clip-path": "inset(-4px 0 -4px 0)",
+                display: "block",
+                "line-height": `${fragmentRectangle.height}px`,
+                overflow: "visible",
+                "white-space": "pre"
+              },
+              children: [{ type: "text", text: fragmentText }]
+            };
+            nodeRectangles.set(textNode, {
+              x: fragmentRectangle.x,
+              y: fragmentRectangle.y,
+              width: fragmentRectangle.width,
+              height: fragmentRectangle.height
+            });
+            const decorations: SanitizedElementNode[] = [];
+            if (syntheticHyphenRectangle) {
+              const syntheticHyphen: SanitizedElementNode = {
+                type: "element",
+                tag: "span",
+                attributes: { "aria-hidden": "true" },
+                styles: {
+                  display: "block",
+                  "line-height": `${syntheticHyphenRectangle.height}px`,
+                  overflow: "visible",
+                  "pointer-events": "none",
+                  "user-select": "none",
+                  "white-space": "pre"
+                },
+                children: [{ type: "text", text: "-" }]
+              };
+              nodeRectangles.set(syntheticHyphen, {
+                x: syntheticHyphenRectangle.x,
+                y: syntheticHyphenRectangle.y,
+                width: syntheticHyphenRectangle.width,
+                height: syntheticHyphenRectangle.height
+              });
+              decorations.push(syntheticHyphen);
+            }
+            textNodes.push({
+              node: textNode,
+              decorations,
+              start: fragment.start,
+              end: fragment.end
+            });
+          }
+          if (
+            textNodes.length === 1 &&
+            textNodes[0]!.decorations.length === 0
+          ) {
+            return textNodes[0]!.node;
+          }
+          if (textNodes.length > 0) {
+            const children: SanitizedNode[] = [];
+            for (const [index, fragment] of textNodes.entries()) {
+              children.push(fragment.node);
+              children.push(...fragment.decorations);
+              const next = textNodes[index + 1];
+              if (
+                next &&
+                /[\t\n\f\r ]/.test(
+                  originalText.slice(
+                    Math.max(fragment.end - 1, 0),
+                    Math.min(next.start + 1, originalText.length)
+                  )
+                )
+              ) {
+                children.push({ type: "text", text: " " });
+              }
+            }
+            return {
+              type: "element",
+              tag: "span",
+              attributes: {},
+              styles: { display: "contents" },
+              children
+            };
+          }
         }
       }
       return {
@@ -2987,8 +3644,35 @@ export async function extractSceneKernel(
       return null;
     }
     const computed = computedFor(sourceElement);
+    const transformValues = (value: string): number[] => {
+      const match = value.match(/^matrix(?:3d)?\(([^)]+)\)$/);
+      if (!match?.[1]) return [];
+      return match[1]
+        .split(",")
+        .map((part) => Number(part.trim()))
+        .filter(Number.isFinite);
+    };
+    const transformMatrix = transformValues(computed.transform);
+    const collapsedByTransform =
+      (transformMatrix.length === 6 &&
+        Math.abs(transformMatrix[0] ?? 0) +
+          Math.abs(transformMatrix[1] ?? 0) <=
+          0.000001 &&
+        Math.abs(transformMatrix[2] ?? 0) +
+          Math.abs(transformMatrix[3] ?? 0) <=
+          0.000001) ||
+      (transformMatrix.length === 16 &&
+        Math.abs(transformMatrix[0] ?? 0) +
+          Math.abs(transformMatrix[1] ?? 0) +
+          Math.abs(transformMatrix[2] ?? 0) <=
+          0.000001 &&
+        Math.abs(transformMatrix[4] ?? 0) +
+          Math.abs(transformMatrix[5] ?? 0) +
+          Math.abs(transformMatrix[6] ?? 0) <=
+          0.000001);
     if (
       computed.display === "none" ||
+      collapsedByTransform ||
       (viewportOnly &&
         Number.parseFloat(computed.opacity || "1") === 0 &&
         !imageElement)
@@ -3489,6 +4173,32 @@ export async function extractSceneKernel(
   if (!transferableRoot) {
     return blocked("CaptureTooLarge", "serialized-node-limit");
   }
+  if (
+    needsSyntheticInteractionBox &&
+    targetInteractionRectangle &&
+    options.anchorId
+  ) {
+    transferableRoot.children.push({
+      type: "element",
+      tag: "span",
+      attributes: {
+        "aria-hidden": "true",
+        "data-showkit-interaction-box": options.anchorId,
+        tabindex: "-1"
+      },
+      styles: {
+        display: "block",
+        height: `${targetInteractionRectangle.height}px`,
+        left: `${targetInteractionRectangle.x}px`,
+        opacity: "0",
+        overflow: "hidden",
+        position: "absolute",
+        top: `${targetInteractionRectangle.y}px`,
+        width: `${targetInteractionRectangle.width}px`
+      },
+      children: []
+    });
+  }
   const escapeText = (value: string): string =>
     value
       .replace(/&/g, "&amp;")
@@ -3662,22 +4372,7 @@ export async function extractSceneKernel(
       .slice(0, 560);
     if (contextText) evidenceTexts.push(contextText);
   }
-  const visibleRectangleFor = (element: Element) => {
-    const rectangle = rectangleFor(element);
-    const left = Math.max(0, rectangle.left);
-    const top = Math.max(0, rectangle.top);
-    const right = Math.min(window.innerWidth, rectangle.right);
-    const bottom = Math.min(window.innerHeight, rectangle.bottom);
-    return {
-      x: left,
-      y: top,
-      width: Math.max(0, right - left),
-      height: Math.max(0, bottom - top)
-    };
-  };
-  const rectangle = targetGeometryElement
-    ? visibleRectangleFor(targetGeometryElement)
-    : undefined;
+  const rectangle = targetInteractionRectangle;
   const normalize = (value: number, total: number) =>
     Math.max(0, Math.min(1, Number((value / total).toFixed(6))));
   const targetRole = targetElement ? roleFromTag(targetElement) : undefined;
