@@ -3659,8 +3659,21 @@ export async function extractSceneKernel(
       .slice(0, 560);
     if (contextText) evidenceTexts.push(contextText);
   }
+  const visibleRectangleFor = (element: Element) => {
+    const rectangle = rectangleFor(element);
+    const left = Math.max(0, rectangle.left);
+    const top = Math.max(0, rectangle.top);
+    const right = Math.min(window.innerWidth, rectangle.right);
+    const bottom = Math.min(window.innerHeight, rectangle.bottom);
+    return {
+      x: left,
+      y: top,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top)
+    };
+  };
   const rectangle = targetGeometryElement
-    ? rectangleFor(targetGeometryElement)
+    ? visibleRectangleFor(targetGeometryElement)
     : undefined;
   const normalize = (value: number, total: number) =>
     Math.max(0, Math.min(1, Number((value / total).toFixed(6))));

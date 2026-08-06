@@ -53,6 +53,35 @@ function expectedCaptureViewport(): { width: number; height: number } {
   return { width, height };
 }
 
+function assertCaptureViewport(page: Page): { width: number; height: number } {
+  const viewport = page.viewportSize();
+  if (!viewport) {
+    throw new ShowKitError({
+      code: "DemoFixtureSetupFailed",
+      message:
+        "[SHOWKIT:DemoFixtureSetupFailed] ShowKit requires a fixed Playwright viewport.",
+      exitCode: EXIT_CODES.environment,
+      recovery: "Set a fixed Playwright viewport, then capture again."
+    });
+  }
+  const expectedViewport = expectedCaptureViewport();
+  if (
+    viewport.width !== expectedViewport.width ||
+    viewport.height !== expectedViewport.height
+  ) {
+    throw new ShowKitError({
+      code: "DemoFixtureSetupFailed",
+      message:
+        `[SHOWKIT:DemoFixtureSetupFailed] The Playwright viewport ${viewport.width}x${viewport.height} does not match the ${expectedViewport.width}x${expectedViewport.height} capture contract. No captured page was saved. ` +
+        `[SHOWKIT-CATEGORY:capture-viewport-mismatch] [SHOWKIT-VIEWPORT:${expectedViewport.width}x${expectedViewport.height}:${viewport.width}x${viewport.height}]`,
+      exitCode: EXIT_CODES.environment,
+      recovery:
+        `Set Playwright to ${expectedViewport.width}x${expectedViewport.height}. Use another \`--viewport WIDTHxHEIGHT\` only for an exact requested size or an existing demo.`
+    });
+  }
+  return viewport;
+}
+
 function assetExtension(
   mimeType: AssetPayload["mimeType"]
 ): string {
@@ -187,6 +216,7 @@ export class CaptureSession implements DemoController {
       return;
     }
 
+    const viewport = assertCaptureViewport(this.#page);
     if (!this.#fixtureSeed) {
       const currentUrl = new URL(this.#page.url());
       if (!["http:", "https:"].includes(currentUrl.protocol)) {
@@ -215,31 +245,6 @@ export class CaptureSession implements DemoController {
             "[SHOWKIT:DemoFixtureSetupFailed] ShowKit capture requires screenshot and video recording to be off.",
           exitCode: EXIT_CODES.environment,
           recovery: "Set Playwright `screenshot: \"off\"` and `video: \"off\"`, then capture again."
-        });
-      }
-      const viewport = this.#page.viewportSize();
-      if (!viewport) {
-        throw new ShowKitError({
-          code: "DemoFixtureSetupFailed",
-          message:
-            "[SHOWKIT:DemoFixtureSetupFailed] ShowKit requires a fixed Playwright viewport.",
-          exitCode: EXIT_CODES.environment,
-          recovery: "Set a fixed Playwright viewport, then capture again."
-        });
-      }
-      const expectedViewport = expectedCaptureViewport();
-      if (
-        viewport.width !== expectedViewport.width ||
-        viewport.height !== expectedViewport.height
-      ) {
-        throw new ShowKitError({
-          code: "DemoFixtureSetupFailed",
-          message:
-            `[SHOWKIT:DemoFixtureSetupFailed] The Playwright viewport ${viewport.width}x${viewport.height} does not match the ${expectedViewport.width}x${expectedViewport.height} capture contract. No captured page was saved. ` +
-            `[SHOWKIT-CATEGORY:capture-viewport-mismatch] [SHOWKIT-VIEWPORT:${expectedViewport.width}x${expectedViewport.height}:${viewport.width}x${viewport.height}]`,
-          exitCode: EXIT_CODES.environment,
-          recovery:
-            `Set Playwright to ${expectedViewport.width}x${expectedViewport.height}. Use another \`--viewport WIDTHxHEIGHT\` only for an exact requested size or an existing demo.`
         });
       }
       this.#fixtureSeed = {
@@ -394,6 +399,7 @@ export class CaptureSession implements DemoController {
       });
     }
 
+    assertCaptureViewport(this.#page);
     const terminalExtractionStartedAt = performance.now();
     const {
       scene: terminalScene,

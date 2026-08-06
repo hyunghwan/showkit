@@ -148,11 +148,39 @@ function ariaSnapshotMatchesTarget(
   return normalizeName(locatorName) === normalizeName(target.name);
 }
 
+type InteractionBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function clipBoundsToViewport(
+  bounds: InteractionBounds,
+  viewport: { width: number; height: number } | null
+): InteractionBounds | null {
+  if (!viewport) return bounds;
+  const left = Math.max(0, bounds.x);
+  const top = Math.max(0, bounds.y);
+  const right = Math.min(viewport.width, bounds.x + bounds.width);
+  const bottom = Math.min(viewport.height, bounds.y + bounds.height);
+  if (right <= left || bottom <= top) return null;
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top
+  };
+}
+
 async function visibleInteractionBounds(
+  page: Page,
   target: Locator
 ): Promise<{ x: number; y: number; width: number; height: number } | null> {
   const bounds = await target.boundingBox();
-  if (!bounds || (bounds.width >= 24 && bounds.height >= 24)) return bounds;
+  if (!bounds) return null;
+  const clippedBounds = clipBoundsToViewport(bounds, page.viewportSize());
+  if (bounds.width >= 24 && bounds.height >= 24) return clippedBounds;
   try {
     const promotedBounds = await target.evaluate((element) => {
       if (!(element instanceof HTMLInputElement)) return null;
@@ -192,16 +220,21 @@ async function visibleInteractionBounds(
         })[0];
       if (!label) return null;
       const rectangle = label.getBoundingClientRect();
+      const left = Math.max(0, rectangle.left);
+      const top = Math.max(0, rectangle.top);
+      const right = Math.min(window.innerWidth, rectangle.right);
+      const bottom = Math.min(window.innerHeight, rectangle.bottom);
+      if (right <= left || bottom <= top) return null;
       return {
-        x: rectangle.left,
-        y: rectangle.top,
-        width: rectangle.width,
-        height: rectangle.height
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top
       };
     });
-    return promotedBounds ?? bounds;
+    return promotedBounds ?? clippedBounds;
   } catch {
-    return bounds;
+    return clippedBounds;
   }
 }
 
@@ -822,7 +855,7 @@ export async function captureScene(
     });
   }
   let locatorBounds = targetOptions
-    ? await visibleInteractionBounds(targetOptions.target)
+    ? await visibleInteractionBounds(page, targetOptions.target)
     : undefined;
   let locatorAriaSnapshot: string | undefined;
   if (targetOptions) {
@@ -858,7 +891,7 @@ export async function captureScene(
       )
     : { assets: [], fontFaces: [], replacements: [] };
   if (targetOptions) {
-    locatorBounds = await visibleInteractionBounds(targetOptions.target);
+    locatorBounds = await visibleInteractionBounds(page, targetOptions.target);
     if (!locatorBounds) {
       throw new ShowKitError({
         code: targetOptions.targetErrorCode ?? "TargetMissing",
@@ -954,7 +987,7 @@ export async function captureScene(
       await settleVisibleAssetsInIsolatedWorld(page);
     }
     if (targetOptions) {
-      locatorBounds = await visibleInteractionBounds(targetOptions.target);
+      locatorBounds = await visibleInteractionBounds(page, targetOptions.target);
       if (!locatorBounds) {
         throw new ShowKitError({
           code: targetOptions.targetErrorCode ?? "TargetMissing",

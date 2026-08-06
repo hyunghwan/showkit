@@ -10,11 +10,13 @@ fixes ship as a new version.
 - Added an explicit Playwright capture viewport contract. New captures default
   to 1280×720, `--viewport WIDTHxHEIGHT` records an exact requested or
   existing-demo size, and a mismatched Playwright viewport now fails before any
-  captured page is saved instead of allowing a narrower scene to be treated as
-  a complete desktop demo.
+  captured page is saved. The viewport is rechecked before every step and the
+  terminal scene instead of allowing a later narrower scene to be treated as a
+  complete desktop demo.
 - Made visually hidden radio and checkbox targets use their complete visible
-  label for hotspot, spotlight, and tooltip-clearance geometry. The player now
-  ranks zero target overlap ahead of preferred tooltip placement.
+  label for hotspot, spotlight, and tooltip-clearance geometry, including a
+  label clipped by the capture viewport. The player now ranks zero target
+  overlap ahead of preferred tooltip placement.
 - Preserved safe percent-encoded SVG data icons as checked local assets and
   kept active SVG content blocked. Partially clipped interactive sprites can be
   discovered without using an unsafe element screenshot fallback.

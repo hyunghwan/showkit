@@ -2184,6 +2184,12 @@ test("captures a labelled radio target", async ({ page, demo }) => {
     const projectDirectory = await mkdtemp(
       path.join(os.tmpdir(), "showkit-viewport-contract-")
     );
+    const stepDriftProjectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-viewport-step-drift-")
+    );
+    const terminalDriftProjectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-viewport-terminal-drift-")
+    );
     const specDirectory = await mkdtemp(
       path.join(
         repositoryRoot,
@@ -2194,6 +2200,14 @@ test("captures a labelled radio target", async ({ page, demo }) => {
       )
     );
     const specPath = path.join(specDirectory, "viewport-contract.demo.ts");
+    const stepDriftSpecPath = path.join(
+      specDirectory,
+      "viewport-step-drift.demo.ts"
+    );
+    const terminalDriftSpecPath = path.join(
+      specDirectory,
+      "viewport-terminal-drift.demo.ts"
+    );
     await writeFile(
       specPath,
       `import { test } from "@showkit/cli/playwright";
@@ -2213,6 +2227,63 @@ test("captures one viewport-bound step", async ({ page, demo }) => {
       name: "Add filter"
     },
     action: () => target.click()
+  });
+});
+`
+    );
+    await writeFile(
+      stepDriftSpecPath,
+      `import { test } from "@showkit/cli/playwright";
+
+test.use({ viewport: { width: 1280, height: 720 } });
+
+test("blocks viewport drift before a later step", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const target = page.getByRole("button", { name: "Add filter" });
+  await demo.step({
+    id: "first-filter",
+    title: "Open the first filter",
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Add filter"
+    },
+    action: () => page.setViewportSize({ width: 900, height: 720 })
+  });
+  await demo.step({
+    id: "second-filter",
+    title: "Open the second filter",
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Add filter"
+    },
+    action: () => target.click()
+  });
+});
+`
+    );
+    await writeFile(
+      terminalDriftSpecPath,
+      `import { test } from "@showkit/cli/playwright";
+
+test.use({ viewport: { width: 1280, height: 720 } });
+
+test("blocks viewport drift before the terminal scene", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const target = page.getByRole("button", { name: "Add filter" });
+  await demo.step({
+    id: "open-filter",
+    title: "Open the filter",
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Add filter"
+    },
+    action: () => page.setViewportSize({ width: 900, height: 720 })
   });
 });
 `
@@ -2261,9 +2332,42 @@ test("captures one viewport-bound step", async ({ page, demo }) => {
         "900x720"
       ]);
       expect(explicitlySized.viewport).toEqual({ width: 900, height: 720 });
+
+      for (const [driftProjectDirectory, driftSpecPath] of [
+        [stepDriftProjectDirectory, stepDriftSpecPath],
+        [terminalDriftProjectDirectory, terminalDriftSpecPath]
+      ] as const) {
+        runCli(driftProjectDirectory, ["init"]);
+        const drift = runCli(
+          driftProjectDirectory,
+          ["capture", driftSpecPath],
+          3
+        );
+        expect(drift.error).toEqual(
+          expect.objectContaining({
+            code: "DemoFixtureSetupFailed",
+            details: {
+              category: "capture-viewport-mismatch",
+              expectedViewport: { width: 1280, height: 720 },
+              actualViewport: { width: 900, height: 720 }
+            }
+          })
+        );
+        const driftFiles = await allFileContents(
+          path.join(driftProjectDirectory, ".showkit")
+        );
+        expect(
+          driftFiles.some((file) => file.path.endsWith("capture.json"))
+        ).toBe(false);
+      }
     } finally {
       await rm(specDirectory, { recursive: true, force: true });
       await rm(projectDirectory, { recursive: true, force: true });
+      await rm(stepDriftProjectDirectory, { recursive: true, force: true });
+      await rm(terminalDriftProjectDirectory, {
+        recursive: true,
+        force: true
+      });
     }
   });
 

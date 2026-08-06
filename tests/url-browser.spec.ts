@@ -709,6 +709,60 @@ test("keeps implicit form-control semantics for exact hotspots", async ({
   );
 });
 
+test("clips a promoted form-control label to the capture viewport", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; }
+      input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        clip-path: inset(100%);
+      }
+      label {
+        position: absolute;
+        left: -40px;
+        top: 100px;
+        display: flex;
+        width: 200px;
+        height: 48px;
+        align-items: center;
+        justify-content: center;
+      }
+    </style>
+    <main>
+      <input id="weekend" type="radio" name="length" aria-label="Weekend">
+      <label for="weekend">Weekend</label>
+    </main>
+  `);
+  const target = page.getByRole("radio", { name: "Weekend", exact: true });
+  const result = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "radio",
+      name: "Weekend"
+    },
+    anchorId: "sk-weekend",
+    stepIndex: 0,
+    remoteAssetPolicy: "decorative-remove"
+  });
+  expect(result.scene.target?.bounds).toEqual(
+    expect.objectContaining({
+      x: 0,
+      y: expect.closeTo(100 / 720, 5),
+      width: expect.closeTo(160 / 1280, 5),
+      height: expect.closeTo(48 / 720, 5)
+    })
+  );
+  expect(result.scene.html).toContain(
+    'data-showkit-interaction-box="sk-weekend"'
+  );
+});
+
 test("marks only the exact role target when a same-size wrapper shares its bounds", async ({
   page
 }) => {
