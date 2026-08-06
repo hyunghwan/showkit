@@ -152,7 +152,7 @@ end states, known semantic action labels, and any state-changing authorization
 needed to write the final `temporary-live.spec.ts`. Do not create a separate
 one-shot reconnaissance script or browser. Name the final file
 `temporary-live.spec.ts`, then run
-`showkit capture temporary-live.spec.ts --preflight --json`; it must return
+`showkit capture temporary-live.spec.ts --viewport <capture-width>x<capture-height> --preflight --json`; it must return
 `source-ready` before the person signs in. Start the real `showkit capture`
 once as a retained foreground process with a host timeout longer than the
 sign-in gate. Do not detach it or use a short-lived background shell. Keep its
@@ -175,8 +175,8 @@ project-authored flow:
 ```text
 showkit doctor --capability playwright --json
 showkit init --json
-showkit capture <demo.spec.ts> --preflight --json
-showkit capture <demo.spec.ts> --json
+showkit capture <demo.spec.ts> --viewport <capture-width>x<capture-height> --preflight --json
+showkit capture <demo.spec.ts> --viewport <capture-width>x<capture-height> --json
 showkit story apply <story.json> --json
 showkit validate --json
 showkit build web,markdown --json

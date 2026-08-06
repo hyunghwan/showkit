@@ -6,7 +6,10 @@ import {
 } from "@showkit/cli";
 import { createHash } from "node:crypto";
 import { captureScene } from "../packages/cli/src/capture/browser.js";
-import { collectVisiblePageAssetInventory } from "../packages/cli/src/capture/page-assets.js";
+import {
+  collectVisiblePageAssetInventory,
+  preparePlaywrightPageAssets
+} from "../packages/cli/src/capture/page-assets.js";
 import {
   collectRenderedIconCandidatesInPage,
   createCodexBrowserAdapter
@@ -2131,6 +2134,87 @@ test("bundles a safe base64 SVG data icon without retaining the data source", as
   ]);
 });
 
+test("bundles a safe percent-encoded SVG data icon with quoted attributes", async ({
+  page
+}) => {
+  const svg =
+    "<svg width='12' height='12' viewBox='0 0 12 12' xmlns='http://www.w3.org/2000/svg'><path fill-rule='evenodd' d='M5 0h2v5h5v2H7v5H5V7H0V5h5z' fill='white'/></svg>";
+  const encoded = encodeURIComponent(svg);
+  const sha256 = createHash("sha256")
+    .update(Buffer.from(svg, "utf8"))
+    .digest("hex");
+  await page.setContent(`
+    <main>
+      <button type="button" aria-label="Subscribe">
+        <span
+          style="
+            background-image:url(&quot;data:image/svg+xml,${encoded}&quot;);
+            display:block;
+            height:12px;
+            width:12px;
+          "
+        ></span>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Subscribe", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-subscribe",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.nodesJson).toContain(`./assets/${sha256}.svg`);
+  expect(result.nodesJson).not.toContain("data:image/svg+xml");
+  expect(result.assetPayloads).toEqual([
+    expect.objectContaining({
+      sha256,
+      mimeType: "image/svg+xml",
+      byteLength: Buffer.byteLength(svg)
+    })
+  ]);
+});
+
+test("blocks an active percent-encoded SVG data icon on a visible control", async ({
+  page
+}) => {
+  const activeSvg =
+    "<svg viewBox='0 0 12 12'><script>alert(1)</script><path d='M0 0h12v12H0z'/></svg>";
+  await page.setContent(`
+    <main>
+      <button type="button" aria-label="Unsafe action">
+        <span
+          style="
+            background-image:url(&quot;data:image/svg+xml,${encodeURIComponent(activeSvg)}&quot;);
+            display:block;
+            height:12px;
+            width:12px;
+          "
+        ></span>
+      </button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Unsafe action", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-unsafe-action",
+      nodeMode: "json"
+    });
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "remote-asset"
+      })
+    })
+  );
+  expect(JSON.stringify(result)).not.toContain("alert(1)");
+});
+
 test("bundles a static base64 SVG wordmark while rejecting active SVG content", async ({
   page
 }) => {
@@ -2542,6 +2626,57 @@ test("allows direct icon capture only when text is not rendered in its bounds", 
       directElementSafe: false
     })
   ]));
+});
+
+test("discovers an interactive sprite that is partially clipped by the viewport", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setContent(`
+    <style>
+      html, body { height: 720px; margin: 0; }
+      button {
+        position: absolute;
+        top: 711px;
+        left: 40px;
+        border: 0;
+        padding: 0;
+        background: transparent;
+      }
+      span {
+        display: block;
+        width: 10px;
+        height: 18px;
+        background-image: url('http://127.0.0.1:4173/remote-consented/approved-icon.svg');
+        background-position: -280px -125px;
+        background-repeat: no-repeat;
+        background-size: 300px 300px;
+      }
+    </style>
+    <button type="button" aria-label="Open entertainment">
+      <span></span>
+    </button>
+  `);
+
+  const inventory = await page.evaluate(collectVisiblePageAssetInventory);
+  expect(inventory.renderedIcons).toEqual([
+    expect.objectContaining({
+      source: "http://127.0.0.1:4173/remote-consented/approved-icon.svg",
+      top: 711,
+      width: 10,
+      height: 18
+    })
+  ]);
+  expect(
+    inventory.renderedIcons[0]!.top + inventory.renderedIcons[0]!.height
+  ).toBeGreaterThan(720);
+  const prepared = await preparePlaywrightPageAssets(
+    page,
+    { mode: "public-page", consent: "requested" },
+    inventory
+  );
+  expect(prepared.assets).toEqual([]);
+  expect(prepared.replacements).toEqual([]);
 });
 
 test("selects pseudo icons whose computed content contains only empty image-set URLs", async ({

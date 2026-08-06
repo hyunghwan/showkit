@@ -10,10 +10,10 @@
 | `showkit doctor --capability playwright --json` | Checks the optional isolated Chromium runtime for headed live capture or CI |
 | `showkit doctor --capability playwright --browser-channel chrome --json` | Checks optional Playwright with installed system Chrome, without requiring bundled Chromium |
 | `showkit init --json` | Creates reversible `.showkit/` project files |
-| `showkit capture <demo.spec.ts> --preflight --json` | Verifies Playwright file discovery and module loading without running the test or opening its configured browser |
+| `showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json` | Verifies Playwright file discovery, module loading, and the default capture contract without running the test or opening its configured browser |
 | `showkit capture session <safe-envelope.json> --json` | Rechecks and atomically imports a private browser-session derivative, then deletes the temporary file |
 | `showkit capture static <safe-envelope.json> --json` | Verifies bound project source hashes and atomically imports a source-derived semantic envelope |
-| `showkit capture <spec> --json` | Runs an optional isolated Playwright source flow and saves an immutable safe derivative |
+| `showkit capture <spec> --viewport 1280x720 --json` | Runs an optional isolated Playwright source flow and saves an immutable safe derivative at the default viewport |
 | `showkit story apply <file> --json` | Checks and saves demo content |
 | `showkit validate --json` | Checks the current demo without changing it |
 | `showkit build web,markdown --json` | Creates replaceable local files |
@@ -24,6 +24,11 @@
 
 Exit codes are `0` for success, `2` for validation, `3` for environment,
 `4` for external service, and `70` for an internal bug.
+
+New Playwright captures default to 1280×720. Pass the same viewport to
+preflight and capture. Use another `WIDTHxHEIGHT` value only for an exact
+requested size or an existing demo, and set the Playwright flow to that same
+fixed viewport.
 
 Successful Playwright capture JSON can include `capturePerformance` with the
 number of fresh HTML scene extractions, actions, and their elapsed time. The

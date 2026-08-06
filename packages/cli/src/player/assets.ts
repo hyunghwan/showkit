@@ -1551,6 +1551,54 @@ const PLAYER_JS = `(() => {
     return overlapWidth * overlapHeight;
   }
 
+  function visibleInteractionElement(anchor) {
+    const anchorId = anchor.getAttribute("data-showkit-anchor");
+    const capturedInteractionBox = anchorId
+      ? elements.viewport.querySelector(
+          '[data-showkit-interaction-box="' + CSS.escape(anchorId) + '"]'
+        )
+      : null;
+    if (capturedInteractionBox) return capturedInteractionBox;
+    if (
+      !(anchor instanceof HTMLInputElement) ||
+      !["checkbox", "radio"].includes(anchor.type.toLowerCase())
+    ) {
+      return anchor;
+    }
+    const anchorRect = anchor.getBoundingClientRect();
+    if (anchorRect.width >= 24 && anchorRect.height >= 24) return anchor;
+    const labels = new Set(Array.from(anchor.labels || []));
+    const containingLabel = anchor.closest("label");
+    if (containingLabel) labels.add(containingLabel);
+    return (
+      [...labels]
+        .filter((label) => {
+          const rect = label.getBoundingClientRect();
+          const style = getComputedStyle(label);
+          return (
+            rect.width >= 24 &&
+            rect.height >= 24 &&
+            rect.bottom > 0 &&
+            rect.right > 0 &&
+            rect.top < window.innerHeight &&
+            rect.left < window.innerWidth &&
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.visibility !== "collapse" &&
+            Number.parseFloat(style.opacity || "1") > 0
+          );
+        })
+        .sort((left, right) => {
+          const containmentDifference =
+            Number(!left.contains(anchor)) - Number(!right.contains(anchor));
+          if (containmentDifference !== 0) return containmentDifference;
+          const leftRect = left.getBoundingClientRect();
+          const rightRect = right.getBoundingClientRect();
+          return leftRect.width * leftRect.height - rightRect.width * rightRect.height;
+        })[0] || anchor
+    );
+  }
+
   function prominentSceneObstacles(shellRect) {
     const candidates = Array.from(
       elements.viewport.querySelectorAll(
@@ -1874,6 +1922,7 @@ const PLAYER_JS = `(() => {
     "y1",
     "y2",
     "data-showkit-anchor",
+    "data-showkit-interaction-box",
     "data-showkit-pseudo",
     "data-showkit-text",
     "data-showkit-scene-root"
@@ -2060,7 +2109,8 @@ const PLAYER_JS = `(() => {
       elements.tooltip.hidden = true;
       return;
     }
-    const anchorRect = anchor.getBoundingClientRect();
+    const interactionElement = visibleInteractionElement(anchor);
+    const anchorRect = interactionElement.getBoundingClientRect();
     const left = anchorRect.left - shellRect.left;
     const top = anchorRect.top - shellRect.top;
     const hotspotWidth = Math.max(24, anchorRect.width);
@@ -2080,7 +2130,7 @@ const PLAYER_JS = `(() => {
     elements.hotspot.style.width = hotspotWidth + "px";
     elements.hotspot.style.height = hotspotHeight + "px";
     const anchorRadius = Number.parseFloat(
-      getComputedStyle(anchor).borderTopLeftRadius
+      getComputedStyle(interactionElement).borderTopLeftRadius
     );
     const renderedRadius = Number.isFinite(anchorRadius)
       ? Math.min(
@@ -2118,7 +2168,20 @@ const PLAYER_JS = `(() => {
       : [step.tooltip.placement, "right", "left", "bottom", "top"];
     const chromeObstacles = activeChromeObstacles(shellRect);
     const sceneObstacles = prominentSceneObstacles(shellRect);
-    let selected = { placement: "right", left: 12, top: 12, score: Number.POSITIVE_INFINITY };
+    const betterRank = (candidate, current) => {
+      for (let index = 0; index < candidate.length; index += 1) {
+        if (candidate[index] === current[index]) continue;
+        return candidate[index] < current[index];
+      }
+      return false;
+    };
+    let selected = {
+      placement: "right",
+      left: 12,
+      top: 12,
+      targetOverlap: Number.POSITIVE_INFINITY,
+      rank: Array(6).fill(Number.POSITIVE_INFINITY)
+    };
     for (const [preferenceIndex, placement] of [...new Set(preferred)].entries()) {
       const candidate = candidates[placement];
       const candidateLeft = clamp(candidate[0], 12, shellRect.width - tooltipRect.width - 12);
@@ -2128,15 +2191,17 @@ const PLAYER_JS = `(() => {
         Math.max(0, 12 - candidate[1]) +
         Math.max(0, candidate[0] + tooltipRect.width - shellRect.width + 12) +
         Math.max(0, candidate[1] + tooltipRect.height - shellRect.height + 12);
-      const overlapWidth = Math.max(
-        0,
-        Math.min(candidateLeft + tooltipRect.width, hotspotLeft + hotspotWidth) -
-          Math.max(candidateLeft, hotspotLeft)
-      );
-      const overlapHeight = Math.max(
-        0,
-        Math.min(candidateTop + tooltipRect.height, hotspotTop + hotspotHeight) -
-          Math.max(candidateTop, hotspotTop)
+      const targetOverlap = overlapArea(
+        candidateLeft,
+        candidateTop,
+        tooltipRect.width,
+        tooltipRect.height,
+        {
+          left: hotspotLeft,
+          top: hotspotTop,
+          right: hotspotLeft + hotspotWidth,
+          bottom: hotspotTop + hotspotHeight
+        }
       );
       const chromeOverlap = chromeObstacles.reduce(
         (area, obstacle) =>
@@ -2162,22 +2227,28 @@ const PLAYER_JS = `(() => {
           ),
         0
       );
-      const score =
-        overflow * 10_000 +
-        sceneOverlap * 1_000 +
-        chromeOverlap * 200 +
-        overlapWidth * overlapHeight * 100 +
-        preferenceIndex;
-      if (score < selected.score) {
+      const rank = [
+        targetOverlap === 0 ? 0 : 1,
+        targetOverlap,
+        overflow,
+        sceneOverlap,
+        chromeOverlap,
+        preferenceIndex
+      ];
+      if (betterRank(rank, selected.rank)) {
         selected = {
           placement,
           left: candidateLeft,
           top: candidateTop,
-          score
+          targetOverlap,
+          rank
         };
       }
     }
     elements.tooltip.dataset.placement = selected.placement;
+    elements.tooltip.dataset.targetOverlap = String(
+      selected.targetOverlap ?? 0
+    );
     elements.tooltip.dataset.prominentObstacleCount = String(
       sceneObstacles.length
     );

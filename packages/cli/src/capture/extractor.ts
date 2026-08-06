@@ -1371,6 +1371,53 @@ export async function extractSceneKernel(
   }
 
   const targetElement = options.targetPresent ? scopeElement : null;
+  const visibleAssociatedControlLabel = (element: Element): Element | null => {
+    if (element.tagName.toLowerCase() !== "input") return null;
+    const inputType = (element.getAttribute("type") ?? "text").toLowerCase();
+    if (inputType !== "checkbox" && inputType !== "radio") return null;
+    const controlRectangle = rectangleFor(element);
+    if (controlRectangle.width >= 24 && controlRectangle.height >= 24) {
+      return null;
+    }
+    const labels = new Set<Element>(
+      Array.from((element as HTMLInputElement).labels ?? [])
+    );
+    const containingLabel = element.closest("label");
+    if (containingLabel) labels.add(containingLabel);
+    return (
+      [...labels]
+        .filter((label) => {
+          const rectangle = rectangleFor(label);
+          const style = computedFor(label);
+          return (
+            rectangle.width >= 24 &&
+            rectangle.height >= 24 &&
+            rectangle.bottom > 0 &&
+            rectangle.right > 0 &&
+            rectangle.top < window.innerHeight &&
+            rectangle.left < window.innerWidth &&
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.visibility !== "collapse" &&
+            Number.parseFloat(style.opacity || "1") > 0
+          );
+        })
+        .sort((left, right) => {
+          const containmentDifference =
+            Number(!left.contains(element)) - Number(!right.contains(element));
+          if (containmentDifference !== 0) return containmentDifference;
+          const leftRectangle = rectangleFor(left);
+          const rightRectangle = rectangleFor(right);
+          return (
+            leftRectangle.width * leftRectangle.height -
+            rightRectangle.width * rightRectangle.height
+          );
+        })[0] ?? null
+    );
+  };
+  const targetGeometryElement = targetElement
+    ? visibleAssociatedControlLabel(targetElement) ?? targetElement
+    : null;
   if (targetElement) {
     const rectangle = rectangleFor(targetElement);
     const style = computedFor(targetElement);
@@ -1551,6 +1598,8 @@ export async function extractSceneKernel(
     | undefined;
   const supportedDataImagePattern =
     /^data:(image\/(?:png|jpeg|webp|gif|svg\+xml));base64,([A-Za-z0-9+/=]+)$/;
+  const supportedUtf8SvgDataImagePattern =
+    /^data:image\/svg\+xml(?:;charset=(?:utf-8|us-ascii))?,([\s\S]*)$/i;
   const normalizeDataImageSource = (source: string): string => {
     if (!source.startsWith("data:") || !source.includes("%")) {
       return source;
@@ -1561,22 +1610,29 @@ export async function extractSceneKernel(
         String.fromCharCode(Number.parseInt(hex, 16))
       );
   };
+  const cssUrlPattern = (): RegExp =>
+    /url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^"')]*?))\s*\)/gi;
+  const cssUrlSource = (match: RegExpExecArray): string =>
+    (match[1] ?? match[2] ?? match[3] ?? "").trim();
+  const isSupportedDataImageSource = (source: string): boolean =>
+    supportedDataImagePattern.test(normalizeDataImageSource(source)) ||
+    supportedUtf8SvgDataImagePattern.test(source);
   const hasOnlyEmptyUrlSources = (value: string): boolean => {
-    const pattern = /url\s*\(\s*["']?([^"')]*)["']?\s*\)/gi;
+    const pattern = cssUrlPattern();
     let match: RegExpExecArray | null;
     let matched = false;
     while ((match = pattern.exec(value)) !== null) {
       matched = true;
-      if ((match[1] ?? "").trim() !== "") return false;
+      if (cssUrlSource(match) !== "") return false;
     }
     return matched;
   };
   const styleAssetSources = (value: string): string[] => {
     const sources: string[] = [];
-    const pattern = /url\s*\(\s*["']?([^"')]*)["']?\s*\)/gi;
+    const pattern = cssUrlPattern();
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(value)) !== null) {
-      const raw = match[1]?.trim();
+      const raw = cssUrlSource(match);
       if (!raw) continue;
       if (raw.startsWith("data:")) {
         sources.push(raw);
@@ -1599,7 +1655,7 @@ export async function extractSceneKernel(
     pageDocument.getElementById(source.slice(1)) !== null;
   const isResolvedAssetSource = (source: string): boolean =>
     isSafeDocumentFragmentSource(source) ||
-    supportedDataImagePattern.test(normalizeDataImageSource(source)) ||
+    isSupportedDataImageSource(source) ||
     remoteAssetReplacements.has(source);
   const imageSourceFor = (element: Element): string => {
     if (element.tagName === "IMG") {
@@ -2134,11 +2190,40 @@ export async function extractSceneKernel(
   ]);
 
   const localizeDataImage = (source: string): AssetPayload | undefined => {
-    const match = normalizeDataImageSource(source).match(
+    const base64Match = normalizeDataImageSource(source).match(
       supportedDataImagePattern
     );
-    if (!match?.[1] || !match[2]) return undefined;
-    const binary = decodeBase64(match[2]);
+    const utf8SvgMatch = source.match(supportedUtf8SvgDataImagePattern);
+    let binary: number[] | null = null;
+    let mimeType: AssetPayload["mimeType"] | undefined;
+    let base64: string | undefined;
+    if (base64Match?.[1] && base64Match[2]) {
+      mimeType = base64Match[1] as AssetPayload["mimeType"];
+      base64 = base64Match[2];
+      binary = decodeBase64(base64);
+    } else if (utf8SvgMatch?.[1] !== undefined) {
+      try {
+        binary = utf8Bytes(decodeURIComponent(utf8SvgMatch[1]));
+        mimeType = "image/svg+xml";
+        const alphabet =
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let encoded = "";
+        for (let index = 0; index < binary.length; index += 3) {
+          const first = binary[index] ?? 0;
+          const second = binary[index + 1];
+          const third = binary[index + 2];
+          const triplet =
+            (first << 16) | ((second ?? 0) << 8) | (third ?? 0);
+          encoded += alphabet[(triplet >>> 18) & 63];
+          encoded += alphabet[(triplet >>> 12) & 63];
+          encoded += second === undefined ? "=" : alphabet[(triplet >>> 6) & 63];
+          encoded += third === undefined ? "=" : alphabet[triplet & 63];
+        }
+        base64 = encoded;
+      } catch {
+        return undefined;
+      }
+    }
     if (!binary || binary.length === 0) return undefined;
     if (binary.length > 1_048_576) {
       serializationBlocker = {
@@ -2147,14 +2232,14 @@ export async function extractSceneKernel(
       };
       return undefined;
     }
-    const mimeType = match[1] as AssetPayload["mimeType"];
+    if (!mimeType || !base64) return undefined;
     if (!fetchedImageMatchesType(binary, mimeType)) return undefined;
     const hash = sha256Bytes(binary);
     const payload = {
       sha256: hash,
       mimeType,
       byteLength: binary.length,
-      base64: match[2]
+      base64
     };
     assetPayloads.set(hash, payload);
     return payload;
@@ -2198,9 +2283,9 @@ export async function extractSceneKernel(
     if (hasOnlyEmptyUrlSources(value)) return undefined;
     let unresolved = false;
     const localized = value.replace(
-      /url\s*\(\s*["']?([^"')]*)["']?\s*\)/gi,
-      (_match, rawValue: string) => {
-        const raw = rawValue.trim();
+      cssUrlPattern(),
+      (_match, doubleQuoted: string, singleQuoted: string, unquoted: string) => {
+        const raw = (doubleQuoted ?? singleQuoted ?? unquoted ?? "").trim();
         let payload:
           | (Omit<AssetPayload, "base64"> & { base64?: string })
           | undefined;
@@ -2969,6 +3054,12 @@ export async function extractSceneKernel(
     if (sourceIsTarget) {
       attributes["data-showkit-anchor"] = options.anchorId ?? "";
     }
+    if (
+      sourceElement === targetGeometryElement &&
+      targetGeometryElement !== targetElement
+    ) {
+      attributes["data-showkit-interaction-box"] = options.anchorId ?? "";
+    }
     const children: SanitizedNode[] = [];
     const before = pseudoNode(sourceElement, "::before");
     if (before) children.push(before);
@@ -3568,7 +3659,9 @@ export async function extractSceneKernel(
       .slice(0, 560);
     if (contextText) evidenceTexts.push(contextText);
   }
-  const rectangle = targetElement ? rectangleFor(targetElement) : undefined;
+  const rectangle = targetGeometryElement
+    ? rectangleFor(targetGeometryElement)
+    : undefined;
   const normalize = (value: number, total: number) =>
     Math.max(0, Math.min(1, Number((value / total).toFixed(6))));
   const targetRole = targetElement ? roleFromTag(targetElement) : undefined;

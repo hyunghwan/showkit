@@ -5,6 +5,24 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.4 - 2026-08-05
+
+- Added an explicit Playwright capture viewport contract. New captures default
+  to 1280×720, `--viewport WIDTHxHEIGHT` records an exact requested or
+  existing-demo size, and a mismatched Playwright viewport now fails before any
+  captured page is saved instead of allowing a narrower scene to be treated as
+  a complete desktop demo.
+- Made visually hidden radio and checkbox targets use their complete visible
+  label for hotspot, spotlight, and tooltip-clearance geometry. The player now
+  ranks zero target overlap ahead of preferred tooltip placement.
+- Preserved safe percent-encoded SVG data icons as checked local assets and
+  kept active SVG content blocked. Partially clipped interactive sprites can be
+  discovered without using an unsafe element screenshot fallback.
+- Clarified that a clean-install static smoke preview proves only the local CLI
+  lifecycle and is not product-capture or visual-fidelity evidence.
+- Updated the installed skill compatibility range to require
+  `@showkit/cli >=0.2.4 <0.3.0` for the viewport and visible-target contracts.
+
 ## 0.2.3 - 2026-08-05
 
 - Updated verified Codex Browser and Chrome capture for the current installed

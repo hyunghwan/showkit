@@ -44,10 +44,10 @@ belong on stderr.
 | --- | --- |
 | `showkit doctor --json` | Report CLI, skill, host, project, and optional Playwright readiness |
 | `showkit init --json` | Create the local `.showkit/` project structure |
-| `showkit capture <demo.spec.ts> --preflight --json` | Verify Playwright discovers and loads the flow without running its test or opening its configured browser |
+| `showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json` | Verify Playwright discovers and loads the flow with the default capture contract without running its test or opening its configured browser |
 | `showkit capture static <safe-envelope.json> --json` | Import a sanitized static-source envelope without Playwright |
 | `showkit capture session <safe-envelope.json> --json` | Import a temporary browser envelope after host isolation succeeds |
-| `showkit capture <demo.spec.ts> --json` | Run an approved Playwright fixture |
+| `showkit capture <demo.spec.ts> --viewport 1280x720 --json` | Run an approved Playwright fixture at the default capture viewport |
 | `showkit story apply <story.json> --json` | Check and immutably save demo content for the latest capture |
 | `showkit validate --json` | Run evidence, player, and artifact checks |
 | `showkit build web,markdown --json` | Build portable HTML and optional Markdown output |
@@ -57,6 +57,11 @@ belong on stderr.
 | `showkit publish --version <hash> --json` | Recheck the local publish gate; the current local-only release uploads nothing |
 
 Use `showkit help` to return the command list as JSON.
+
+New Playwright captures default to 1280×720. Pass the same viewport to
+preflight and capture. Use another `WIDTHxHEIGHT` value only for an exact
+requested size or an existing demo, and set the Playwright flow to that same
+fixed viewport.
 
 ## Capture routes
 
