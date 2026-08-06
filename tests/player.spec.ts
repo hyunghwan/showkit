@@ -1911,7 +1911,7 @@ test.describe("capture safety", () => {
       main { position: relative; background: #f5f5f2; }
       label {
         position: absolute;
-        left: 400px;
+        left: -40px;
         top: 300px;
         box-sizing: border-box;
         display: flex;
@@ -1961,7 +1961,8 @@ test("captures a labelled radio target", async ({ page, demo }) => {
       role: "radio",
       name: "Weekend"
     },
-    action: () => page.locator('label[for="trip-length-weekend"]').click()
+    action: () =>
+      page.locator('label[for="trip-length-weekend"]').dispatchEvent("click")
   });
 });
 `
@@ -1992,7 +1993,8 @@ test("captures a labelled radio target", async ({ page, demo }) => {
       };
       expect(captureSource.steps[0]!.scene.target.bounds).toEqual(
         expect.objectContaining({
-          width: expect.closeTo(200 / 1280, 5),
+          x: 0,
+          width: expect.closeTo(160 / 1280, 5),
           height: expect.closeTo(48 / 720, 5)
         })
       );
@@ -2025,14 +2027,48 @@ test("captures a labelled radio target", async ({ page, demo }) => {
         const label = document.querySelector("[data-showkit-scene-root] label");
         const hotspot = document.querySelector("#hotspot");
         const tooltip = document.querySelector("#tooltip");
+        const viewport = document.querySelector("#scene-viewport");
+        const shell = document.querySelector("#scene-shell");
         if (
           !(label instanceof HTMLElement) ||
           !(hotspot instanceof HTMLElement) ||
-          !(tooltip instanceof HTMLElement)
+          !(tooltip instanceof HTMLElement) ||
+          !(viewport instanceof HTMLElement) ||
+          !(shell instanceof HTMLElement)
         ) {
           throw new Error("Expected visible target geometry");
         }
-        const labelBox = label.getBoundingClientRect();
+        const rawLabelBox = label.getBoundingClientRect();
+        const viewportBox = viewport.getBoundingClientRect();
+        const shellBox = shell.getBoundingClientRect();
+        const labelLeft = Math.max(
+          rawLabelBox.left,
+          viewportBox.left,
+          shellBox.left
+        );
+        const labelTop = Math.max(
+          rawLabelBox.top,
+          viewportBox.top,
+          shellBox.top
+        );
+        const labelRight = Math.min(
+          rawLabelBox.right,
+          viewportBox.right,
+          shellBox.right
+        );
+        const labelBottom = Math.min(
+          rawLabelBox.bottom,
+          viewportBox.bottom,
+          shellBox.bottom
+        );
+        const labelBox = {
+          left: labelLeft,
+          top: labelTop,
+          right: labelRight,
+          bottom: labelBottom,
+          width: Math.max(0, labelRight - labelLeft),
+          height: Math.max(0, labelBottom - labelTop)
+        };
         const hotspotBox = hotspot.getBoundingClientRect();
         const tooltipBox = tooltip.getBoundingClientRect();
         const overlapWidth = Math.max(
@@ -2174,6 +2210,7 @@ test("captures a labelled radio target", async ({ page, demo }) => {
         JSON.stringify(constrained)
       ).toEqual({ labelOverlap: 0, hotspotOverlap: 0, reportedTargetOverlap: 0 });
     } finally {
+      previewServer?.closeAllConnections();
       await new Promise<void>((resolve) => previewServer?.close(() => resolve()) ?? resolve());
       await rm(fixtureDirectory, { recursive: true, force: true });
       await rm(projectDirectory, { recursive: true, force: true });

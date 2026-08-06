@@ -1539,6 +1539,22 @@ const PLAYER_JS = `(() => {
     return Math.min(Math.max(value, minimum), maximum);
   }
 
+  function intersectRect(rect, boundary) {
+    const left = Math.max(rect.left, boundary.left);
+    const top = Math.max(rect.top, boundary.top);
+    const right = Math.min(rect.right, boundary.right);
+    const bottom = Math.min(rect.bottom, boundary.bottom);
+    if (right <= left || bottom <= top) return null;
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      width: right - left,
+      height: bottom - top
+    };
+  }
+
   function overlapArea(left, top, width, height, obstacle) {
     const overlapWidth = Math.max(
       0,
@@ -2110,7 +2126,19 @@ const PLAYER_JS = `(() => {
       return;
     }
     const interactionElement = visibleInteractionElement(anchor);
-    const anchorRect = interactionElement.getBoundingClientRect();
+    const sceneRect = intersectRect(
+      elements.viewport.getBoundingClientRect(),
+      shellRect
+    );
+    const anchorRect = sceneRect
+      ? intersectRect(interactionElement.getBoundingClientRect(), sceneRect)
+      : null;
+    if (!anchorRect) {
+      elements.stepBackdrop.hidden = true;
+      elements.hotspot.hidden = true;
+      elements.tooltip.hidden = true;
+      return;
+    }
     const left = anchorRect.left - shellRect.left;
     const top = anchorRect.top - shellRect.top;
     const hotspotWidth = Math.max(24, anchorRect.width);
