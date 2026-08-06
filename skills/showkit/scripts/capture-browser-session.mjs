@@ -547,6 +547,180 @@ function cssAttributeValue(value) {
   return JSON.stringify(value).replaceAll("\u2028", "\\2028 ").replaceAll("\u2029", "\\2029 ");
 }
 
+// This function is serialized into the isolated read-only browser world. Keep
+// its accessible-name rules aligned with simpleAccessibleNameVariants in the
+// CLI extractor so target discovery and capture accept the same exact name.
+function testIdAccessibleNameIndexes({ testId, name }) {
+  const pageDocument = document;
+  const normalizedText = (value) => value.replace(/\s+/g, " ").trim();
+  const accessibleTextContent = (
+    element,
+    {
+      allowHiddenRoot = false,
+      allowHiddenSubtree = false,
+      separateChildElements = false
+    } = {}
+  ) => {
+    const tag = element.tagName.toLowerCase();
+    if (["noscript", "script", "style", "template"].includes(tag)) return "";
+    if (
+      !allowHiddenSubtree &&
+      !allowHiddenRoot &&
+      element.getAttribute("aria-hidden") === "true"
+    ) {
+      return "";
+    }
+    const style = pageDocument.defaultView?.getComputedStyle(element);
+    if (
+      !allowHiddenSubtree &&
+      style &&
+      (style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        Number.parseFloat(style.opacity || "1") === 0)
+    ) {
+      return "";
+    }
+    const inputType = (element.getAttribute("type") ?? "").toLowerCase();
+    if (tag === "img" || (tag === "input" && inputType === "image")) {
+      return element.getAttribute("alt") ?? "";
+    }
+    const parts = [];
+    for (const child of Array.from(element.childNodes)) {
+      if (child.nodeType === 3) {
+        parts.push(child.textContent ?? "");
+      } else if (child.nodeType === 1) {
+        parts.push(
+          accessibleTextContent(child, {
+            ...(allowHiddenSubtree ? { allowHiddenSubtree: true } : {}),
+            ...(separateChildElements ? { separateChildElements: true } : {})
+          })
+        );
+      }
+    }
+    return parts.join(separateChildElements ? " " : "");
+  };
+  const labelledText = (element) => {
+    const labelledBy = element.getAttribute("aria-labelledby");
+    return labelledBy
+      ? labelledBy
+          .split(/\s+/)
+          .map((id) => {
+            const label = pageDocument.getElementById(id);
+            return label
+              ? accessibleTextContent(label, {
+                  allowHiddenRoot: true,
+                  allowHiddenSubtree: true,
+                  separateChildElements: true
+                })
+              : "";
+          })
+          .join(" ")
+      : "";
+  };
+  const labelsByControlId = new Map();
+  for (const label of Array.from(pageDocument.querySelectorAll("label"))) {
+    const labelFor = label.getAttribute("for");
+    if (!labelFor) continue;
+    const labels = labelsByControlId.get(labelFor) ?? [];
+    labels.push(label);
+    labelsByControlId.set(labelFor, labels);
+  }
+  const associatedLabelText = (element) => {
+    const labels = new Set(
+      element.id ? (labelsByControlId.get(element.id) ?? []) : []
+    );
+    let ancestor = element.parentElement;
+    while (ancestor) {
+      if (ancestor.tagName.toLowerCase() === "label") labels.add(ancestor);
+      ancestor = ancestor.parentElement;
+    }
+    return [...labels].map((label) => accessibleTextContent(label)).join(" ");
+  };
+  const explicitLabelName = (element) => {
+    const candidate = [
+      element.getAttribute("aria-label"),
+      labelledText(element),
+      associatedLabelText(element)
+    ].find((value) => normalizedText(value ?? "") !== "");
+    return normalizedText(candidate ?? "");
+  };
+  const simpleAccessibleName = (element) => {
+    const tag = element.tagName.toLowerCase();
+    const inputType = (element.getAttribute("type") ?? "").toLowerCase();
+    const candidate = [
+      explicitLabelName(element),
+      tag === "input" && ["button", "reset", "submit"].includes(inputType)
+        ? element.getAttribute("value")
+        : "",
+      tag === "img" || (tag === "input" && inputType === "image")
+        ? element.getAttribute("alt")
+        : "",
+      element.getAttribute("title"),
+      accessibleTextContent(element)
+    ].find((value) => normalizedText(value ?? "") !== "");
+    return normalizedText(candidate ?? "");
+  };
+  const segmentedAccessibleTextContent = (element) => {
+    if (element.getAttribute("aria-hidden") === "true") return "";
+    const style = pageDocument.defaultView?.getComputedStyle(element);
+    if (
+      style &&
+      (style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        Number.parseFloat(style.opacity || "1") === 0)
+    ) {
+      return "";
+    }
+    const parts = [];
+    for (const child of Array.from(element.childNodes)) {
+      const value =
+        child.nodeType === 3
+          ? child.textContent ?? ""
+          : child.nodeType === 1
+            ? segmentedAccessibleTextContent(child)
+            : "";
+      if (normalizedText(value) !== "") parts.push(value);
+    }
+    return parts.join(" ");
+  };
+  const simpleAccessibleNameVariants = (element) => {
+    const primary = simpleAccessibleName(element);
+    const tag = element.tagName.toLowerCase();
+    const inputType = (element.getAttribute("type") ?? "").toLowerCase();
+    const authoredName = [
+      explicitLabelName(element),
+      tag === "input" && ["button", "reset", "submit"].includes(inputType)
+        ? element.getAttribute("value")
+        : "",
+      tag === "img" || (tag === "input" && inputType === "image")
+        ? element.getAttribute("alt")
+        : "",
+      element.getAttribute("title")
+    ].find((value) => normalizedText(value ?? "") !== "");
+    return authoredName
+      ? [primary]
+      : [
+          ...new Set([
+            primary,
+            normalizedText(segmentedAccessibleTextContent(element))
+          ])
+        ];
+  };
+  const expectedName = normalizedText(name);
+  const candidates = Array.from(
+    pageDocument.querySelectorAll("[data-testid]")
+  ).filter((element) => element.getAttribute("data-testid") === testId);
+  const indexes = [];
+  for (const [index, element] of candidates.entries()) {
+    if (simpleAccessibleNameVariants(element).includes(expectedName)) {
+      indexes.push(index);
+    }
+  }
+  return indexes;
+}
+
 function locatorFor(tab, target) {
   switch (target.strategy) {
     case "role":
@@ -555,7 +729,9 @@ function locatorFor(tab, target) {
         exact: true
       });
     case "test-id":
-      return tab.playwright.getByTestId(target.testId);
+      return tab.playwright.locator(
+        `[data-testid=${cssAttributeValue(target.testId)}]`
+      );
     case "href":
       return tab.playwright.locator(`a[href=${cssAttributeValue(target.path)}]`);
     case "label":
@@ -573,17 +749,25 @@ function locatorFor(tab, target) {
 
 async function viewportLocatorFor(tab, target) {
   const locator = locatorFor(tab, target);
-  const matchedCount = await locator.count();
+  const locatorCount = await locator.count();
+  const matchingIndexes =
+    target.strategy === "test-id"
+      ? await tab.playwright.evaluate(testIdAccessibleNameIndexes, {
+          testId: target.testId,
+          name: target.name
+        })
+      : Array.from({ length: locatorCount }, (_, index) => index);
+  const matchedCount = matchingIndexes.length;
   if (matchedCount === 0) {
     return { count: 0, matchedCount: 0, locator };
   }
-  if (matchedCount > 1 && typeof locator.nth !== "function") {
+  if (locatorCount > 1 && typeof locator.nth !== "function") {
     return { count: matchedCount, matchedCount, locator };
   }
   const viewportLocators = [];
-  for (let index = 0; index < matchedCount; index += 1) {
+  for (const index of matchingIndexes) {
     const candidate =
-      matchedCount === 1 ? locator : locator.nth(index);
+      locatorCount === 1 ? locator : locator.nth(index);
     if (
       typeof candidate.isVisible === "function" &&
       (await candidate.isVisible())

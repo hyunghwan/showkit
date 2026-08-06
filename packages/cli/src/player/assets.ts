@@ -1567,6 +1567,139 @@ const PLAYER_JS = `(() => {
     return overlapWidth * overlapHeight;
   }
 
+  const tooltipEdgeMargin = 12;
+  const tooltipMinimumBottomSafeArea = 48;
+  const tooltipMaximumBottomSafeArea = 64;
+
+  function visibleShellBounds(shellRect) {
+    const visualViewport = window.visualViewport;
+    if (!visualViewport) {
+      return {
+        left: 0,
+        top: 0,
+        right: shellRect.width,
+        bottom: shellRect.height,
+        width: shellRect.width,
+        height: shellRect.height
+      };
+    }
+    const viewportBounds = {
+      left: visualViewport.offsetLeft,
+      top: visualViewport.offsetTop,
+      right: visualViewport.offsetLeft + visualViewport.width,
+      bottom: visualViewport.offsetTop + visualViewport.height
+    };
+    const visible = intersectRect(shellRect, viewportBounds);
+    if (!visible) {
+      return {
+        left: 0,
+        top: 0,
+        right: shellRect.width,
+        bottom: shellRect.height,
+        width: shellRect.width,
+        height: shellRect.height
+      };
+    }
+    const left = visible.left - shellRect.left;
+    const top = visible.top - shellRect.top;
+    return {
+      left,
+      top,
+      right: left + visible.width,
+      bottom: top + visible.height,
+      width: visible.width,
+      height: visible.height
+    };
+  }
+
+  function visibleSceneBounds(shellRect) {
+    const visibleShell = visibleShellBounds(shellRect);
+    const sceneRect = elements.viewport.getBoundingClientRect();
+    const left = Math.max(visibleShell.left, sceneRect.left - shellRect.left);
+    const top = Math.max(visibleShell.top, sceneRect.top - shellRect.top);
+    const right = Math.min(
+      visibleShell.right,
+      sceneRect.right - shellRect.left
+    );
+    const bottom = Math.min(
+      visibleShell.bottom,
+      sceneRect.bottom - shellRect.top
+    );
+    if (right <= left || bottom <= top) return visibleShell;
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      width: right - left,
+      height: bottom - top
+    };
+  }
+
+  function tooltipPlacementBounds(
+    shellRect,
+    tooltipRect,
+    visible = visibleShellBounds(shellRect)
+  ) {
+    const horizontalSpare = Math.max(0, visible.width - tooltipRect.width);
+    const verticalSpare = Math.max(0, visible.height - tooltipRect.height);
+    const horizontalMargin = Math.min(
+      tooltipEdgeMargin,
+      horizontalSpare / 2
+    );
+    const topMargin = Math.min(tooltipEdgeMargin, verticalSpare / 2);
+    const desiredBottomSafeArea = clamp(
+      visible.height * 0.08,
+      tooltipMinimumBottomSafeArea,
+      tooltipMaximumBottomSafeArea
+    );
+    const bottomSafeArea = Math.min(
+      desiredBottomSafeArea,
+      Math.max(0, verticalSpare - topMargin)
+    );
+    const minLeft = visible.left + horizontalMargin;
+    const maxLeft = Math.max(
+      minLeft,
+      visible.right - tooltipRect.width - horizontalMargin
+    );
+    const minTop = visible.top + topMargin;
+    const maxTop = Math.max(
+      minTop,
+      visible.bottom - tooltipRect.height - bottomSafeArea
+    );
+    return {
+      ...visible,
+      minLeft,
+      maxLeft,
+      minTop,
+      maxTop,
+      bottomSafeArea
+    };
+  }
+
+  function sceneTooltipPlacementBounds(shellRect, tooltipRect, edgeInset = 0) {
+    const rawVisibleScene = visibleSceneBounds(shellRect);
+    const inset = Math.min(
+      edgeInset,
+      rawVisibleScene.width / 2,
+      rawVisibleScene.height / 2
+    );
+    const visibleScene = {
+      left: rawVisibleScene.left + inset,
+      top: rawVisibleScene.top + inset,
+      right: rawVisibleScene.right - inset,
+      bottom: rawVisibleScene.bottom - inset,
+      width: Math.max(0, rawVisibleScene.width - inset * 2),
+      height: Math.max(0, rawVisibleScene.height - inset * 2)
+    };
+    const visible =
+      tooltipRect.width <= visibleScene.width &&
+      tooltipRect.height <= visibleScene.height
+        ? visibleScene
+        : visibleShellBounds(shellRect);
+    return tooltipPlacementBounds(shellRect, tooltipRect, visible);
+  }
+
   function visibleInteractionElement(anchor) {
     const anchorId = anchor.getAttribute("data-showkit-anchor");
     const capturedInteractionBox = anchorId
@@ -1663,6 +1796,57 @@ const PLAYER_JS = `(() => {
       );
   }
 
+  function completionContentObstacles(shellRect) {
+    const candidates = Array.from(
+      elements.viewport.querySelectorAll(
+        '[data-showkit-text], button, input, select, textarea, [role="button"], img, svg'
+      )
+    ).filter((element) => {
+      if (!(element instanceof HTMLElement || element instanceof SVGElement)) {
+        return false;
+      }
+      if (element instanceof HTMLElement && element.hidden) return false;
+      const style = getComputedStyle(element);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        Number.parseFloat(style.opacity || "1") === 0
+      ) {
+        return false;
+      }
+      const rect = element.getBoundingClientRect();
+      return rect.width >= 2 && rect.height >= 2;
+    });
+    const outermost = candidates.filter(
+      (candidate) =>
+        !candidates.some(
+          (other) => other !== candidate && other.contains(candidate)
+        )
+    );
+    return outermost
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const left = rect.left - shellRect.left;
+        const top = rect.top - shellRect.top;
+        return {
+          left,
+          top,
+          right: left + rect.width,
+          bottom: top + rect.height,
+          width: rect.width,
+          height: rect.height
+        };
+      })
+      .filter(
+        (obstacle) =>
+          obstacle.right > 0 &&
+          obstacle.bottom > 0 &&
+          obstacle.left < shellRect.width &&
+          obstacle.top < shellRect.height
+      );
+  }
+
   function activeChromeObstacles(shellRect) {
     if (chrome.mode !== "overlay") return [];
     return Array.from(
@@ -1685,12 +1869,32 @@ const PLAYER_JS = `(() => {
   function selectCompletionPlacement(shellRect, tooltipRect, sceneObstacles) {
     const gap = 18;
     const chromeObstacles = activeChromeObstacles(shellRect);
+    const contentObstacles = completionContentObstacles(shellRect);
+    const placementBounds = sceneTooltipPlacementBounds(shellRect, tooltipRect);
+    const centerLeft =
+      placementBounds.left +
+      (placementBounds.width - tooltipRect.width) / 2;
+    const centerTop =
+      placementBounds.top +
+      (placementBounds.height - tooltipRect.height) / 2;
     const candidates = [
       {
         placement: "center",
-        left: (shellRect.width - tooltipRect.width) / 2,
-        top: (shellRect.height - tooltipRect.height) / 2
+        left: centerLeft,
+        top: centerTop
       },
+      ...contentObstacles.flatMap((obstacle) => [
+        {
+          placement: "center-shifted",
+          left: centerLeft,
+          top: obstacle.bottom + gap
+        },
+        {
+          placement: "center-shifted",
+          left: centerLeft,
+          top: obstacle.top - tooltipRect.height - gap
+        }
+      ]),
       ...sceneObstacles.flatMap((obstacle) => [
         {
           placement: "right",
@@ -1713,52 +1917,52 @@ const PLAYER_JS = `(() => {
           top: obstacle.top - tooltipRect.height - gap
         }
       ]),
-      { placement: "top-left", left: 12, top: 12 },
+      {
+        placement: "top-left",
+        left: placementBounds.minLeft,
+        top: placementBounds.minTop
+      },
       {
         placement: "top-right",
-        left: shellRect.width - tooltipRect.width - 12,
-        top: 12
+        left: placementBounds.maxLeft,
+        top: placementBounds.minTop
       },
       {
         placement: "bottom-left",
-        left: 12,
-        top: shellRect.height - tooltipRect.height - 12
+        left: placementBounds.minLeft,
+        top: placementBounds.maxTop
       },
       {
         placement: "bottom-right",
-        left: shellRect.width - tooltipRect.width - 12,
-        top: shellRect.height - tooltipRect.height - 12
+        left: placementBounds.maxLeft,
+        top: placementBounds.maxTop
       }
     ];
     let selected = {
       placement: "center",
-      left: 12,
-      top: 12,
+      left: placementBounds.minLeft,
+      top: placementBounds.minTop,
       sceneOverlap: Number.POSITIVE_INFINITY,
-      score: Number.POSITIVE_INFINITY
+      contentOverlap: Number.POSITIVE_INFINITY,
+      bottomSafeArea: placementBounds.bottomSafeArea,
+      rank: Array(6).fill(Number.POSITIVE_INFINITY)
     };
     for (const [preferenceIndex, candidate] of candidates.entries()) {
       const left = clamp(
         candidate.left,
-        12,
-        Math.max(12, shellRect.width - tooltipRect.width - 12)
+        placementBounds.minLeft,
+        placementBounds.maxLeft
       );
       const top = clamp(
         candidate.top,
-        12,
-        Math.max(12, shellRect.height - tooltipRect.height - 12)
+        placementBounds.minTop,
+        placementBounds.maxTop
       );
       const overflow =
-        Math.max(0, 12 - candidate.left) +
-        Math.max(0, 12 - candidate.top) +
-        Math.max(
-          0,
-          candidate.left + tooltipRect.width - shellRect.width + 12
-        ) +
-        Math.max(
-          0,
-          candidate.top + tooltipRect.height - shellRect.height + 12
-        );
+        Math.max(0, placementBounds.minLeft - candidate.left) +
+        Math.max(0, placementBounds.minTop - candidate.top) +
+        Math.max(0, candidate.left - placementBounds.maxLeft) +
+        Math.max(0, candidate.top - placementBounds.maxTop);
       const sceneOverlap = sceneObstacles.reduce(
         (area, obstacle) =>
           area +
@@ -1783,18 +1987,42 @@ const PLAYER_JS = `(() => {
           ),
         0
       );
-      const score =
-        overflow * 10_000_000 +
-        sceneOverlap * 1_000_000 +
-        chromeOverlap * 1_000 +
-        preferenceIndex;
-      if (score < selected.score) {
+      const contentOverlap = contentObstacles.reduce(
+        (area, obstacle) =>
+          area +
+          overlapArea(
+            left,
+            top,
+            tooltipRect.width,
+            tooltipRect.height,
+            obstacle
+          ),
+        0
+      );
+      const rank = [
+        overflow,
+        sceneOverlap,
+        chromeOverlap,
+        contentOverlap,
+        Math.abs(left - centerLeft) + Math.abs(top - centerTop),
+        preferenceIndex
+      ];
+      const better = rank.some(
+        (value, index) =>
+          value < selected.rank[index] &&
+          rank.slice(0, index).every((earlier, earlierIndex) =>
+            earlier === selected.rank[earlierIndex]
+          )
+      );
+      if (better) {
         selected = {
           placement: candidate.placement,
           left,
           top,
           sceneOverlap,
-          score
+          contentOverlap,
+          bottomSafeArea: placementBounds.bottomSafeArea,
+          rank
         };
       }
     }
@@ -1804,6 +2032,7 @@ const PLAYER_JS = `(() => {
   function splitCompletionPlacement(shellRect, tooltipRect) {
     const margin = 12;
     const gap = 18;
+    const placementBounds = tooltipPlacementBounds(shellRect, tooltipRect);
     const sideAvailableWidth = Math.max(
       0,
       shellRect.width - tooltipRect.width - gap - margin * 2
@@ -1837,8 +2066,8 @@ const PLAYER_JS = `(() => {
       left = shellRect.width - tooltipRect.width - margin;
       top = clamp(
         (shellRect.height - tooltipRect.height) / 2,
-        margin,
-        Math.max(margin, shellRect.height - tooltipRect.height - margin)
+        placementBounds.minTop,
+        placementBounds.maxTop
       );
       placement = "split-right";
     } else {
@@ -1846,12 +2075,13 @@ const PLAYER_JS = `(() => {
       sceneTop = margin;
       left = clamp(
         (shellRect.width - tooltipRect.width) / 2,
-        margin,
-        Math.max(margin, shellRect.width - tooltipRect.width - margin)
+        placementBounds.minLeft,
+        placementBounds.maxLeft
       );
-      top = shellRect.height - tooltipRect.height - margin;
+      top = placementBounds.maxTop;
       placement = "split-bottom";
     }
+    left = clamp(left, placementBounds.minLeft, placementBounds.maxLeft);
     renderedScale = scale;
     elements.viewport.style.left = Math.round(sceneLeft) + "px";
     elements.viewport.style.top = Math.round(sceneTop) + "px";
@@ -1869,12 +2099,26 @@ const PLAYER_JS = `(() => {
         ),
       0
     );
+    const contentOverlap = completionContentObstacles(shellRect).reduce(
+      (area, obstacle) =>
+        area +
+        overlapArea(
+          left,
+          top,
+          tooltipRect.width,
+          tooltipRect.height,
+          obstacle
+        ),
+      0
+    );
     return {
       placement,
       left,
       top,
       sceneOverlap,
-      score: sceneOverlap
+      contentOverlap,
+      bottomSafeArea: placementBounds.bottomSafeArea,
+      rank: [0, sceneOverlap, 0, contentOverlap, 0]
     };
   }
 
@@ -2109,6 +2353,12 @@ const PLAYER_JS = `(() => {
         sceneObstacles.length
       );
       elements.tooltip.dataset.sceneOverlap = String(selected.sceneOverlap);
+      elements.tooltip.dataset.contentOverlap = String(
+        selected.contentOverlap
+      );
+      elements.tooltip.dataset.bottomSafeArea = String(
+        selected.bottomSafeArea
+      );
       elements.tooltip.style.left = selected.left + "px";
       elements.tooltip.style.top = selected.top + "px";
       elements.tooltip.style.visibility = "visible";
@@ -2117,6 +2367,7 @@ const PLAYER_JS = `(() => {
     elements.tooltip.dataset.complete = "false";
     elements.tooltip.dataset.prominentObstacleCount = "0";
     elements.tooltip.dataset.sceneOverlap = "0";
+    elements.tooltip.dataset.contentOverlap = "0";
     elements.tooltip.style.removeProperty("width");
     const anchor = elements.viewport.querySelector('[data-showkit-anchor="' + CSS.escape(step.anchorId) + '"]');
     if (!anchor) {
@@ -2184,6 +2435,11 @@ const PLAYER_JS = `(() => {
     elements.tooltip.style.visibility = "hidden";
     elements.tooltip.hidden = false;
     const tooltipRect = elements.tooltip.getBoundingClientRect();
+    const placementBounds = sceneTooltipPlacementBounds(
+      shellRect,
+      tooltipRect,
+      12
+    );
     const gap = 18;
     const candidates = {
       right: [hotspotLeft + hotspotWidth + gap, hotspotTop + hotspotHeight / 2 - tooltipRect.height / 2],
@@ -2196,6 +2452,31 @@ const PLAYER_JS = `(() => {
       : [step.tooltip.placement, "right", "left", "bottom", "top"];
     const chromeObstacles = activeChromeObstacles(shellRect);
     const sceneObstacles = prominentSceneObstacles(shellRect);
+    const obstacleCandidates = (placement) =>
+      sceneObstacles.map((obstacle) => {
+        if (placement === "right") {
+          return [
+            obstacle.right + gap,
+            hotspotTop + hotspotHeight / 2 - tooltipRect.height / 2
+          ];
+        }
+        if (placement === "left") {
+          return [
+            obstacle.left - tooltipRect.width - gap,
+            hotspotTop + hotspotHeight / 2 - tooltipRect.height / 2
+          ];
+        }
+        if (placement === "bottom") {
+          return [
+            hotspotLeft + hotspotWidth / 2 - tooltipRect.width / 2,
+            obstacle.bottom + gap
+          ];
+        }
+        return [
+          hotspotLeft + hotspotWidth / 2 - tooltipRect.width / 2,
+          obstacle.top - tooltipRect.height - gap
+        ];
+      });
     const betterRank = (candidate, current) => {
       for (let index = 0; index < candidate.length; index += 1) {
         if (candidate[index] === current[index]) continue;
@@ -2205,77 +2486,95 @@ const PLAYER_JS = `(() => {
     };
     let selected = {
       placement: "right",
-      left: 12,
-      top: 12,
+      left: placementBounds.minLeft,
+      top: placementBounds.minTop,
       targetOverlap: Number.POSITIVE_INFINITY,
-      rank: Array(6).fill(Number.POSITIVE_INFINITY)
+      rank: Array(8).fill(Number.POSITIVE_INFINITY)
     };
     for (const [preferenceIndex, placement] of [...new Set(preferred)].entries()) {
-      const candidate = candidates[placement];
-      const candidateLeft = clamp(candidate[0], 12, shellRect.width - tooltipRect.width - 12);
-      const candidateTop = clamp(candidate[1], 12, shellRect.height - tooltipRect.height - 12);
-      const overflow =
-        Math.max(0, 12 - candidate[0]) +
-        Math.max(0, 12 - candidate[1]) +
-        Math.max(0, candidate[0] + tooltipRect.width - shellRect.width + 12) +
-        Math.max(0, candidate[1] + tooltipRect.height - shellRect.height + 12);
-      const targetOverlap = overlapArea(
-        candidateLeft,
-        candidateTop,
-        tooltipRect.width,
-        tooltipRect.height,
-        {
-          left: hotspotLeft,
-          top: hotspotTop,
-          right: hotspotLeft + hotspotWidth,
-          bottom: hotspotTop + hotspotHeight
-        }
-      );
-      const chromeOverlap = chromeObstacles.reduce(
-        (area, obstacle) =>
-          area +
-          overlapArea(
-            candidateLeft,
-            candidateTop,
-            tooltipRect.width,
-            tooltipRect.height,
-            obstacle
-          ),
-        0
-      );
-      const sceneOverlap = sceneObstacles.reduce(
-        (area, obstacle) =>
-          area +
-          overlapArea(
-            candidateLeft,
-            candidateTop,
-            tooltipRect.width,
-            tooltipRect.height,
-            obstacle
-          ),
-        0
-      );
-      const rank = [
-        targetOverlap === 0 ? 0 : 1,
-        targetOverlap,
-        overflow,
-        sceneOverlap,
-        chromeOverlap,
-        preferenceIndex
+      const placementCandidates = [
+        candidates[placement],
+        ...obstacleCandidates(placement)
       ];
-      if (betterRank(rank, selected.rank)) {
-        selected = {
-          placement,
-          left: candidateLeft,
-          top: candidateTop,
+      for (const [variantIndex, candidate] of placementCandidates.entries()) {
+        const candidateLeft = clamp(
+          candidate[0],
+          placementBounds.minLeft,
+          placementBounds.maxLeft
+        );
+        const candidateTop = clamp(
+          candidate[1],
+          placementBounds.minTop,
+          placementBounds.maxTop
+        );
+        const overflow =
+          Math.max(0, placementBounds.minLeft - candidate[0]) +
+          Math.max(0, placementBounds.minTop - candidate[1]) +
+          Math.max(0, candidate[0] - placementBounds.maxLeft) +
+          Math.max(0, candidate[1] - placementBounds.maxTop);
+        const targetOverlap = overlapArea(
+          candidateLeft,
+          candidateTop,
+          tooltipRect.width,
+          tooltipRect.height,
+          {
+            left: hotspotLeft,
+            top: hotspotTop,
+            right: hotspotLeft + hotspotWidth,
+            bottom: hotspotTop + hotspotHeight
+          }
+        );
+        const chromeOverlap = chromeObstacles.reduce(
+          (area, obstacle) =>
+            area +
+            overlapArea(
+              candidateLeft,
+              candidateTop,
+              tooltipRect.width,
+              tooltipRect.height,
+              obstacle
+            ),
+          0
+        );
+        const sceneOverlap = sceneObstacles.reduce(
+          (area, obstacle) =>
+            area +
+            overlapArea(
+              candidateLeft,
+              candidateTop,
+              tooltipRect.width,
+              tooltipRect.height,
+              obstacle
+            ),
+          0
+        );
+        const rank = [
+          targetOverlap === 0 ? 0 : 1,
           targetOverlap,
-          rank
-        };
+          sceneOverlap === 0 ? 0 : 1,
+          sceneOverlap,
+          chromeOverlap,
+          overflow,
+          preferenceIndex,
+          variantIndex
+        ];
+        if (betterRank(rank, selected.rank)) {
+          selected = {
+            placement,
+            left: candidateLeft,
+            top: candidateTop,
+            targetOverlap,
+            rank
+          };
+        }
       }
     }
     elements.tooltip.dataset.placement = selected.placement;
     elements.tooltip.dataset.targetOverlap = String(
       selected.targetOverlap ?? 0
+    );
+    elements.tooltip.dataset.bottomSafeArea = String(
+      placementBounds.bottomSafeArea
     );
     elements.tooltip.dataset.prominentObstacleCount = String(
       sceneObstacles.length
@@ -2529,6 +2828,13 @@ const PLAYER_JS = `(() => {
     }
   });
   new ResizeObserver(scaleScene).observe(elements.shell);
+  window.addEventListener("resize", scaleScene, { passive: true });
+  window.visualViewport?.addEventListener("resize", scaleScene, {
+    passive: true
+  });
+  window.visualViewport?.addEventListener("scroll", scheduleOverlayPosition, {
+    passive: true
+  });
   if (document.fonts) {
     document.fonts.ready.then(scaleScene);
   }

@@ -352,7 +352,11 @@ without blocking the workflow.
    truncate the flow to reach a fixed count.
 6. Before each action, require one visible semantic target. Distinguish
    `target-missing`, `target-hidden`, and `target-duplicate`; do not select the
-   first match. Ask for exact
+   first match. Highlight the complete labeled interaction box rather than a
+   nested icon when the labeled wrapper performs the same action. When repeated
+   `data-testid` values identify a control family, include the control's exact
+   visible name so both the browser locator and isolated extractor resolve one
+   full control. Ask for exact
    confirmation immediately before any action that can create, update, send,
    publish, purchase, upload, download, or delete.
 7. If the required page range contains private visible content, pause before
@@ -406,9 +410,13 @@ without blocking the workflow.
     visible highlighted interaction box, the complete capture-aspect scene,
     player-card clearance from every visible dialog, alert dialog, menu,
     listbox, or tooltip, and one resized preview. Use the stated 4 CSS pixel
-    geometry budget. The current hotspot target must remain undimmed inside the
-    step backdrop spotlight. A player card that overlaps a prominent captured
-    component is a failed preview, including on the completion state. Follow
+    geometry budget. Resize without reloading and require the player to
+    recompute placement from the current visual viewport and measured card
+    size; the complete card and every action must remain inside the visible
+    scene shell with bottom-edge clearance. The current hotspot target must
+    remain undimmed inside the step backdrop spotlight. A player card that
+    overlaps a prominent captured component is a failed preview, including on
+    the completion state. Follow
     the generic recovery ladder once. Do not hand-tune generated CSS, patch
     captured HTML, or add a site-specific rule. Report the visual fidelity
     status as `checked`, `incomplete`, or `blocked`; do not claim fidelity while

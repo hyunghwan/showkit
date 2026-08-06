@@ -243,6 +243,7 @@ test("resolves every browser-session target strategy in page scope", async ({
     <main>
       <a href="/docs">Open docs</a>
       <button type="button" data-testid="filters-trigger">Open filters</button>
+      <button type="button" data-testid="filters-trigger">Open sorting</button>
       <button type="button" aria-label="Account menu"></button>
       <label for="project-query">Project query</label>
       <input id="project-query" type="search">
@@ -369,6 +370,106 @@ test("resolves every browser-session target strategy in page scope", async ({
     ).toBe(true);
     if (!result.ok || result.scanOnly) continue;
     expect(result.target?.name).toBe(target.expectedName);
+  }
+});
+
+test("uses the target name to disambiguate repeated browser-session test IDs", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <span data-testid="filter-chip" role="listitem" tabindex="0">Date and time</span>
+      <span data-testid="filter-chip" role="listitem" tabindex="0">Amount</span>
+      <button type="button" data-testid="amount-trigger" aria-label="Amount" data-result="Exact amount"></button>
+      <button type="button" data-testid="amount-trigger" aria-label="Amount due" data-result="Amount due"></button>
+      <span id="date-trigger-label">Date and time</span>
+      <button type="button" data-testid="date-trigger" aria-labelledby="date-trigger-label" data-result="Labelled by"></button>
+      <label for="currency-trigger">Currency</label>
+      <input id="currency-trigger" type="checkbox" data-testid="currency-trigger" data-result="Associated label">
+      <input type="button" data-testid="apply-trigger" value="Apply" data-result="Input value">
+      <output id="selection">No filter selected</output>
+      <script>
+        for (const chip of document.querySelectorAll('[data-testid="filter-chip"]')) {
+          chip.addEventListener("click", () => {
+            document.querySelector("#selection").textContent = chip.textContent + " opened";
+          });
+        }
+        for (const target of document.querySelectorAll("[data-result]")) {
+          target.addEventListener("click", () => {
+            document.querySelector("#selection").textContent = target.dataset.result;
+          });
+        }
+      </script>
+    </main>
+  `);
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        domSnapshot: () => Promise.resolve(""),
+        evaluate: (pageFunction: unknown, argument?: unknown) =>
+          page.evaluate(pageFunction as never, argument),
+        waitForTimeout: (milliseconds: number) => page.waitForTimeout(milliseconds),
+        locator: (selector: string) => page.locator(selector),
+        getByRole: (role: string, options: { name: string; exact: boolean }) =>
+          page.getByRole(role as never, options),
+        getByTestId: (testId: string) => page.getByTestId(testId)
+      },
+      url: () => Promise.resolve(page.url())
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+
+  await adapter.performAction(
+    {
+      strategy: "test-id",
+      testId: "filter-chip",
+      name: "Amount"
+    },
+    "disclose"
+  );
+
+  await expect(page.locator("#selection")).toHaveText("Amount opened");
+
+  const accessibleNameTargets = [
+    {
+      target: {
+        strategy: "test-id" as const,
+        testId: "amount-trigger",
+        name: "Amount"
+      },
+      expected: "Exact amount"
+    },
+    {
+      target: {
+        strategy: "test-id" as const,
+        testId: "date-trigger",
+        name: "Date and time"
+      },
+      expected: "Labelled by"
+    },
+    {
+      target: {
+        strategy: "test-id" as const,
+        testId: "currency-trigger",
+        name: "Currency"
+      },
+      expected: "Associated label"
+    },
+    {
+      target: {
+        strategy: "test-id" as const,
+        testId: "apply-trigger",
+        name: "Apply"
+      },
+      expected: "Input value"
+    }
+  ];
+
+  for (const { target, expected } of accessibleNameTargets) {
+    await adapter.performAction(target, "disclose");
+    await expect(page.locator("#selection")).toHaveText(expected);
   }
 });
 

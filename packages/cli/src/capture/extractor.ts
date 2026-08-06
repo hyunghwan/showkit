@@ -624,7 +624,10 @@ export async function extractSceneKernel(
       return uniqueVisibleMatch(
         candidates.filter(
           (element) =>
-            element.getAttribute("data-testid") === target.testId
+            element.getAttribute("data-testid") === target.testId &&
+            simpleAccessibleNameVariants(element).includes(
+              normalizedText(target.name)
+            )
         )
       );
     }

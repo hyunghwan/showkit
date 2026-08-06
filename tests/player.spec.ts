@@ -1466,6 +1466,222 @@ test.describe("Milestone 1 local workflow", () => {
     await expect(page.locator("#welcome-layer")).toBeVisible();
   });
 
+  test("places the completion card in the least occupied scene region", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            terminal: { nodes: Array<Record<string, unknown>> };
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.terminal.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: {
+          "data-showkit-text": ""
+        },
+        styles: {
+          position: "absolute",
+          left: "380px",
+          top: "250px",
+          width: "520px",
+          height: "180px",
+          display: "block"
+        },
+        children: [{ type: "text", text: "Captured product content" }]
+      });
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    for (let step = 0; step < 3; step += 1) {
+      await page.locator("#tooltip-next").click();
+    }
+    await expect(page.locator("#step-count")).toHaveText("Complete");
+
+    const completionMetrics = await page.evaluate(() => {
+      const shell = document.querySelector("#scene-shell");
+      const tooltip = document.querySelector("#tooltip");
+      const content = Array.from(
+        document.querySelectorAll("#scene-viewport [data-showkit-text]")
+      ).find((element) => element.textContent === "Captured product content");
+      if (
+        !(shell instanceof HTMLElement) ||
+        !(tooltip instanceof HTMLElement) ||
+        !(content instanceof HTMLElement)
+      ) {
+        throw new Error("Expected completion placement fixture");
+      }
+      const shellRect = shell.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const contentRect = content.getBoundingClientRect();
+      const overlapWidth = Math.max(
+        0,
+        Math.min(tooltipRect.right, contentRect.right) -
+          Math.max(tooltipRect.left, contentRect.left)
+      );
+      const overlapHeight = Math.max(
+        0,
+        Math.min(tooltipRect.bottom, contentRect.bottom) -
+          Math.max(tooltipRect.top, contentRect.top)
+      );
+      return {
+        contentOverlap: overlapWidth * overlapHeight,
+        reportedContentOverlap: Number(tooltip.dataset.contentOverlap),
+        placement: tooltip.dataset.placement,
+        insideShell:
+          tooltipRect.left >= shellRect.left &&
+          tooltipRect.top >= shellRect.top &&
+          tooltipRect.right <= shellRect.right &&
+          tooltipRect.bottom <= shellRect.bottom
+      };
+    });
+
+    expect(completionMetrics.contentOverlap).toBe(0);
+    expect(completionMetrics.reportedContentOverlap).toBeGreaterThanOrEqual(0);
+    expect(completionMetrics.placement).not.toBe("center");
+    expect(completionMetrics.insideShell).toBe(true);
+
+    await page.setViewportSize({ width: 1249, height: 1256 });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const scene = document
+            .querySelector("#scene-viewport")
+            ?.getBoundingClientRect();
+          const tooltip = document.querySelector("#tooltip");
+          const tooltipRect = tooltip?.getBoundingClientRect();
+          if (!scene || !(tooltip instanceof HTMLElement) || !tooltipRect) {
+            return null;
+          }
+          return {
+            insideScene:
+              tooltipRect.left >= scene.left &&
+              tooltipRect.top >= scene.top &&
+              tooltipRect.right <= scene.right &&
+              tooltipRect.bottom <= scene.bottom,
+            insideWindow:
+              tooltipRect.left >= 0 &&
+              tooltipRect.top >= 0 &&
+              tooltipRect.right <= window.innerWidth &&
+              tooltipRect.bottom <= window.innerHeight,
+            contentOverlap: Number(tooltip.dataset.contentOverlap)
+          };
+        })
+      )
+      .toEqual({
+        insideScene: true,
+        insideWindow: true,
+        contentOverlap: 0
+      });
+  });
+
+  test("centers completion cards when the scene center is clear", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1249, height: 1256 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            terminal: { nodes: Array<Record<string, unknown>> };
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.terminal.nodes = [];
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    for (let step = 0; step < 3; step += 1) {
+      await page.locator("#tooltip-next").click();
+    }
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const scene = document
+            .querySelector("#scene-viewport")
+            ?.getBoundingClientRect();
+          const tooltip = document.querySelector("#tooltip");
+          const tooltipRect = tooltip?.getBoundingClientRect();
+          if (!scene || !(tooltip instanceof HTMLElement) || !tooltipRect) {
+            return null;
+          }
+          return {
+            placement: tooltip.dataset.placement,
+            horizontalCenterDelta: Math.round(
+              Math.abs(
+                (tooltipRect.left + tooltipRect.right) / 2 -
+                  (scene.left + scene.right) / 2
+              )
+            ),
+            verticalCenterDelta: Math.round(
+              Math.abs(
+                (tooltipRect.top + tooltipRect.bottom) / 2 -
+                  (scene.top + scene.bottom) / 2
+              )
+            ),
+            insideScene:
+              tooltipRect.left >= scene.left &&
+              tooltipRect.top >= scene.top &&
+              tooltipRect.right <= scene.right &&
+              tooltipRect.bottom <= scene.bottom
+          };
+        })
+      )
+      .toEqual({
+        placement: "center",
+        horizontalCenterDelta: 0,
+        verticalCenterDelta: 0,
+        insideScene: true
+      });
+  });
+
+  test("keeps guide cards inside the rendered scene on tall viewports", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1249, height: 1256 });
+    await page.goto(previewUrl);
+    await page.getByRole("button", { name: "Explore demo" }).click();
+
+    const cardGeometry = () =>
+      page.evaluate(() => {
+        const scene = document
+          .querySelector("#scene-viewport")
+          ?.getBoundingClientRect();
+        const tooltip = document
+          .querySelector("#tooltip")
+          ?.getBoundingClientRect();
+        if (!scene || !tooltip) return null;
+        return {
+          insideScene:
+            tooltip.left >= scene.left &&
+            tooltip.top >= scene.top &&
+            tooltip.right <= scene.right &&
+            tooltip.bottom <= scene.bottom,
+          minimumInset: Math.min(
+            tooltip.left - scene.left,
+            tooltip.top - scene.top,
+            scene.right - tooltip.right,
+            scene.bottom - tooltip.bottom
+          )
+        };
+      });
+
+    for (let step = 0; step < 3; step += 1) {
+      await expect.poll(cardGeometry).toEqual({
+        insideScene: true,
+        minimumInset: expect.any(Number)
+      });
+      const geometry = await cardGeometry();
+      expect(geometry?.minimumInset).toBeGreaterThanOrEqual(23);
+      if (step < 2) await page.locator("#tooltip-next").click();
+    }
+  });
+
   test("preserves source-sized controls for tall captures without painting over them", async ({
     page
   }) => {
@@ -1924,6 +2140,16 @@ test.describe("capture safety", () => {
         background: #fff;
         font: 600 18px/1.2 system-ui, sans-serif;
       }
+      [role="dialog"] {
+        position: absolute;
+        left: 0;
+        top: 260px;
+        width: 240px;
+        height: 150px;
+        border: 1px solid #bbb;
+        border-radius: 12px;
+        background: #fff;
+      }
       input {
         position: absolute;
         left: 0;
@@ -1937,6 +2163,7 @@ test.describe("capture safety", () => {
   </head>
   <body>
     <main>
+      <div role="dialog" aria-label="Trip length options"></div>
       <input id="trip-length-weekend" type="radio" name="trip-length" value="weekend" aria-label="Weekend">
       <label for="trip-length-weekend"><span>Weekend</span></label>
     </main>
@@ -2027,12 +2254,16 @@ test("captures a labelled radio target", async ({ page, demo }) => {
         const label = document.querySelector("[data-showkit-scene-root] label");
         const hotspot = document.querySelector("#hotspot");
         const tooltip = document.querySelector("#tooltip");
+        const dialog = document.querySelector(
+          '[data-showkit-scene-root] [role="dialog"]'
+        );
         const viewport = document.querySelector("#scene-viewport");
         const shell = document.querySelector("#scene-shell");
         if (
           !(label instanceof HTMLElement) ||
           !(hotspot instanceof HTMLElement) ||
           !(tooltip instanceof HTMLElement) ||
+          !(dialog instanceof HTMLElement) ||
           !(viewport instanceof HTMLElement) ||
           !(shell instanceof HTMLElement)
         ) {
@@ -2071,6 +2302,7 @@ test("captures a labelled radio target", async ({ page, demo }) => {
         };
         const hotspotBox = hotspot.getBoundingClientRect();
         const tooltipBox = tooltip.getBoundingClientRect();
+        const dialogBox = dialog.getBoundingClientRect();
         const overlapWidth = Math.max(
           0,
           Math.min(labelBox.right, tooltipBox.right) -
@@ -2109,7 +2341,18 @@ test("captures a labelled radio target", async ({ page, demo }) => {
             Math.abs(labelBox.width - hotspotBox.width),
             Math.abs(labelBox.height - hotspotBox.height)
           ),
-          tooltipOverlap: overlapWidth * overlapHeight
+          tooltipOverlap: overlapWidth * overlapHeight,
+          dialogTooltipOverlap:
+            Math.max(
+              0,
+              Math.min(dialogBox.right, tooltipBox.right) -
+                Math.max(dialogBox.left, tooltipBox.left)
+            ) *
+            Math.max(
+              0,
+              Math.min(dialogBox.bottom, tooltipBox.bottom) -
+                Math.max(dialogBox.top, tooltipBox.top)
+            )
         };
       });
       expect(
@@ -2117,6 +2360,62 @@ test("captures a labelled radio target", async ({ page, demo }) => {
         JSON.stringify(geometry)
       ).toBeLessThanOrEqual(4);
       expect(geometry.tooltipOverlap).toBe(0);
+      expect(geometry.dialogTooltipOverlap).toBe(0);
+
+      await page.setViewportSize({ width: 1280, height: 708 });
+      await page.evaluate(() => {
+        const label = document.querySelector(
+          '[data-showkit-interaction-box="sk-choose-weekend"]'
+        );
+        const viewport = document.querySelector("#scene-viewport");
+        if (!(label instanceof HTMLElement) || !(viewport instanceof HTMLElement)) {
+          throw new Error("Expected lower-edge target geometry");
+        }
+        const scale = new DOMMatrixReadOnly(
+          getComputedStyle(viewport).transform
+        ).a;
+        const bounds = label.getBoundingClientRect();
+        const transform = new DOMMatrix(getComputedStyle(label).transform);
+        transform.f += (635 - bounds.top) / scale;
+        label.style.transformOrigin = "0 0";
+        label.style.transform = transform.toString();
+      });
+      await page.waitForTimeout(250);
+      const lowerEdgePlacement = await page.evaluate(() => {
+        const shell = document.querySelector("#scene-shell");
+        const tooltip = document.querySelector("#tooltip");
+        const actions = document.querySelector("#tooltip-actions");
+        if (
+          !(shell instanceof HTMLElement) ||
+          !(tooltip instanceof HTMLElement) ||
+          !(actions instanceof HTMLElement)
+        ) {
+          throw new Error("Expected lower-edge tooltip geometry");
+        }
+        const shellBox = shell.getBoundingClientRect();
+        const tooltipBox = tooltip.getBoundingClientRect();
+        const actionsBox = actions.getBoundingClientRect();
+        return {
+          bottomClearance: shellBox.bottom - tooltipBox.bottom,
+          reportedBottomSafeArea: Number(tooltip.dataset.bottomSafeArea),
+          actionsInside:
+            actionsBox.left >= tooltipBox.left &&
+            actionsBox.right <= tooltipBox.right &&
+            actionsBox.top >= tooltipBox.top &&
+            actionsBox.bottom <= tooltipBox.bottom,
+          tooltipInside:
+            tooltipBox.left >= shellBox.left &&
+            tooltipBox.top >= shellBox.top &&
+            tooltipBox.right <= shellBox.right &&
+            tooltipBox.bottom <= shellBox.bottom
+        };
+      });
+      expect(lowerEdgePlacement.tooltipInside).toBe(true);
+      expect(lowerEdgePlacement.actionsInside).toBe(true);
+      expect(lowerEdgePlacement.reportedBottomSafeArea).toBeGreaterThanOrEqual(48);
+      expect(lowerEdgePlacement.bottomClearance).toBeGreaterThanOrEqual(
+        lowerEdgePlacement.reportedBottomSafeArea - 1
+      );
 
       await page.setViewportSize({ width: 300, height: 840 });
       await page.waitForTimeout(200);

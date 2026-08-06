@@ -30,6 +30,9 @@ not a promise to clone every website or to produce pixel-identical output.
    semantic target plus `document.fonts.ready`; include a page-specific
    loading indicator only when it is already visible in the bounded DOM
    snapshot. Do not use an arbitrary sleep as proof that the page is ready.
+   Resolve the complete labeled interaction box for compound controls. Do not
+   anchor a demo to a nested add, chevron, or disclosure icon when its labeled
+   wrapper performs the same action.
 3. Inspect a bounded dependency summary for only the visible capture range:
    non-generic fonts; image, background-image, mask-image, and list-image
    dependencies; inline SVG and `use` references; visible pseudo-element
@@ -117,6 +120,9 @@ Check all of the following:
 - child geometry inside bordered controls, not only the outer control bounds
 - no ShowKit tooltip or completion card overlaps a visible captured dialog,
   alert dialog, menu, listbox, tooltip, or the active hotspot target
+- after a viewport resize without reload, placement is recomputed from the
+  current visual viewport and measured card size; the complete card and all of
+  its actions stay inside the visible scene shell with bottom-edge clearance
 - the complete source scene at the capture aspect ratio
 - scene and hotspot alignment after one resized-preview check
 
