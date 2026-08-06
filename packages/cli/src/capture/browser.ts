@@ -148,6 +148,96 @@ function ariaSnapshotMatchesTarget(
   return normalizeName(locatorName) === normalizeName(target.name);
 }
 
+type InteractionBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function clipBoundsToViewport(
+  bounds: InteractionBounds,
+  viewport: { width: number; height: number } | null
+): InteractionBounds | null {
+  if (!viewport) return bounds;
+  const left = Math.max(0, bounds.x);
+  const top = Math.max(0, bounds.y);
+  const right = Math.min(viewport.width, bounds.x + bounds.width);
+  const bottom = Math.min(viewport.height, bounds.y + bounds.height);
+  if (right <= left || bottom <= top) return null;
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top
+  };
+}
+
+async function visibleInteractionBounds(
+  page: Page,
+  target: Locator
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  const bounds = await target.boundingBox();
+  if (!bounds) return null;
+  const clippedBounds = clipBoundsToViewport(bounds, page.viewportSize());
+  if (bounds.width >= 24 && bounds.height >= 24) return clippedBounds;
+  try {
+    const promotedBounds = await target.evaluate((element) => {
+      if (!(element instanceof HTMLInputElement)) return null;
+      if (!["checkbox", "radio"].includes(element.type.toLowerCase())) {
+        return null;
+      }
+      const labels = new Set(Array.from(element.labels ?? []));
+      const containingLabel = element.closest("label");
+      if (containingLabel) labels.add(containingLabel);
+      const label = [...labels]
+        .filter((candidate) => {
+          const rectangle = candidate.getBoundingClientRect();
+          const style = getComputedStyle(candidate);
+          return (
+            rectangle.width >= 24 &&
+            rectangle.height >= 24 &&
+            rectangle.bottom > 0 &&
+            rectangle.right > 0 &&
+            rectangle.top < window.innerHeight &&
+            rectangle.left < window.innerWidth &&
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.visibility !== "collapse" &&
+            Number.parseFloat(style.opacity || "1") > 0
+          );
+        })
+        .sort((left, right) => {
+          const containmentDifference =
+            Number(!left.contains(element)) - Number(!right.contains(element));
+          if (containmentDifference !== 0) return containmentDifference;
+          const leftRectangle = left.getBoundingClientRect();
+          const rightRectangle = right.getBoundingClientRect();
+          return (
+            leftRectangle.width * leftRectangle.height -
+            rightRectangle.width * rightRectangle.height
+          );
+        })[0];
+      if (!label) return null;
+      const rectangle = label.getBoundingClientRect();
+      const left = Math.max(0, rectangle.left);
+      const top = Math.max(0, rectangle.top);
+      const right = Math.min(window.innerWidth, rectangle.right);
+      const bottom = Math.min(window.innerHeight, rectangle.bottom);
+      if (right <= left || bottom <= top) return null;
+      return {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top
+      };
+    });
+    return promotedBounds ?? clippedBounds;
+  } catch {
+    return clippedBounds;
+  }
+}
+
 function sensitiveSelectors(): string[] {
   return (process.env.SHOWKIT_SENSITIVE_SELECTORS ?? "")
     .split(",")
@@ -765,7 +855,7 @@ export async function captureScene(
     });
   }
   let locatorBounds = targetOptions
-    ? await targetOptions.target.boundingBox()
+    ? await visibleInteractionBounds(page, targetOptions.target)
     : undefined;
   let locatorAriaSnapshot: string | undefined;
   if (targetOptions) {
@@ -801,7 +891,7 @@ export async function captureScene(
       )
     : { assets: [], fontFaces: [], replacements: [] };
   if (targetOptions) {
-    locatorBounds = await targetOptions.target.boundingBox();
+    locatorBounds = await visibleInteractionBounds(page, targetOptions.target);
     if (!locatorBounds) {
       throw new ShowKitError({
         code: targetOptions.targetErrorCode ?? "TargetMissing",
@@ -897,7 +987,7 @@ export async function captureScene(
       await settleVisibleAssetsInIsolatedWorld(page);
     }
     if (targetOptions) {
-      locatorBounds = await targetOptions.target.boundingBox();
+      locatorBounds = await visibleInteractionBounds(page, targetOptions.target);
       if (!locatorBounds) {
         throw new ShowKitError({
           code: targetOptions.targetErrorCode ?? "TargetMissing",

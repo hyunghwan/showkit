@@ -1876,6 +1876,538 @@ test.describe("Milestone 1 local workflow", () => {
 });
 
 test.describe("capture safety", () => {
+  test("keeps the tooltip clear of a visible label for a visually hidden form target", async ({
+    page
+  }) => {
+    test.setTimeout(120_000);
+    const projectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-visible-target-")
+    );
+    const fixtureDirectory = await mkdtemp(
+      path.join(
+        repositoryRoot,
+        "fixtures",
+        "demo-apps",
+        "assurance",
+        ".visible-target-"
+      )
+    );
+    const fixturePath = path.join(fixtureDirectory, "index.html");
+    const specPath = path.join(fixtureDirectory, "visible-target.demo.ts");
+    const fixtureUrl = `http://127.0.0.1:4173/${path
+      .relative(path.join(repositoryRoot, "fixtures", "demo-apps"), fixturePath)
+      .split(path.sep)
+      .join("/")}`;
+    let previewServer: Server | undefined;
+
+    await writeFile(
+      fixturePath,
+      `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      html, body, main { width: 100%; height: 100%; margin: 0; }
+      main { position: relative; background: #f5f5f2; }
+      label {
+        position: absolute;
+        left: -40px;
+        top: 300px;
+        box-sizing: border-box;
+        display: flex;
+        width: 200px;
+        height: 48px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #222;
+        border-radius: 24px;
+        background: #fff;
+        font: 600 18px/1.2 system-ui, sans-serif;
+      }
+      input {
+        position: absolute;
+        left: 0;
+        top: 24px;
+        width: 1px;
+        height: 1px;
+        overflow: clip;
+        clip-path: inset(100%);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <input id="trip-length-weekend" type="radio" name="trip-length" value="weekend" aria-label="Weekend">
+      <label for="trip-length-weekend"><span>Weekend</span></label>
+    </main>
+  </body>
+</html>`
+    );
+    await writeFile(
+      specPath,
+      `import { test } from "@showkit/cli/playwright";
+
+test.use({ viewport: { width: 1280, height: 720 } });
+
+test("captures a labelled radio target", async ({ page, demo }) => {
+  await page.goto(${JSON.stringify(fixtureUrl)});
+  const target = page.getByRole("radio", { name: "Weekend", exact: true });
+  await demo.step({
+    id: "choose-weekend",
+    title: "Choose a weekend",
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "radio",
+      name: "Weekend"
+    },
+    action: () =>
+      page.locator('label[for="trip-length-weekend"]').dispatchEvent("click")
+  });
+});
+`
+    );
+
+    try {
+      runCli(projectDirectory, ["init"]);
+      const capture = runCli(projectDirectory, [
+        "capture",
+        specPath,
+        "--viewport",
+        "1280x720"
+      ]);
+      const captureSource = JSON.parse(
+        await readFile(String(capture.path), "utf8")
+      ) as CaptureFixtureData & {
+        steps: Array<{
+          id: string;
+          title: string;
+          scene: {
+            anchorId: string;
+            target: {
+              bounds: { x: number; y: number; width: number; height: number };
+            };
+          };
+          evidence: Array<{ id: string; text: string }>;
+        }>;
+      };
+      expect(captureSource.steps[0]!.scene.target.bounds).toEqual(
+        expect.objectContaining({
+          x: 0,
+          width: expect.closeTo(160 / 1280, 5),
+          height: expect.closeTo(48 / 720, 5)
+        })
+      );
+      expect(JSON.stringify(captureSource.steps[0]!.scene)).toContain(
+        '"data-showkit-interaction-box":"sk-choose-weekend"'
+      );
+
+      const storyPath = path.join(projectDirectory, "visible-target-story.json");
+      await writeFile(
+        storyPath,
+        `${JSON.stringify(
+          storyForCapture(captureSource, {
+            id: "visible-target-story",
+            title: "Visible target placement",
+            goal: "Keep the guide clear of the highlighted control."
+          }),
+          null,
+          2
+        )}\n`
+      );
+      runCli(projectDirectory, ["story", "apply", storyPath]);
+      runCli(projectDirectory, ["validate"]);
+      const build = runCli(projectDirectory, ["build", "web"]);
+      const preview = await startPortableStaticServer(String(build.path));
+      previewServer = preview.server;
+
+      await page.goto(preview.url);
+      await page.getByRole("button", { name: "Explore demo" }).click();
+      const geometry = await page.evaluate(() => {
+        const label = document.querySelector("[data-showkit-scene-root] label");
+        const hotspot = document.querySelector("#hotspot");
+        const tooltip = document.querySelector("#tooltip");
+        const viewport = document.querySelector("#scene-viewport");
+        const shell = document.querySelector("#scene-shell");
+        if (
+          !(label instanceof HTMLElement) ||
+          !(hotspot instanceof HTMLElement) ||
+          !(tooltip instanceof HTMLElement) ||
+          !(viewport instanceof HTMLElement) ||
+          !(shell instanceof HTMLElement)
+        ) {
+          throw new Error("Expected visible target geometry");
+        }
+        const rawLabelBox = label.getBoundingClientRect();
+        const viewportBox = viewport.getBoundingClientRect();
+        const shellBox = shell.getBoundingClientRect();
+        const labelLeft = Math.max(
+          rawLabelBox.left,
+          viewportBox.left,
+          shellBox.left
+        );
+        const labelTop = Math.max(
+          rawLabelBox.top,
+          viewportBox.top,
+          shellBox.top
+        );
+        const labelRight = Math.min(
+          rawLabelBox.right,
+          viewportBox.right,
+          shellBox.right
+        );
+        const labelBottom = Math.min(
+          rawLabelBox.bottom,
+          viewportBox.bottom,
+          shellBox.bottom
+        );
+        const labelBox = {
+          left: labelLeft,
+          top: labelTop,
+          right: labelRight,
+          bottom: labelBottom,
+          width: Math.max(0, labelRight - labelLeft),
+          height: Math.max(0, labelBottom - labelTop)
+        };
+        const hotspotBox = hotspot.getBoundingClientRect();
+        const tooltipBox = tooltip.getBoundingClientRect();
+        const overlapWidth = Math.max(
+          0,
+          Math.min(labelBox.right, tooltipBox.right) -
+            Math.max(labelBox.left, tooltipBox.left)
+        );
+        const overlapHeight = Math.max(
+          0,
+          Math.min(labelBox.bottom, tooltipBox.bottom) -
+            Math.max(labelBox.top, tooltipBox.top)
+        );
+        return {
+          anchorId: document
+            .querySelector("[data-showkit-anchor]")
+            ?.getAttribute("data-showkit-anchor"),
+          interactionBoxId: label.getAttribute(
+            "data-showkit-interaction-box"
+          ),
+          interactionBoxCount: document.querySelectorAll(
+            "[data-showkit-interaction-box]"
+          ).length,
+          labelBox: {
+            left: labelBox.left,
+            top: labelBox.top,
+            width: labelBox.width,
+            height: labelBox.height
+          },
+          hotspotBox: {
+            left: hotspotBox.left,
+            top: hotspotBox.top,
+            width: hotspotBox.width,
+            height: hotspotBox.height
+          },
+          hotspotError: Math.max(
+            Math.abs(labelBox.left - hotspotBox.left),
+            Math.abs(labelBox.top - hotspotBox.top),
+            Math.abs(labelBox.width - hotspotBox.width),
+            Math.abs(labelBox.height - hotspotBox.height)
+          ),
+          tooltipOverlap: overlapWidth * overlapHeight
+        };
+      });
+      expect(
+        geometry.hotspotError,
+        JSON.stringify(geometry)
+      ).toBeLessThanOrEqual(4);
+      expect(geometry.tooltipOverlap).toBe(0);
+
+      await page.setViewportSize({ width: 300, height: 840 });
+      await page.waitForTimeout(200);
+      await page.evaluate(() => {
+        const label = document.querySelector(
+          '[data-showkit-interaction-box="sk-choose-weekend"]'
+        );
+        const shell = document.querySelector("#scene-shell");
+        const viewport = document.querySelector("#scene-viewport");
+        const tooltip = document.querySelector("#tooltip");
+        if (
+          !(label instanceof HTMLElement) ||
+          !(shell instanceof HTMLElement) ||
+          !(viewport instanceof HTMLElement) ||
+          !(tooltip instanceof HTMLElement)
+        ) {
+          throw new Error("Expected constrained target geometry");
+        }
+        tooltip.style.boxSizing = "border-box";
+        tooltip.style.width = "220px";
+        tooltip.style.height = "800px";
+        tooltip.style.minHeight = "800px";
+        tooltip.style.maxHeight = "800px";
+        const scale = new DOMMatrixReadOnly(
+          getComputedStyle(viewport).transform
+        ).a;
+        const bounds = label.getBoundingClientRect();
+        const transform = new DOMMatrix(getComputedStyle(label).transform);
+        transform.e += (0 - bounds.left) / scale;
+        transform.f += (817.5 - bounds.top) / scale;
+        label.style.transformOrigin = "0 0";
+        label.style.transform = transform.toString();
+        shell.style.width = "299px";
+      });
+      await page.waitForTimeout(250);
+      const constrained = await page.evaluate(() => {
+        const label = document.querySelector(
+          '[data-showkit-interaction-box="sk-choose-weekend"]'
+        );
+        const hotspot = document.querySelector("#hotspot");
+        const tooltip = document.querySelector("#tooltip");
+        if (
+          !(label instanceof HTMLElement) ||
+          !(hotspot instanceof HTMLElement) ||
+          !(tooltip instanceof HTMLElement)
+        ) {
+          throw new Error("Expected constrained placement geometry");
+        }
+        const overlap = (left: DOMRect, right: DOMRect): number =>
+          Math.max(
+            0,
+            Math.min(left.right, right.right) - Math.max(left.left, right.left)
+          ) *
+          Math.max(
+            0,
+            Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top)
+          );
+        const tooltipBox = tooltip.getBoundingClientRect();
+        const labelBox = label.getBoundingClientRect();
+        const hotspotBox = hotspot.getBoundingClientRect();
+        return {
+          labelOverlap: overlap(labelBox, tooltipBox),
+          hotspotOverlap: overlap(hotspotBox, tooltipBox),
+          reportedTargetOverlap: Number(tooltip.dataset.targetOverlap),
+          labelBox: {
+            left: labelBox.left,
+            top: labelBox.top,
+            width: labelBox.width,
+            height: labelBox.height
+          },
+          hotspotBox: {
+            left: hotspotBox.left,
+            top: hotspotBox.top,
+            width: hotspotBox.width,
+            height: hotspotBox.height
+          },
+          tooltipBox: {
+            left: tooltipBox.left,
+            top: tooltipBox.top,
+            width: tooltipBox.width,
+            height: tooltipBox.height
+          }
+        };
+      });
+      expect(
+        {
+          labelOverlap: constrained.labelOverlap,
+          hotspotOverlap: constrained.hotspotOverlap,
+          reportedTargetOverlap: constrained.reportedTargetOverlap
+        },
+        JSON.stringify(constrained)
+      ).toEqual({ labelOverlap: 0, hotspotOverlap: 0, reportedTargetOverlap: 0 });
+    } finally {
+      previewServer?.closeAllConnections();
+      await new Promise<void>((resolve) => previewServer?.close(() => resolve()) ?? resolve());
+      await rm(fixtureDirectory, { recursive: true, force: true });
+      await rm(projectDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("fails closed when Playwright silently changes the capture viewport", async () => {
+    const projectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-viewport-contract-")
+    );
+    const stepDriftProjectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-viewport-step-drift-")
+    );
+    const terminalDriftProjectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-viewport-terminal-drift-")
+    );
+    const specDirectory = await mkdtemp(
+      path.join(
+        repositoryRoot,
+        "fixtures",
+        "demo-apps",
+        "assurance",
+        ".viewport-contract-"
+      )
+    );
+    const specPath = path.join(specDirectory, "viewport-contract.demo.ts");
+    const stepDriftSpecPath = path.join(
+      specDirectory,
+      "viewport-step-drift.demo.ts"
+    );
+    const terminalDriftSpecPath = path.join(
+      specDirectory,
+      "viewport-terminal-drift.demo.ts"
+    );
+    await writeFile(
+      specPath,
+      `import { test } from "@showkit/cli/playwright";
+
+test.use({ viewport: { width: 900, height: 720 } });
+
+test("captures one viewport-bound step", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const target = page.getByRole("button", { name: "Add filter" });
+  await demo.step({
+    id: "open-filter",
+    title: "Open filter",
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Add filter"
+    },
+    action: () => target.click()
+  });
+});
+`
+    );
+    await writeFile(
+      stepDriftSpecPath,
+      `import { test } from "@showkit/cli/playwright";
+
+test.use({ viewport: { width: 1280, height: 720 } });
+
+test("blocks viewport drift before a later step", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const target = page.getByRole("button", { name: "Add filter" });
+  await demo.step({
+    id: "first-filter",
+    title: "Open the first filter",
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Add filter"
+    },
+    action: () => page.setViewportSize({ width: 900, height: 720 })
+  });
+  await demo.step({
+    id: "second-filter",
+    title: "Open the second filter",
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Add filter"
+    },
+    action: () => target.click()
+  });
+});
+`
+    );
+    await writeFile(
+      terminalDriftSpecPath,
+      `import { test } from "@showkit/cli/playwright";
+
+test.use({ viewport: { width: 1280, height: 720 } });
+
+test("blocks viewport drift before the terminal scene", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const target = page.getByRole("button", { name: "Add filter" });
+  await demo.step({
+    id: "open-filter",
+    title: "Open the filter",
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Add filter"
+    },
+    action: () => page.setViewportSize({ width: 900, height: 720 })
+  });
+});
+`
+    );
+
+    try {
+      runCli(projectDirectory, ["init"]);
+      const preflight = runCli(projectDirectory, [
+        "capture",
+        specPath,
+        "--preflight"
+      ]);
+      expect(preflight.expectedViewport).toEqual({ width: 1280, height: 720 });
+
+      const missingValue = runCli(
+        projectDirectory,
+        ["capture", specPath, "--viewport"],
+        2
+      );
+      expect(missingValue.error).toEqual(
+        expect.objectContaining({ code: "DemoFixtureSetupFailed" })
+      );
+
+      const blocked = runCli(projectDirectory, ["capture", specPath], 3);
+      expect(blocked.error).toEqual(
+        expect.objectContaining({
+          code: "DemoFixtureSetupFailed",
+          details: {
+            category: "capture-viewport-mismatch",
+            expectedViewport: { width: 1280, height: 720 },
+            actualViewport: { width: 900, height: 720 }
+          }
+        })
+      );
+      const blockedFiles = await allFileContents(
+        path.join(projectDirectory, ".showkit")
+      );
+      expect(
+        blockedFiles.some((file) => file.path.endsWith("capture.json"))
+      ).toBe(false);
+
+      const explicitlySized = runCli(projectDirectory, [
+        "capture",
+        specPath,
+        "--viewport",
+        "900x720"
+      ]);
+      expect(explicitlySized.viewport).toEqual({ width: 900, height: 720 });
+
+      for (const [driftProjectDirectory, driftSpecPath] of [
+        [stepDriftProjectDirectory, stepDriftSpecPath],
+        [terminalDriftProjectDirectory, terminalDriftSpecPath]
+      ] as const) {
+        runCli(driftProjectDirectory, ["init"]);
+        const drift = runCli(
+          driftProjectDirectory,
+          ["capture", driftSpecPath],
+          3
+        );
+        expect(drift.error).toEqual(
+          expect.objectContaining({
+            code: "DemoFixtureSetupFailed",
+            details: {
+              category: "capture-viewport-mismatch",
+              expectedViewport: { width: 1280, height: 720 },
+              actualViewport: { width: 900, height: 720 }
+            }
+          })
+        );
+        const driftFiles = await allFileContents(
+          path.join(driftProjectDirectory, ".showkit")
+        );
+        expect(
+          driftFiles.some((file) => file.path.endsWith("capture.json"))
+        ).toBe(false);
+      }
+    } finally {
+      await rm(specDirectory, { recursive: true, force: true });
+      await rm(projectDirectory, { recursive: true, force: true });
+      await rm(stepDriftProjectDirectory, { recursive: true, force: true });
+      await rm(terminalDriftProjectDirectory, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
+
   test("uses an isolated Chromium world when the page overrides browser prototypes", async () => {
     const projectDirectory = await mkdtemp(
       path.join(os.tmpdir(), "showkit-browser-realm-")

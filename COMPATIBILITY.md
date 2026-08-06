@@ -12,7 +12,7 @@ explicit reader migration before the supported range changes.
 | Static-source capture | Built into `@showkit/cli`; Playwright is not required |
 | `@playwright/test` | Optional trusted CI replay, `>=1.60.0 <2` |
 | Public web capture | Fresh signed-out HTTP or HTTPS pages with supported semantic HTML, localizable visible images, static SVG backgrounds, and WOFF2 fonts; video, large canvas, maps, cross-origin frames, and closed or interactive shadow surfaces remain fail-closed |
-| ShowKit skill | `@showkit/cli >=0.2.3 <0.3.0` |
+| ShowKit skill | `@showkit/cli >=0.2.4 <0.3.0` |
 | Capture and StorySpec schema | `0.1` |
 | Player browsers | Current Playwright Chromium, Firefox, and WebKit in release checks |
 
@@ -29,7 +29,7 @@ Run `showkit doctor --json` after installing or updating the skill. It reports
 separately. Run `showkit doctor --capability playwright --json` only for the
 optional bundled-Chromium route, or add `--browser-channel chrome` to verify
 installed Google Chrome without downloading bundled Chromium. Run
-`showkit capture <demo.spec.ts> --preflight --json` before a person signs in;
+`showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json` before a person signs in;
 this checks file discovery and module loading without running the test. A
 mismatch returns exit code `3`, detected and supported versions, and an exact
 recovery command. Updating the skill never updates project dependencies.

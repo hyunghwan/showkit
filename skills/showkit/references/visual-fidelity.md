@@ -111,6 +111,9 @@ Check all of the following:
 - every layout-critical image, icon, mask, inline SVG, and pseudo-element
 - recognizable semantics and appearance of controls
 - semantic target bounds and hotspot alignment
+- the complete visible interaction box remains highlighted and uncovered; for
+  a visually hidden radio or checkbox input, use its visible associated label
+  box instead of the input's clipped rectangle
 - child geometry inside bordered controls, not only the outer control bounds
 - no ShowKit tooltip or completion card overlaps a visible captured dialog,
   alert dialog, menu, listbox, tooltip, or the active hotspot target
@@ -138,7 +141,8 @@ Report visual fidelity as `checked` only when:
 - each visible control keeps its recognizable affordance
 - every layout-critical asset is present
 - player cards have zero overlap with prominent captured components at the
-  capture viewport and in the resized preview
+  capture viewport and in the resized preview, including zero intersection with
+  the complete active highlighted interaction box at every step
 - the complete source scene remains visible at the capture aspect ratio
 - one resized preview keeps the scene and hotspot aligned
 

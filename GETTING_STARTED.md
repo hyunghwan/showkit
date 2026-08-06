@@ -81,8 +81,8 @@ npx showkit capture static ./safe-envelope.json --json
 # Or run a repeatable Playwright flow after installing the optional peer.
 npm install -D @playwright/test
 npx showkit doctor --capability playwright --browser-channel chrome --json
-npx showkit capture ./demo.spec.ts --preflight --json
-npx showkit capture ./demo.spec.ts --json
+npx showkit capture ./demo.spec.ts --viewport 1280x720 --preflight --json
+npx showkit capture ./demo.spec.ts --viewport 1280x720 --json
 ```
 
 Complete the local lifecycle:

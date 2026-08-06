@@ -172,7 +172,7 @@ Add Playwright only for an approved headed-browser or CI flow:
 ```bash
 npm install -D @playwright/test
 npx showkit doctor --capability playwright --browser-channel chrome --json
-npx showkit capture ./demo.spec.ts --preflight --json
+npx showkit capture ./demo.spec.ts --viewport 1280x720 --preflight --json
 ```
 
 This checks installed Google Chrome. If it is unavailable, install bundled

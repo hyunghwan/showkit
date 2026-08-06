@@ -413,8 +413,8 @@ for (const requirement of [
   "captureTarget",
   "non-persistent",
   "Page.createIsolatedWorld",
-  "showkit capture temporary-live.spec.ts --preflight --json",
-  "showkit capture temporary-live.spec.ts --json",
+  "showkit capture temporary-live.spec.ts --viewport 1280x720 --preflight --json",
+  "showkit capture temporary-live.spec.ts --viewport 1280x720 --json",
   "retained foreground"
 ]) {
   if (!headedChromeExample.includes(requirement)) {

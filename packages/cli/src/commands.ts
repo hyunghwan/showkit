@@ -50,6 +50,7 @@ import { satisfiesVersionRange } from "./core/version.js";
 const NODE_RANGE = ">=22.12 <25";
 const PLAYWRIGHT_RANGE = ">=1.60.0 <2";
 const CAPTURE_PROCESS_BUFFER_LIMIT = 10 * 1024 * 1024;
+const DEFAULT_CAPTURE_VIEWPORT = { width: 1280, height: 720 } as const;
 
 type BufferedProcessResult = {
   status: number | null;
@@ -224,12 +225,48 @@ function positionalArgs(args: string[]): string[] {
     if (!value) continue;
     if (value === "--json" || value === "--preflight" || value === "--report") continue;
     if (value.startsWith("--")) {
-      index += 1;
+      if (!value.includes("=")) index += 1;
       continue;
     }
     values.push(value);
   }
   return values;
+}
+
+function captureViewportArgument(args: string[]): {
+  width: number;
+  height: number;
+} {
+  const separated = args.includes("--viewport");
+  const inline = args.find((value) => value.startsWith("--viewport="));
+  const raw = separated
+    ? argumentValue(args, "--viewport")
+    : inline?.slice("--viewport=".length);
+  if (!separated && inline === undefined) return { ...DEFAULT_CAPTURE_VIEWPORT };
+  const match = typeof raw === "string"
+    ? /^(\d{1,4})x(\d{1,4})$/i.exec(raw)
+    : null;
+  const width = Number(match?.[1]);
+  const height = Number(match?.[2]);
+  if (
+    !match ||
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    width > 4096 ||
+    height > 4096
+  ) {
+    throw new ShowKitError({
+      code: "DemoFixtureSetupFailed",
+      message:
+        "The capture viewport must use WIDTHxHEIGHT CSS pixels. No browser was opened and no captured page was saved.",
+      exitCode: EXIT_CODES.validation,
+      recovery:
+        "Use `--viewport 1280x720`, or pass the exact requested or existing-demo viewport."
+    });
+  }
+  return { width, height };
 }
 
 async function recordOperation(summary: {
@@ -557,6 +594,13 @@ function captureFailure(output: string): ShowKitError {
     CaptureTooLarge: {
       message: "The captured product flow exceeds a safety size limit. No captured page was saved.",
       recovery: "Reduce the number or size of captured states and assets, then capture again."
+    },
+    DemoFixtureSetupFailed: {
+      message:
+        "The browser source flow does not match its capture setup. No captured page was saved.",
+      recovery:
+        "Keep the fixed Playwright viewport equal to the capture contract. Use another `--viewport WIDTHxHEIGHT` only for an exact requested size or an existing demo.",
+      exitCode: EXIT_CODES.environment
     }
   };
   const code = Object.keys(definitions).find((candidate) =>
@@ -567,12 +611,30 @@ function captureFailure(output: string): ShowKitError {
     const category = output.match(
       /\[SHOWKIT-CATEGORY:([a-z0-9-]{1,80})\]/
     )?.[1];
+    const viewport = output.match(
+      /\[SHOWKIT-VIEWPORT:(\d{1,4})x(\d{1,4}):(\d{1,4})x(\d{1,4})\]/
+    );
+    const details = {
+      ...(category ? { category } : {}),
+      ...(viewport
+        ? {
+            expectedViewport: {
+              width: Number(viewport[1]),
+              height: Number(viewport[2])
+            },
+            actualViewport: {
+              width: Number(viewport[3]),
+              height: Number(viewport[4])
+            }
+          }
+        : {})
+    };
     return new ShowKitError({
       code,
       message: definition.message,
       recovery: definition.recovery,
       ...(definition.exitCode ? { exitCode: definition.exitCode } : {}),
-      ...(category ? { details: { category } } : {})
+      ...(Object.keys(details).length > 0 ? { details } : {})
     });
   }
   if (/No tests found/i.test(output)) {
@@ -581,7 +643,7 @@ function captureFailure(output: string): ShowKitError {
       message:
         "Playwright did not discover this source flow. No browser was opened and no captured page was saved.",
       recovery:
-        "Rename the file to `*.spec.ts` or configure Playwright `testMatch` to include it, then run `showkit capture <spec> --preflight --json`."
+        "Rename the file to `*.spec.ts` or configure Playwright `testMatch` to include it, then run `showkit capture <spec> --viewport 1280x720 --preflight --json`."
     });
   }
   if (/ERR_PACKAGE_PATH_NOT_EXPORTED|ERR_REQUIRE_ESM|No "exports" main defined/i.test(output)) {
@@ -590,7 +652,7 @@ function captureFailure(output: string): ShowKitError {
       message:
         "Playwright could not load the ShowKit fixture in this project module format. No browser was opened and no captured page was saved.",
       recovery:
-        "Update `@showkit/cli`, or use a new ESM output folder with `npm pkg set type=module`, then run `showkit capture <spec> --preflight --json`."
+        "Update `@showkit/cli`, or use a new ESM output folder with `npm pkg set type=module`, then run `showkit capture <spec> --viewport 1280x720 --preflight --json`."
     });
   }
   return new ShowKitError({
@@ -647,6 +709,7 @@ function capturePerformanceFromOutput(output: string):
 export async function captureCommand(args: string[]): Promise<CommandResult> {
   const id = operationId();
   const preflightOnly = args.includes("--preflight");
+  const expectedViewport = captureViewportArgument(args);
   const [specArgument] = positionalArgs(args);
   if (!specArgument) {
     throw new ShowKitError({
@@ -713,7 +776,8 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
         cwd: process.cwd(),
         env: {
           ...process.env,
-          SHOWKIT_CAPTURE_OUTPUT: captureOutput
+          SHOWKIT_CAPTURE_OUTPUT: captureOutput,
+          SHOWKIT_EXPECTED_VIEWPORT: `${expectedViewport.width}x${expectedViewport.height}`
         },
         maxBuffer: CAPTURE_PROCESS_BUFFER_LIMIT
       });
@@ -740,7 +804,8 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
         operationId: id,
         status: "source-ready",
         sourceHash,
-        browserLaunchRequested: false
+        browserLaunchRequested: false,
+        expectedViewport
       };
     }
     const envelope = CaptureEnvelopeSchema.parse(
@@ -766,6 +831,7 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
       path: committed.path,
       sourceMode: capture.source.kind,
       replayLevel: capture.source.replayLevel,
+      viewport: capture.viewport,
       policyChecksPassed: true,
       fullSceneRasterCount: 0,
       ...(capturePerformance ? { capturePerformance } : {})
@@ -1618,8 +1684,8 @@ export function helpCommand(): CommandResult {
     commands: [
       "showkit doctor --json",
       "showkit init --json",
-      "showkit capture <demo.spec.ts> --preflight --json",
-      "showkit capture <demo.spec.ts> --json",
+      "showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json",
+      "showkit capture <demo.spec.ts> --viewport 1280x720 --json",
       "showkit capture session <safe-envelope.json> --json",
       "showkit capture static <safe-envelope.json> --json",
       "showkit story apply <story.json> --json",

@@ -49,6 +49,20 @@ choice, or an external permission is actually required.
   an existing demo, use its recorded viewport instead of silently changing its
   aspect ratio. Ask only when the person requests another size or the source
   cannot be represented at the required viewport.
+- Pass that contract to every optional Playwright command as
+  `--viewport 1280x720` for a new default-size demo, or as the exact requested
+  or existing-demo size. The CLI must fail before persistence when
+  `test.use({ viewport })` differs. Do not shrink or reshape the viewport, choose
+  an unrelated scroll position, or omit a required visible region to evade an
+  `UnsupportedSurface`; keep the failure and use another genuinely supported
+  product state instead.
+- Treat the highlighted target as the complete visible interaction box. When a
+  radio or checkbox uses a visually hidden input, the highlight, spotlight, and
+  card-clearance geometry must use its visible associated label rather than the
+  1×1 input box. At every step and after the resized-preview check, require zero
+  intersection between the card and that full highlighted box. Do not shrink
+  the highlight or accept partial occlusion to make placement pass; use another
+  card position or keep the demo blocked.
 - Apply the chosen viewport to the same selected tab with the host's documented
   window or viewport control, then read the environment again and require an
   exact CSS-pixel match. Do not resize by mutating page HTML, use a replacement
@@ -79,6 +93,10 @@ choice, or an external permission is actually required.
 
 - Installing this skill installs agent instructions only. It does not install or
   update `@showkit/cli`, `@playwright/test`, or browser binaries.
+- A generated static smoke demo proves only that the installed CLI can complete
+  its local lifecycle. Never present that preview as the requested product
+  capture or as visual-fidelity evidence; report its visual fidelity as
+  `incomplete` until it is compared with its intended rendered source.
 - When an install-first onboarding prompt asks for setup before a source is
   known, finish and verify the skill installation, then ask exactly **What
   product URL or currently open product flow should I use?** Wait for the
@@ -241,11 +259,15 @@ without blocking the workflow.
    source SVG, a data URL, a complete control, or a scene raster. Treat video,
    large canvas, maps, cross-origin frames, closed or interactive shadow
    surfaces, and unresolved critical assets as `UnsupportedSurface`.
-5. Run `showkit capture <demo.spec.ts> --preflight --json` and require
+5. Run
+   `showkit capture <demo.spec.ts> --viewport <capture-width>x<capture-height> --preflight --json`
+   and require
    `status: "source-ready"` before opening a temporary browser.
-6. Run `showkit capture <demo.spec.ts> --json` as a retained foreground
-   process. For a live sign-in gate, keep the same process and context alive
-   until capture finishes.
+6. Run
+   `showkit capture <demo.spec.ts> --viewport <capture-width>x<capture-height> --json`
+   as a retained foreground process. Require the returned `viewport` to equal
+   the chosen contract. For a live sign-in gate, keep the same process and
+   context alive until capture finishes.
 7. Read only the saved CaptureSource evidence needed to write the StorySpec. Do
    not inspect browser storage, headers, cookies, or raw product data.
 8. Keep tooltip claims within captured visible text and action outcomes.
@@ -380,7 +402,8 @@ without blocking the workflow.
 13. Apply `references/visual-fidelity.md` to the live source and local preview
     at the same CSS viewport and product state. Check task text and wrapping,
     primary layout, layout-critical assets, typography, control affordances,
-    hotspot and internal control geometry, the complete capture-aspect scene,
+    hotspot and internal control geometry, zero card overlap with the complete
+    visible highlighted interaction box, the complete capture-aspect scene,
     player-card clearance from every visible dialog, alert dialog, menu,
     listbox, or tooltip, and one resized preview. Use the stated 4 CSS pixel
     geometry budget. The current hotspot target must remain undimmed inside the
@@ -436,5 +459,6 @@ without blocking the workflow.
 
 Report CLI readiness and capture readiness separately, then report the source
 mode, replay level, captured step count, check result, visual fidelity status,
-capture viewport, demo version, local output path, and local preview URL. Keep
-captured, built, checked, previewed, and published states distinct.
+expected and returned capture viewport, demo version, local output path, and
+local preview URL. Keep captured, built, checked, previewed, and published
+states distinct.

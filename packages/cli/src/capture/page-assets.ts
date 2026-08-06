@@ -312,10 +312,6 @@ export function collectVisiblePageAssetInventory(): VisiblePageAssetInventory {
       rectangle.width > 96 ||
       rectangle.height > 96 ||
       rectangle.width * rectangle.height > 4_096 ||
-      rectangle.left < 0 ||
-      rectangle.top < 0 ||
-      rectangle.right > innerWidth ||
-      rectangle.bottom > innerHeight ||
       !Number.isFinite(boxWidth) ||
       !Number.isFinite(boxHeight) ||
       boxWidth < 4 ||
@@ -1799,6 +1795,7 @@ export async function preparePlaywrightPageAssets(
     );
   }
 
+  const viewport = page.viewportSize();
   for (const candidate of inventory.renderedIcons) {
     const rasterizedCandidateKey = renderedMatchKey(candidate.source, {
       ...candidate.match,
@@ -1813,6 +1810,11 @@ export async function preparePlaywrightPageAssets(
       resolvedSources.has(candidate.source) ||
       rasterizedMatchKeys.has(rasterizedCandidateKey) ||
       !candidate.directElementSafe ||
+      !viewport ||
+      candidate.left < 0 ||
+      candidate.top < 0 ||
+      candidate.left + candidate.width > viewport.width ||
+      candidate.top + candidate.height > viewport.height ||
       assets.size >= 64
     ) {
       continue;

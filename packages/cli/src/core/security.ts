@@ -94,6 +94,7 @@ const ALLOWED_NODE_ATTRIBUTES = new Set([
   "y1",
   "y2",
   "data-showkit-anchor",
+  "data-showkit-interaction-box",
   "data-showkit-pseudo",
   "data-showkit-text",
   "data-showkit-scene-root"

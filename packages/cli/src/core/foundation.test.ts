@@ -43,8 +43,8 @@ describe("public package contract", () => {
         "commands": [
           "showkit doctor --json",
           "showkit init --json",
-          "showkit capture <demo.spec.ts> --preflight --json",
-          "showkit capture <demo.spec.ts> --json",
+          "showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json",
+          "showkit capture <demo.spec.ts> --viewport 1280x720 --json",
           "showkit capture session <safe-envelope.json> --json",
           "showkit capture static <safe-envelope.json> --json",
           "showkit story apply <story.json> --json",
