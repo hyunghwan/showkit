@@ -380,11 +380,23 @@ test("uses the target name to disambiguate repeated browser-session test IDs", a
     <main>
       <span data-testid="filter-chip" role="listitem" tabindex="0">Date and time</span>
       <span data-testid="filter-chip" role="listitem" tabindex="0">Amount</span>
+      <button type="button" data-testid="amount-trigger" aria-label="Amount" data-result="Exact amount"></button>
+      <button type="button" data-testid="amount-trigger" aria-label="Amount due" data-result="Amount due"></button>
+      <span id="date-trigger-label">Date and time</span>
+      <button type="button" data-testid="date-trigger" aria-labelledby="date-trigger-label" data-result="Labelled by"></button>
+      <label for="currency-trigger">Currency</label>
+      <input id="currency-trigger" type="checkbox" data-testid="currency-trigger" data-result="Associated label">
+      <input type="button" data-testid="apply-trigger" value="Apply" data-result="Input value">
       <output id="selection">No filter selected</output>
       <script>
         for (const chip of document.querySelectorAll('[data-testid="filter-chip"]')) {
           chip.addEventListener("click", () => {
             document.querySelector("#selection").textContent = chip.textContent + " opened";
+          });
+        }
+        for (const target of document.querySelectorAll("[data-result]")) {
+          target.addEventListener("click", () => {
+            document.querySelector("#selection").textContent = target.dataset.result;
           });
         }
       </script>
@@ -419,6 +431,46 @@ test("uses the target name to disambiguate repeated browser-session test IDs", a
   );
 
   await expect(page.locator("#selection")).toHaveText("Amount opened");
+
+  const accessibleNameTargets = [
+    {
+      target: {
+        strategy: "test-id" as const,
+        testId: "amount-trigger",
+        name: "Amount"
+      },
+      expected: "Exact amount"
+    },
+    {
+      target: {
+        strategy: "test-id" as const,
+        testId: "date-trigger",
+        name: "Date and time"
+      },
+      expected: "Labelled by"
+    },
+    {
+      target: {
+        strategy: "test-id" as const,
+        testId: "currency-trigger",
+        name: "Currency"
+      },
+      expected: "Associated label"
+    },
+    {
+      target: {
+        strategy: "test-id" as const,
+        testId: "apply-trigger",
+        name: "Apply"
+      },
+      expected: "Input value"
+    }
+  ];
+
+  for (const { target, expected } of accessibleNameTargets) {
+    await adapter.performAction(target, "disclose");
+    await expect(page.locator("#selection")).toHaveText(expected);
+  }
 });
 
 test("resolves the viewport target when an offscreen duplicate has the same role and name", async ({
