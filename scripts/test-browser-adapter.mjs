@@ -2611,6 +2611,10 @@ const navigationLocator = {
   async isVisible() {
     return true;
   },
+  async getAttribute(name) {
+    assert.equal(name, "href");
+    return "/reports";
+  },
   async click() {
     navigationClickCount += 1;
   }

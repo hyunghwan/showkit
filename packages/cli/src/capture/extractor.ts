@@ -3343,6 +3343,12 @@ export async function extractSceneKernel(
             }
             return value.replace(/[\t\n\f\r ]+/g, " ");
           };
+          const preservesLineBreaks = [
+            "pre",
+            "pre-line",
+            "pre-wrap",
+            "break-spaces"
+          ].includes(sourceWhiteSpace);
           const collapsedWhiteSpace = ![
             "pre",
             "pre-wrap",
@@ -3581,16 +3587,19 @@ export async function extractSceneKernel(
               children.push(fragment.node);
               children.push(...fragment.decorations);
               const next = textNodes[index + 1];
-              if (
-                next &&
-                /[\t\n\f\r ]/.test(
-                  originalText.slice(
-                    Math.max(fragment.end - 1, 0),
-                    Math.min(next.start + 1, originalText.length)
-                  )
-                )
-              ) {
-                children.push({ type: "text", text: " " });
+              if (next) {
+                const separatorSource = originalText.slice(
+                  Math.max(fragment.end - 1, 0),
+                  Math.min(next.start + 1, originalText.length)
+                );
+                if (
+                  preservesLineBreaks &&
+                  /\r\n?|\n/.test(separatorSource)
+                ) {
+                  children.push({ type: "text", text: "\n" });
+                } else if (/[\t\n\f\r ]/.test(separatorSource)) {
+                  children.push({ type: "text", text: " " });
+                }
               }
             }
             return {

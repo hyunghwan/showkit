@@ -2614,11 +2614,9 @@ export function createCodexBrowserAdapter({
           throw new Error("The selected navigation target is unavailable.");
         }
         const href =
-          target.strategy === "href"
-            ? target.path
-            : typeof navigationTarget.locator.getAttribute === "function"
-              ? await navigationTarget.locator.getAttribute("href")
-              : null;
+          typeof navigationTarget.locator.getAttribute === "function"
+            ? await navigationTarget.locator.getAttribute("href")
+            : null;
         if (typeof href === "string" && href.trim() !== "") {
           const destination = new URL(href, currentUrl);
           if (

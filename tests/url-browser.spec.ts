@@ -474,7 +474,7 @@ test("uses the target name to disambiguate repeated browser-session test IDs", a
   }
 });
 
-test("normalizes absolute browser-session href targets by path and name", async ({
+test("normalizes absolute browser-session href targets and follows the matched URL", async ({
   page
 }) => {
   await page.setContent(`
@@ -484,6 +484,7 @@ test("normalizes absolute browser-session href targets by path and name", async 
       <a href="https://example.com/help">Open guide</a>
     </main>
   `);
+  const navigatedUrls: string[] = [];
   const adapter = createCodexBrowserAdapter({
     tab: {
       playwright: {
@@ -494,7 +495,11 @@ test("normalizes absolute browser-session href targets by path and name", async 
         getByRole: (role: string, options: { name: string; exact: boolean }) =>
           page.getByRole(role as never, options)
       },
-      url: () => Promise.resolve(page.url())
+      url: () => Promise.resolve(page.url()),
+      goto: (url: string) => {
+        navigatedUrls.push(url);
+        return Promise.resolve();
+      }
     },
     browserSurface: "iab",
     browserName: "Codex Browser",
@@ -508,6 +513,17 @@ test("normalizes absolute browser-session href targets by path and name", async 
       name: "Open guide"
     })
   ).resolves.toEqual({ matchedCount: 1, visibleCount: 1 });
+
+  await adapter.performAction(
+    {
+      strategy: "href",
+      path: "/docs",
+      name: "Open guide"
+    },
+    "navigate"
+  );
+
+  expect(navigatedUrls).toEqual(["https://example.com/docs"]);
 });
 
 test("waits through a transient action state before accepting the durable state", async ({
@@ -2238,6 +2254,49 @@ test("splits wrapping text into positioned selectable line fragments", async ({
         node.styles?.["white-space"] === "pre"
     )
   ).toBe(true);
+});
+
+test("preserves explicit newlines between positioned preformatted fragments", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font: 14px/20px Arial, sans-serif">
+      <pre style="font: inherit; margin: 0">First line\nSecond line</pre>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]") as Array<{
+    type: string;
+    text?: string;
+    children?: unknown[];
+  }>;
+  const capturedText = (nodes: unknown[]): string =>
+    nodes
+      .map((node) => {
+        if (typeof node !== "object" || node === null || !("type" in node)) {
+          return "";
+        }
+        const candidate = node as {
+          type: string;
+          text?: string;
+          children?: unknown[];
+        };
+        return candidate.type === "text"
+          ? candidate.text ?? ""
+          : capturedText(candidate.children ?? []);
+      })
+      .join("");
+
+  expect(capturedText(transferred)).toContain("First line\nSecond line");
 });
 
 test("redacts a sensitive value before splitting wrapped text", async ({
