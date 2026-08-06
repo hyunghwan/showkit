@@ -1935,6 +1935,120 @@ test.describe("Milestone 1 local workflow", () => {
     await expect(page.getByRole("button", { name: "Restart demo" })).toBeHidden();
   });
 
+  test("keeps narrow frame cards inside the player and clear of centered targets", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(frameUrl);
+
+    const welcomeGeometry = await page.evaluate(() => {
+      const shell = document.querySelector("#scene-shell");
+      const welcome = document.querySelector(".welcome-card");
+      if (!(shell instanceof HTMLElement) || !(welcome instanceof HTMLElement)) {
+        return null;
+      }
+      const shellBox = shell.getBoundingClientRect();
+      const welcomeBox = welcome.getBoundingClientRect();
+      return {
+        shellHeight: shellBox.height,
+        inside:
+          welcomeBox.left >= shellBox.left &&
+          welcomeBox.top >= shellBox.top &&
+          welcomeBox.right <= shellBox.right &&
+          welcomeBox.bottom <= shellBox.bottom
+      };
+    });
+    expect(welcomeGeometry).not.toBeNull();
+    expect(welcomeGeometry?.shellHeight).toBeGreaterThanOrEqual(500);
+    expect(welcomeGeometry?.inside).toBe(true);
+
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    await page.evaluate(() => {
+      const payload = (
+        window as typeof window & {
+          __SHOWKIT_DEMO__: { steps: Array<{ anchorId: string }> };
+        }
+      ).__SHOWKIT_DEMO__;
+      const anchor = document.querySelector(
+        `[data-showkit-anchor="${CSS.escape(payload.steps[0]!.anchorId)}"]`
+      );
+      const viewport = document.querySelector("#scene-viewport");
+      if (!(anchor instanceof HTMLElement) || !(viewport instanceof HTMLElement)) {
+        throw new Error("Expected the active captured target");
+      }
+      const viewportBox = viewport.getBoundingClientRect();
+      const anchorBox = anchor.getBoundingClientRect();
+      const scale = new DOMMatrixReadOnly(getComputedStyle(viewport).transform).a;
+      const transform = new DOMMatrix(getComputedStyle(anchor).transform);
+      transform.e +=
+        (viewportBox.left + viewportBox.width / 2 -
+          (anchorBox.left + anchorBox.width / 2)) /
+        scale;
+      transform.f +=
+        (viewportBox.top + viewportBox.height / 2 -
+          (anchorBox.top + anchorBox.height / 2)) /
+        scale;
+      anchor.style.transformOrigin = "0 0";
+      anchor.style.transform = transform.toString();
+      const obstacle = document.createElement("div");
+      obstacle.setAttribute("role", "dialog");
+      Object.assign(obstacle.style, {
+        position: "absolute",
+        left: "0",
+        bottom: "0",
+        width: "100%",
+        height: "32px"
+      });
+      viewport.append(obstacle);
+    });
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const shell = document.querySelector("#scene-shell");
+          const hotspot = document.querySelector("#hotspot");
+          const tooltip = document.querySelector("#tooltip");
+          if (
+            !(shell instanceof HTMLElement) ||
+            !(hotspot instanceof HTMLElement) ||
+            !(tooltip instanceof HTMLElement)
+          ) {
+            return null;
+          }
+          const shellBox = shell.getBoundingClientRect();
+          const hotspotBox = hotspot.getBoundingClientRect();
+          const tooltipBox = tooltip.getBoundingClientRect();
+          const overlap =
+            Math.max(
+              0,
+              Math.min(hotspotBox.right, tooltipBox.right) -
+                Math.max(hotspotBox.left, tooltipBox.left)
+            ) *
+            Math.max(
+              0,
+              Math.min(hotspotBox.bottom, tooltipBox.bottom) -
+                Math.max(hotspotBox.top, tooltipBox.top)
+            );
+          return {
+            overlap,
+            reportedOverlap: Number(tooltip.dataset.targetOverlap),
+            reportedSceneOverlap: Number(tooltip.dataset.sceneOverlap),
+            inside:
+              tooltipBox.left >= shellBox.left &&
+              tooltipBox.top >= shellBox.top &&
+              tooltipBox.right <= shellBox.right &&
+              tooltipBox.bottom <= shellBox.bottom
+          };
+        })
+      )
+      .toEqual({
+        overlap: 0,
+        reportedOverlap: 0,
+        reportedSceneOverlap: 0,
+        inside: true
+      });
+  });
+
   test("keeps player controls named, referenced, and free of duplicate IDs", async ({
     page
   }) => {
@@ -1965,6 +2079,152 @@ test.describe("Milestone 1 local workflow", () => {
       "tooltip-body"
     );
     await expect(page.locator("#tooltip-body")).toBeVisible();
+  });
+
+  test("fits bounded fallback font drift to the captured text rectangle", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const renderedWidth = (text: string, fontFamily: string) => {
+        const probe = document.createElement("span");
+        probe.textContent = text;
+        Object.assign(probe.style, {
+          fontFamily,
+          fontSize: "20px",
+          lineHeight: "24px",
+          position: "absolute",
+          visibility: "hidden",
+          whiteSpace: "pre"
+        });
+        document.body.append(probe);
+        const range = document.createRange();
+        range.selectNodeContents(probe);
+        const width = range.getBoundingClientRect().width;
+        probe.remove();
+        return width;
+      };
+      const capturedWidth = renderedWidth("Fallback metric", "Georgia, serif") * 1.4;
+      const capturedGlyphWidth = renderedWidth("⌁", "sans-serif") * 1.8;
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            steps: Array<{ nodes: Array<Record<string, unknown>> }>;
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: { "data-showkit-text": "", id: "fallback-metric" },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "40px",
+          top: "40px",
+          width: capturedWidth + "px",
+          height: "24px",
+          "font-family": "Georgia, serif",
+          "font-size": "20px",
+          "line-height": "24px",
+          "white-space": "pre"
+        },
+        children: [{ type: "text", text: "Fallback metric" }]
+      });
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: { "data-showkit-text": "", id: "fallback-glyph" },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "40px",
+          top: "80px",
+          width: capturedGlyphWidth + "px",
+          height: "24px",
+          "font-family": "sans-serif",
+          "font-size": "20px",
+          "line-height": "24px",
+          "white-space": "pre"
+        },
+        children: [{ type: "text", text: "⌁" }]
+      });
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-layout",
+      "checked"
+    );
+    expect(
+      Number(
+        await page
+          .locator("#scene-viewport")
+          .getAttribute("data-text-metric-fit-count")
+      )
+    ).toBeGreaterThan(0);
+    await expect(page.locator("#fallback-metric > [data-showkit-text-fit]")).toBeAttached();
+    await expect(page.locator("#fallback-glyph > [data-showkit-text-fit]")).toBeAttached();
+  });
+
+  test("reports generated HTML text drift and collisions before fidelity is claimed", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-layout",
+      "checked"
+    );
+    await page.evaluate(() => {
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            steps: Array<{ nodes: Array<Record<string, unknown>> }>;
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: { "data-showkit-text": "" },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "40px",
+          top: "40px",
+          width: "20px",
+          height: "20px",
+          "line-height": "20px",
+          "white-space": "pre"
+        },
+        children: [
+          {
+            type: "text",
+            text: "This captured line cannot fit its recorded rectangle"
+          }
+        ]
+      });
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-layout",
+      "failed"
+    );
+    expect(
+      Number(
+        await page
+          .locator("#scene-viewport")
+          .getAttribute("data-text-metric-drift-count")
+      )
+    ).toBeGreaterThan(0);
+    expect(
+      Number(
+        await page
+          .locator("#scene-viewport")
+          .getAttribute("data-text-collision-count")
+      )
+    ).toBeGreaterThan(0);
   });
 
   test("reports artifact drift and fails the opt-in CI check", () => {
@@ -2301,6 +2561,7 @@ test("captures a labelled radio target", async ({ page, demo }) => {
           height: Math.max(0, labelBottom - labelTop)
         };
         const hotspotBox = hotspot.getBoundingClientRect();
+        const hotspotStyle = getComputedStyle(hotspot);
         const tooltipBox = tooltip.getBoundingClientRect();
         const dialogBox = dialog.getBoundingClientRect();
         const overlapWidth = Math.max(
@@ -2335,6 +2596,11 @@ test("captures a labelled radio target", async ({ page, demo }) => {
             width: hotspotBox.width,
             height: hotspotBox.height
           },
+          hotspotStyle: {
+            backgroundColor: hotspotStyle.backgroundColor,
+            outlineOffset: hotspotStyle.outlineOffset,
+            outlineStyle: hotspotStyle.outlineStyle
+          },
           hotspotError: Math.max(
             Math.abs(labelBox.left - hotspotBox.left),
             Math.abs(labelBox.top - hotspotBox.top),
@@ -2359,6 +2625,9 @@ test("captures a labelled radio target", async ({ page, demo }) => {
         geometry.hotspotError,
         JSON.stringify(geometry)
       ).toBeLessThanOrEqual(4);
+      expect(geometry.hotspotStyle.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+      expect(geometry.hotspotStyle.outlineStyle).toBe("solid");
+      expect(Number.parseFloat(geometry.hotspotStyle.outlineOffset)).toBeGreaterThan(0);
       expect(geometry.tooltipOverlap).toBe(0);
       expect(geometry.dialogTooltipOverlap).toBe(0);
 

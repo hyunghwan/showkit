@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Inline typography assurance</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 16px/24px Arial, sans-serif;
+      }
+      main {
+        padding: 24px;
+        width: 420px;
+      }
+      p { width: 360px; }
+      .hyphenated {
+        hyphens: manual;
+        width: 90px;
+      }
+      .visually-hidden {
+        clip-path: inset(0 100% 100% 0);
+        height: 1px;
+        overflow: hidden;
+        position: absolute;
+        width: 1px;
+      }
+      .overlay-input {
+        height: 40px;
+        position: relative;
+        width: 360px;
+      }
+      .overlay-input input {
+        border: 1px solid #777;
+        color: transparent;
+        height: 40px;
+        width: 100%;
+      }
+      .overlay-input .tokens {
+        align-items: center;
+        display: flex;
+        inset: 0 12px;
+        pointer-events: none;
+        position: absolute;
+      }
+      .split-control {
+        height: 44px;
+        margin-top: 16px;
+        position: relative;
+        width: 92px;
+      }
+      .split-control .label {
+        align-items: center;
+        display: flex;
+        height: 44px;
+        width: 72px;
+      }
+      .split-control button {
+        background: transparent;
+        border: 0;
+        height: 44px;
+        left: 70px;
+        min-width: 0;
+        position: absolute;
+        top: 0;
+        width: 22px;
+      }
+      button {
+        min-height: 40px;
+        min-width: 120px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>
+        <strong>Tip:</strong> This tutorial is designed for
+        <em>people learning the language</em>, not for readers who already know
+        every concept.
+      </p>
+      <p><strong>downloaded</strong> and used for <strong>free</strong></p>
+      <p class="hyphenated"><em>lexical ana&shy;lyzer</em></p>
+      <div class="overlay-input">
+        <label class="visually-hidden" for="query">Search reports</label>
+        <input
+          id="query"
+          type="text"
+          placeholder="Search reports"
+          value="status:open"
+        >
+        <span class="tokens">status:<strong>open</strong></span>
+      </div>
+      <div class="split-control">
+        <span class="label">Reports</span>
+        <button type="button" aria-label="Reports menu"><span></span></button>
+      </div>
+      <button type="button">Continue</button>
+    </main>
+  </body>
+</html>

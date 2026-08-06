@@ -245,6 +245,14 @@ After a supported capture:
 4. Compare the source and preview at the capture viewport and once after
    resizing. Require zero overlap between ShowKit cards and visible captured
    dialogs, alert dialogs, menus, listboxes, tooltips, and the active hotspot.
+   After `document.fonts.ready`, require
+   `#scene-viewport[data-text-layout="checked"]` and zero text metric drift,
+   multi-line text wrappers, new text collisions, and suppressed placeholders
+   on every step and the completion scene. Inspect the generated HTML directly.
+   A nonzero
+   `data-text-metric-fit-count` is allowed only for the bounded source-declared
+   fallback rule in `references/visual-fidelity.md`; never raise the capture
+   resolution or bypass the documented asset provider to make this pass.
    Report visual fidelity as `checked`, `incomplete`, or `blocked`.
 5. Keep captured, built, checked, previewed, and published states distinct.
 6. Publish only after a separate explicit request and destination confirmation.

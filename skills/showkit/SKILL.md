@@ -59,10 +59,22 @@ choice, or an external permission is actually required.
 - Treat the highlighted target as the complete visible interaction box. When a
   radio or checkbox uses a visually hidden input, the highlight, spotlight, and
   card-clearance geometry must use its visible associated label rather than the
-  1×1 input box. At every step and after the resized-preview check, require zero
+  1×1 input box. When a compact disclosure control and its visible label are
+  separate siblings but form one labeled interaction, use their full labeled
+  interaction box instead of the icon-only rectangle. At every step and after
+  the resized-preview check, require zero
   intersection between the card and that full highlighted box. Do not shrink
   the highlight or accept partial occlusion to make placement pass; use another
   card position or keep the demo blocked.
+- Before capturing a step, center a non-fixed target that is too close to the
+  top or bottom of the capture viewport. Keep fixed and sticky controls in their
+  rendered position. Never crop the page or change the agreed viewport to make
+  the target fit.
+- After an action, wait for a durable visible state: fonts, visible images,
+  finite layout animations, and page mutations must settle before extraction.
+  A transient state that returns to the pre-action state is not a successful
+  action. Stop that step or use another supported semantic target or route that
+  preserves the requested outcome; do not save a blank or incomplete scene.
 - Apply the chosen viewport to the same selected tab with the host's documented
   window or viewport control, then read the environment again and require an
   exact CSS-pixel match. Do not resize by mutating page HTML, use a replacement
@@ -215,7 +227,15 @@ without blocking the workflow.
    `showkit validate`, `showkit build web,markdown`, and
    `showkit preview --json`.
 8. Compare the preview with the intended rendered source before reporting
-   visual fidelity as `checked`. Otherwise report `incomplete`.
+   visual fidelity as `checked`. After `document.fonts.ready`, require
+   `#scene-viewport[data-text-layout="checked"]` with zero text metric drift,
+   multi-line text wrappers, and new text collisions on every scene. Otherwise
+   report `incomplete` or `blocked` as defined by the visual-fidelity contract.
+   Inspect the generated HTML directly. When an otherwise visible WOFF2 is
+   rejected by the documented asset provider, accept only the contract's
+   bounded `0.8` through `1.25` source-declared fallback metric fit with no more
+   than `8` CSS pixels of translation; do not increase capture resolution or
+   read the font body through another path.
 9. Apply the same constrained theme, player, completion-card, accessibility,
    and publish boundaries below.
 
@@ -303,8 +323,10 @@ without blocking the workflow.
 15. Run `showkit build web,markdown --json`.
 16. Run `showkit preview --json`, state that the URL is local and not
     published, then apply the general visual-fidelity contract at the capture
-    viewport and once at a resized preview. Do not patch a generated scene to
-    make the comparison pass.
+    viewport and once at a resized preview. Require the generated HTML
+    typography audit to be `checked` with every text failure count at `0` on
+    every step and the completion scene. Do not patch a generated scene to make
+    the comparison pass.
 17. Present the first local preview with its current backdrop, navigation,
     theme, and completion-card settings. Ask whether the person wants to change
     only those settings. Do not offer arbitrary radius, shadow, spacing,
@@ -386,7 +408,14 @@ without blocking the workflow.
    does not expose that image and the person confirmed visible-session assets,
    the adapter may preserve only the exact rendered pixels of an isolated,
    text-free icon element with each axis at or below 96 CSS pixels and total
-   area at or below 4,096 CSS pixels. Keep the control, text, layout, and scene
+   area at or below 4,096 CSS pixels. The same bounded element rule may preserve
+   a private-use icon glyph only when its exact icon-font bytes are unavailable,
+   the semantic control has no rendered text, and direct element capture keeps
+   the stable backdrop. With `decorative-remove`, a private-use pseudo glyph may
+   instead be omitted only when the same semantic control has independently
+   visible text; record `decorative-icon-font-glyphs`. An icon-only control still
+   fails closed when exact bytes or bounded direct-element capture are
+   unavailable. Keep the control, text, layout, and scene
    as semantic HTML. Never render the complete control,
    a text region, or the full scene as an image. Stop on
    `UnsupportedSurface` when a layout-critical dependency cannot be reproduced
@@ -416,7 +445,14 @@ without blocking the workflow.
     scene shell with bottom-edge clearance. The current hotspot target must
     remain undimmed inside the step backdrop spotlight. A player card that
     overlaps a prominent captured component is a failed preview, including on
-    the completion state. Follow
+    the completion state. After `document.fonts.ready`, require
+    `#scene-viewport[data-text-layout="checked"]` and require
+    `data-text-metric-drift-count`, `data-text-multi-line-fragment-count`, and
+    `data-text-collision-count`, and `data-suppressed-placeholder-count` to all
+    equal `0` on every step and the completion scene. Read
+    `data-text-metric-fit-count` as a diagnostic; a
+    nonzero value is allowed only within the bounded fallback rule in
+    `references/visual-fidelity.md`. Follow
     the generic recovery ladder once. Do not hand-tune generated CSS, patch
     captured HTML, or add a site-specific rule. Report the visual fidelity
     status as `checked`, `incomplete`, or `blocked`; do not claim fidelity while

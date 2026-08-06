@@ -5,6 +5,27 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.6 - 2026-08-06
+
+- Preserved wrapped and mixed-inline text as positioned selectable fragments,
+  bounded fallback-font fitting to captured text boxes, and generated-HTML
+  typography diagnostics for metric drift, multiline fragments, and text
+  collisions.
+- Replayed supported private-use control icons from checked local font assets,
+  removed unavailable decorative glyphs, and stopped before persistence when a
+  required visible icon could not be reproduced.
+- Normalized browser-session navigation targets across absolute and relative
+  URLs, waited for durable post-action states, centered targets near viewport
+  edges, and promoted compact controls to their complete visible labels.
+- Kept responsive guide cards inside narrow player scenes and clear of the
+  active target while omitting hidden descendants from zero-scale interface
+  states.
+- Updated the installed skill compatibility range to require
+  `@showkit/cli >=0.2.6 <0.3.0` for the typography and capture-fidelity
+  contracts.
+- Updated the pinned GitHub Actions while keeping Node type definitions on the
+  supported Node.js 24 line and Playwright on the release-validated version.
+
 ## 0.2.5 - 2026-08-05
 
 - Recomputed guide-card placement from the current visual viewport after

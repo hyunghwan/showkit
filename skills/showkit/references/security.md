@@ -119,6 +119,19 @@
   Record `isolated-rendered-assets` in excluded surfaces. Stop with
   `UnsupportedSurface` for any asset outside these constraints; never emit a
   blank or substituted control icon.
+- Apply that same direct-element boundary to a private-use icon glyph only when
+  its exact icon-font bytes are unavailable. Require one text-free semantic
+  control, a stable backdrop, no child visual surface, no transform, filter, or
+  shadow, and the same 96 CSS pixel and 4,096 CSS pixel limits. Persist the
+  bounded local image for the icon control and suppress the unavailable glyph;
+  never rasterize a visible label or neighboring text.
+- With `decorative-remove`, an unavailable private-use pseudo glyph may be
+  omitted only when its own semantic link, button, menu item, or tab has
+  independently visible text. Preserve the complete text control and record
+  `decorative-icon-font-glyphs`. This exception never applies to an icon-only
+  control, a glyph that carries state or meaning, or `strict` mode; those cases
+  still require exact font bytes or bounded direct-element capture and otherwise
+  return `UnsupportedSurface`.
 - When a downloaded SVG background is static but outside the reusable SVG
   allowlist, the optional Playwright route may render only that exact background
   layer in a new JavaScript-disabled context whose network is fully blocked.

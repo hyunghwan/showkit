@@ -330,9 +330,11 @@ h1 {
   display: block;
   min-width: 24px;
   min-height: 24px;
-  border: 3px solid var(--accent);
+  border: 0;
   border-radius: 8px;
-  background: rgba(255, 90, 54, 0.16);
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  background: transparent;
   box-shadow: 0 0 0 5px rgba(255, 253, 247, 0.78), 0 8px 24px rgba(23, 33, 27, 0.24);
   cursor: pointer;
 }
@@ -706,8 +708,10 @@ main {
   display: block;
   min-width: 24px;
   min-height: 24px;
-  border: 2px solid var(--accent);
+  border: 0;
   border-radius: 7px;
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
   background: transparent;
   box-shadow:
     0 0 0 3px rgba(255, 255, 255, 0.66),
@@ -2256,7 +2260,253 @@ const PLAYER_JS = `(() => {
     return element;
   }
 
+  function fitCapturedTextMetrics(element, box, scale) {
+    let fitted = element.querySelector(":scope > [data-showkit-text-fit]");
+    if (!fitted) {
+      if (
+        Array.from(element.children).some(
+          (child) => !child.matches("[data-showkit-text-fit]")
+        )
+      ) {
+        return false;
+      }
+      fitted = document.createElement("span");
+      fitted.dataset.showkitTextFit = "";
+      fitted.style.display = "inline-block";
+      fitted.style.transformOrigin = "0 0";
+      fitted.style.whiteSpace = "inherit";
+      fitted.append(...Array.from(element.childNodes));
+      element.append(fitted);
+    }
+    fitted.style.transform = "none";
+    const range = document.createRange();
+    range.selectNodeContents(fitted);
+    const rendered = range.getBoundingClientRect();
+    if (rendered.width <= 0 || rendered.height <= 0) return false;
+    const scaleX = box.width / rendered.width;
+    const scaleY = box.height / rendered.height;
+    const glyphCount = Array.from((element.textContent || "").trim()).length;
+    const shortGlyph = glyphCount > 0 && glyphCount <= 3;
+    const minimumScale = shortGlyph ? 0.5 : 0.67;
+    const maximumScale = shortGlyph ? 2 : 1.5;
+    if (
+      scaleX < minimumScale ||
+      scaleX > maximumScale ||
+      scaleY < minimumScale ||
+      scaleY > maximumScale
+    ) {
+      return false;
+    }
+    const fittedBox = fitted.getBoundingClientRect();
+    const translateX =
+      (box.left -
+        fittedBox.left -
+        scaleX * (rendered.left - fittedBox.left)) /
+      scale;
+    const translateY =
+      (box.top -
+        fittedBox.top -
+        scaleY * (rendered.top - fittedBox.top)) /
+      scale;
+    const maximumTranslation = shortGlyph ? 16 : 12;
+    if (
+      Math.abs(translateX) > maximumTranslation ||
+      Math.abs(translateY) > maximumTranslation
+    ) {
+      return false;
+    }
+    fitted.style.transform =
+      "translate(" +
+      translateX +
+      "px," +
+      translateY +
+      "px) scale(" +
+      scaleX +
+      "," +
+      scaleY +
+      ")";
+    return true;
+  }
+
+  function suppressConflictingOverlayPlaceholders() {
+    let suppressedCount = 0;
+    const isVisuallyClipped = (element) => {
+      let current = element.parentElement;
+      while (current && current !== elements.viewport) {
+        const style = getComputedStyle(current);
+        const box = current.getBoundingClientRect();
+        const clipsOverflow = [style.overflow, style.overflowX, style.overflowY]
+          .some((value) => value === "hidden" || value === "clip");
+        if (
+          box.width <= 2 &&
+          box.height <= 2 &&
+          clipsOverflow &&
+          style.clipPath !== "none"
+        ) {
+          return true;
+        }
+        current = current.parentElement;
+      }
+      return false;
+    };
+    const visibleTextFragments = Array.from(
+      elements.viewport.querySelectorAll("[data-showkit-text]")
+    ).filter((element) => {
+      if (!element.textContent?.trim() || isVisuallyClipped(element)) {
+        return false;
+      }
+      const box = element.getBoundingClientRect();
+      return box.width > 0 && box.height > 0;
+    });
+    for (const control of elements.viewport.querySelectorAll(
+      "input[placeholder], textarea[placeholder]"
+    )) {
+      if (!(control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement)) {
+        continue;
+      }
+      const color = getComputedStyle(control).color.replace(/\s+/g, "");
+      if (!/rgba\([^)]*,0(?:\.0+)?\)$/i.test(color)) continue;
+      const box = control.getBoundingClientRect();
+      const conflicts = visibleTextFragments.some((fragment) => {
+        const textBox = fragment.getBoundingClientRect();
+        return (
+          Math.min(box.right, textBox.right) - Math.max(box.left, textBox.left) > 2 &&
+          Math.min(box.bottom, textBox.bottom) - Math.max(box.top, textBox.top) > 2
+        );
+      });
+      if (!conflicts) continue;
+      control.removeAttribute("placeholder");
+      suppressedCount += 1;
+    }
+    elements.viewport.dataset.suppressedPlaceholderCount = String(
+      suppressedCount
+    );
+  }
+
+  function auditSceneTypography() {
+    suppressConflictingOverlayPlaceholders();
+    const scale = Math.max(renderedScale || 1, 0.0001);
+    let redactionFitCount = 0;
+    for (const element of elements.viewport.querySelectorAll(
+      '[data-showkit-text="redacted"]'
+    )) {
+      const text = Array.from(element.textContent || "");
+      if (text.length < 2) continue;
+      const box = element.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const rendered = range.getBoundingClientRect();
+      const currentLetterSpacing = Number.parseFloat(
+        getComputedStyle(element).letterSpacing
+      );
+      const adjustment =
+        (box.width - rendered.width) / scale / (text.length - 1);
+      if (Math.abs(adjustment) <= 0.01) continue;
+      element.style.letterSpacing =
+        ((Number.isFinite(currentLetterSpacing) ? currentLetterSpacing : 0) +
+          adjustment) +
+        "px";
+      redactionFitCount += 1;
+    }
+    let metricFitCount = 0;
+    for (const element of elements.viewport.querySelectorAll(
+      "[data-showkit-text]"
+    )) {
+      const box = element.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const rendered = range.getBoundingClientRect();
+      const delta = Math.max(
+        Math.abs(rendered.left - box.left),
+        Math.abs(rendered.top - box.top),
+        Math.abs(rendered.width - box.width),
+        Math.abs(rendered.height - box.height)
+      ) / scale;
+      if (
+        delta > 4 &&
+        fitCapturedTextMetrics(element, box, scale)
+      ) {
+        metricFitCount += 1;
+      }
+    }
+    const fragments = Array.from(
+      elements.viewport.querySelectorAll("[data-showkit-text]")
+    ).map((element) => {
+      const box = element.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(
+        element.querySelector(":scope > [data-showkit-text-fit]") ?? element
+      );
+      const rectangles = Array.from(range.getClientRects()).filter(
+        (rectangle) => rectangle.width > 0 && rectangle.height > 0
+      );
+      const rendered = range.getBoundingClientRect();
+      return { element, box, rectangles, rendered };
+    });
+    let metricDriftCount = 0;
+    let multiLineFragmentCount = 0;
+    for (const fragment of fragments) {
+      if (fragment.rectangles.length !== 1) {
+        multiLineFragmentCount += 1;
+      }
+      const delta = Math.max(
+        Math.abs(fragment.rendered.left - fragment.box.left),
+        Math.abs(fragment.rendered.top - fragment.box.top),
+        Math.abs(fragment.rendered.width - fragment.box.width),
+        Math.abs(fragment.rendered.height - fragment.box.height)
+      ) / scale;
+      if (delta > 4) metricDriftCount += 1;
+    }
+    let collisionCount = 0;
+    const overlapExtent = (left, right) => ({
+      width: Math.max(
+        0,
+        Math.min(left.right, right.right) - Math.max(left.left, right.left)
+      ),
+      height: Math.max(
+        0,
+        Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top)
+      )
+    });
+    for (let leftIndex = 0; leftIndex < fragments.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < fragments.length;
+        rightIndex += 1
+      ) {
+        const left = fragments[leftIndex];
+        const right = fragments[rightIndex];
+        const renderedOverlap = overlapExtent(left.rendered, right.rendered);
+        const capturedOverlap = overlapExtent(left.box, right.box);
+        const newHorizontalOverlap =
+          (renderedOverlap.width - capturedOverlap.width) / scale;
+        const newVerticalOverlap =
+          (renderedOverlap.height - capturedOverlap.height) / scale;
+        if (
+          renderedOverlap.width > 0 &&
+          renderedOverlap.height > 0 &&
+          Math.max(newHorizontalOverlap, newVerticalOverlap) > 4
+        ) {
+          collisionCount += 1;
+        }
+      }
+    }
+    const failed =
+      metricDriftCount > 0 ||
+      multiLineFragmentCount > 0 ||
+      collisionCount > 0;
+    elements.viewport.dataset.textLayout = failed ? "failed" : "checked";
+    elements.viewport.dataset.textMetricDriftCount = String(metricDriftCount);
+    elements.viewport.dataset.textMultiLineFragmentCount = String(
+      multiLineFragmentCount
+    );
+    elements.viewport.dataset.textCollisionCount = String(collisionCount);
+    elements.viewport.dataset.redactionFitCount = String(redactionFitCount);
+    elements.viewport.dataset.textMetricFitCount = String(metricFitCount);
+  }
+
   function replaceScene(scene) {
+    elements.viewport.dataset.textLayout = "pending";
     sceneFontStyle.textContent = (scene.fontFaces ?? [])
       .filter(
         (face) =>
@@ -2294,8 +2544,13 @@ const PLAYER_JS = `(() => {
     if (document.fonts) {
       document.fonts.ready.then(() => {
         scaleScene();
-        positionOverlay();
+        requestAnimationFrame(() => {
+          auditSceneTypography();
+          positionOverlay();
+        });
       });
+    } else {
+      requestAnimationFrame(auditSceneTypography);
     }
   }
 
@@ -2435,7 +2690,7 @@ const PLAYER_JS = `(() => {
     elements.tooltip.style.visibility = "hidden";
     elements.tooltip.hidden = false;
     const tooltipRect = elements.tooltip.getBoundingClientRect();
-    const placementBounds = sceneTooltipPlacementBounds(
+    const scenePlacementBounds = sceneTooltipPlacementBounds(
       shellRect,
       tooltipRect,
       12
@@ -2484,97 +2739,124 @@ const PLAYER_JS = `(() => {
       }
       return false;
     };
-    let selected = {
-      placement: "right",
-      left: placementBounds.minLeft,
-      top: placementBounds.minTop,
-      targetOverlap: Number.POSITIVE_INFINITY,
-      rank: Array(8).fill(Number.POSITIVE_INFINITY)
-    };
-    for (const [preferenceIndex, placement] of [...new Set(preferred)].entries()) {
-      const placementCandidates = [
-        candidates[placement],
-        ...obstacleCandidates(placement)
-      ];
-      for (const [variantIndex, candidate] of placementCandidates.entries()) {
-        const candidateLeft = clamp(
-          candidate[0],
-          placementBounds.minLeft,
-          placementBounds.maxLeft
-        );
-        const candidateTop = clamp(
-          candidate[1],
-          placementBounds.minTop,
-          placementBounds.maxTop
-        );
-        const overflow =
-          Math.max(0, placementBounds.minLeft - candidate[0]) +
-          Math.max(0, placementBounds.minTop - candidate[1]) +
-          Math.max(0, candidate[0] - placementBounds.maxLeft) +
-          Math.max(0, candidate[1] - placementBounds.maxTop);
-        const targetOverlap = overlapArea(
-          candidateLeft,
-          candidateTop,
-          tooltipRect.width,
-          tooltipRect.height,
-          {
-            left: hotspotLeft,
-            top: hotspotTop,
-            right: hotspotLeft + hotspotWidth,
-            bottom: hotspotTop + hotspotHeight
-          }
-        );
-        const chromeOverlap = chromeObstacles.reduce(
-          (area, obstacle) =>
-            area +
-            overlapArea(
-              candidateLeft,
-              candidateTop,
-              tooltipRect.width,
-              tooltipRect.height,
-              obstacle
-            ),
-          0
-        );
-        const sceneOverlap = sceneObstacles.reduce(
-          (area, obstacle) =>
-            area +
-            overlapArea(
-              candidateLeft,
-              candidateTop,
-              tooltipRect.width,
-              tooltipRect.height,
-              obstacle
-            ),
-          0
-        );
-        const rank = [
-          targetOverlap === 0 ? 0 : 1,
-          targetOverlap,
-          sceneOverlap === 0 ? 0 : 1,
-          sceneOverlap,
-          chromeOverlap,
-          overflow,
-          preferenceIndex,
-          variantIndex
+    const selectStepPlacement = (placementBounds) => {
+      let selected = {
+        placement: "right",
+        left: placementBounds.minLeft,
+        top: placementBounds.minTop,
+        targetOverlap: Number.POSITIVE_INFINITY,
+        sceneOverlap: Number.POSITIVE_INFINITY,
+        chromeOverlap: Number.POSITIVE_INFINITY,
+        bottomSafeArea: placementBounds.bottomSafeArea,
+        rank: Array(8).fill(Number.POSITIVE_INFINITY)
+      };
+      for (const [preferenceIndex, placement] of [...new Set(preferred)].entries()) {
+        const placementCandidates = [
+          candidates[placement],
+          ...obstacleCandidates(placement)
         ];
-        if (betterRank(rank, selected.rank)) {
-          selected = {
-            placement,
-            left: candidateLeft,
-            top: candidateTop,
+        for (const [variantIndex, candidate] of placementCandidates.entries()) {
+          const candidateLeft = clamp(
+            candidate[0],
+            placementBounds.minLeft,
+            placementBounds.maxLeft
+          );
+          const candidateTop = clamp(
+            candidate[1],
+            placementBounds.minTop,
+            placementBounds.maxTop
+          );
+          const overflow =
+            Math.max(0, placementBounds.minLeft - candidate[0]) +
+            Math.max(0, placementBounds.minTop - candidate[1]) +
+            Math.max(0, candidate[0] - placementBounds.maxLeft) +
+            Math.max(0, candidate[1] - placementBounds.maxTop);
+          const targetOverlap = overlapArea(
+            candidateLeft,
+            candidateTop,
+            tooltipRect.width,
+            tooltipRect.height,
+            {
+              left: hotspotLeft,
+              top: hotspotTop,
+              right: hotspotLeft + hotspotWidth,
+              bottom: hotspotTop + hotspotHeight
+            }
+          );
+          const chromeOverlap = chromeObstacles.reduce(
+            (area, obstacle) =>
+              area +
+              overlapArea(
+                candidateLeft,
+                candidateTop,
+                tooltipRect.width,
+                tooltipRect.height,
+                obstacle
+              ),
+            0
+          );
+          const sceneOverlap = sceneObstacles.reduce(
+            (area, obstacle) =>
+              area +
+              overlapArea(
+                candidateLeft,
+                candidateTop,
+                tooltipRect.width,
+                tooltipRect.height,
+                obstacle
+              ),
+            0
+          );
+          const rank = [
+            targetOverlap === 0 ? 0 : 1,
             targetOverlap,
-            rank
-          };
+            sceneOverlap === 0 ? 0 : 1,
+            sceneOverlap,
+            chromeOverlap,
+            overflow,
+            preferenceIndex,
+            variantIndex
+          ];
+          if (betterRank(rank, selected.rank)) {
+            selected = {
+              placement,
+              left: candidateLeft,
+              top: candidateTop,
+              targetOverlap,
+              sceneOverlap,
+              chromeOverlap,
+              bottomSafeArea: placementBounds.bottomSafeArea,
+              rank
+            };
+          }
         }
+      }
+      return selected;
+    };
+    let selected = selectStepPlacement(scenePlacementBounds);
+    if (
+      selected.targetOverlap > 0 ||
+      selected.sceneOverlap > 0 ||
+      selected.chromeOverlap > 0
+    ) {
+      const shellPlacementBounds = tooltipPlacementBounds(
+        shellRect,
+        tooltipRect
+      );
+      const shellSelected = selectStepPlacement(shellPlacementBounds);
+      if (betterRank(shellSelected.rank, selected.rank)) {
+        selected = shellSelected;
       }
     }
     elements.tooltip.dataset.placement = selected.placement;
     elements.tooltip.dataset.targetOverlap = String(
       selected.targetOverlap ?? 0
     );
+    elements.tooltip.dataset.sceneOverlap = String(
+      selected.sceneOverlap ?? 0
+    );
     elements.tooltip.dataset.bottomSafeArea = String(
-      placementBounds.bottomSafeArea
+      selected.bottomSafeArea
     );
     elements.tooltip.dataset.prominentObstacleCount = String(
       sceneObstacles.length
@@ -2637,7 +2919,10 @@ const PLAYER_JS = `(() => {
       elements.stage.style.maxWidth = stageMaxWidth + "px";
       elements.frame.style.setProperty("--stage-max-width", stageMaxWidth + "px");
       scale = elements.shell.clientWidth / renderedViewport.width;
-      elements.shell.style.height = Math.round(renderedViewport.height * scale) + "px";
+      const naturalHeight = renderedViewport.height * scale;
+      const minimumInteractiveHeight = Math.min(520, availableHeight);
+      elements.shell.style.height =
+        Math.round(Math.max(naturalHeight, minimumInteractiveHeight)) + "px";
       elements.viewport.style.left = "0px";
       elements.viewport.style.top = "0px";
     }

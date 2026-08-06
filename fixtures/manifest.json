@@ -241,6 +241,20 @@
       ]
     },
     {
+      "id": "inline-typography-layout",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "one positioned wrapper per visual text line",
+        "collapsed inline whitespace preserved",
+        "automatic or discretionary hyphens preserved without changing selectable text",
+        "populated transparent controls do not repaint placeholders over visible tokens",
+        "compact disclosure controls use the combined visible label and button box",
+        "0 generated text collisions",
+        "relative font-face URLs mapped from the isolated document URL"
+      ]
+    },
+    {
       "id": "sensitive-action-title",
       "purpose": "assurance",
       "spec": "demo-apps/assurance/sensitive-title.demo.ts",

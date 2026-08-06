@@ -2611,6 +2611,10 @@ const navigationLocator = {
   async isVisible() {
     return true;
   },
+  async getAttribute(name) {
+    assert.equal(name, "href");
+    return "/reports";
+  },
   async click() {
     navigationClickCount += 1;
   }
@@ -2624,8 +2628,9 @@ const navigationAdapter = createCodexBrowserAdapter({
       async waitForLoadState() {
         navigationReadyCount += 1;
       },
-      async evaluate() {
+      async evaluate(_pageFunction, options) {
         navigationReadyCount += 1;
+        if (options?.strategy === "href") return [0];
         return true;
       },
       locator() {
@@ -2656,7 +2661,43 @@ await navigationAdapter.performAction(
 );
 assert.equal(navigationUrl, "https://app.example.test/reports");
 assert.equal(navigationClickCount, 0);
-assert.equal(navigationReadyCount, 2);
+assert.equal(navigationReadyCount, 3);
+
+const malformedNavigationAdapter = createCodexBrowserAdapter({
+  tab: {
+    playwright: {
+      async domSnapshot() {
+        return 'link "Reports"';
+      },
+      async evaluate() {
+        return true;
+      },
+      locator() {
+        return navigationLocator;
+      }
+    },
+    async url() {
+      return "https://app.example.test/dashboard";
+    },
+    async goto() {
+      throw new Error("A malformed target index response must not navigate.");
+    }
+  },
+  browserSurface: "iab",
+  browserName: "Codex Browser",
+  viewport: { width: 1280, height: 720 }
+});
+await assert.rejects(
+  malformedNavigationAdapter.performAction(
+    {
+      strategy: "href",
+      path: "/reports",
+      name: "Reports"
+    },
+    "navigate"
+  ),
+  /navigation target is unavailable/
+);
 
 let semanticNavigationClickCount = 0;
 let semanticNavigationExpectationCount = 0;

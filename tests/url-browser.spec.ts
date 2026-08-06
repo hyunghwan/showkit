@@ -11,6 +11,7 @@ import {
   preparePlaywrightPageAssets
 } from "../packages/cli/src/capture/page-assets.js";
 import {
+  collectPageFontFaceDescriptors,
   collectRenderedIconCandidatesInPage,
   createCodexBrowserAdapter
 } from "../skills/showkit/scripts/capture-browser-session.mjs";
@@ -473,6 +474,193 @@ test("uses the target name to disambiguate repeated browser-session test IDs", a
   }
 });
 
+test("normalizes absolute browser-session href targets and follows the matched URL", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <a href="https://example.com/docs">Open guide</a>
+      <a href="/docs">Open archive</a>
+      <a href="https://example.com/help">Open guide</a>
+    </main>
+  `);
+  const navigatedUrls: string[] = [];
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        domSnapshot: () => Promise.resolve(""),
+        evaluate: (pageFunction: unknown, argument?: unknown) =>
+          page.evaluate(pageFunction as never, argument),
+        locator: (selector: string) => page.locator(selector),
+        getByRole: (role: string, options: { name: string; exact: boolean }) =>
+          page.getByRole(role as never, options)
+      },
+      url: () => Promise.resolve(page.url()),
+      goto: (url: string) => {
+        navigatedUrls.push(url);
+        return Promise.resolve();
+      }
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+
+  await expect(
+    adapter.targetStatus({
+      strategy: "href",
+      path: "/docs",
+      name: "Open guide"
+    })
+  ).resolves.toEqual({ matchedCount: 1, visibleCount: 1 });
+
+  await adapter.performAction(
+    {
+      strategy: "href",
+      path: "/docs",
+      name: "Open guide"
+    },
+    "navigate"
+  );
+
+  expect(navigatedUrls).toEqual(["https://example.com/docs"]);
+});
+
+test("waits through a transient action state before accepting the durable state", async ({
+  page
+}) => {
+  await page.setContent(`
+    <button type="button">Open panel</button>
+    <output>Closed</output>
+    <script>
+      document.querySelector("button").addEventListener("click", () => {
+        document.querySelector("output").textContent = "Opening";
+        setTimeout(() => {
+          document.querySelector("output").textContent = "Ready";
+        }, 90);
+      });
+    </script>
+  `);
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        domSnapshot: () => Promise.resolve(""),
+        evaluate: (pageFunction: unknown, argument?: unknown) =>
+          page.evaluate(pageFunction as never, argument),
+        locator: (selector: string) => page.locator(selector),
+        getByRole: (role: string, options: { name: string; exact: boolean }) =>
+          page.getByRole(role as never, options)
+      },
+      url: () => Promise.resolve(page.url())
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+
+  const startedAt = Date.now();
+  await adapter.performAction(
+    {
+      strategy: "role",
+      role: "button",
+      name: "Open panel"
+    },
+    "disclose"
+  );
+
+  await expect(page.locator("output")).toHaveText("Ready");
+  expect(Date.now() - startedAt).toBeGreaterThanOrEqual(300);
+});
+
+test("rejects a transient action state that returns to the baseline", async ({
+  page
+}) => {
+  await page.setContent(`
+    <button type="button">Open panel</button>
+    <output>Closed</output>
+    <script>
+      document.querySelector("button").addEventListener("click", () => {
+        document.querySelector("output").textContent = "Opening";
+        setTimeout(() => {
+          document.querySelector("output").textContent = "Closed";
+        }, 90);
+      });
+    </script>
+  `);
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        domSnapshot: () => Promise.resolve(""),
+        evaluate: (pageFunction: unknown, argument?: unknown) =>
+          page.evaluate(pageFunction as never, argument),
+        locator: (selector: string) => page.locator(selector),
+        getByRole: (role: string, options: { name: string; exact: boolean }) =>
+          page.getByRole(role as never, options)
+      },
+      url: () => Promise.resolve(page.url())
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+
+  await expect(
+    adapter.performAction(
+      {
+        strategy: "role",
+        role: "button",
+        name: "Open panel"
+      },
+      "disclose"
+    )
+  ).rejects.toThrow("did not change the visible state");
+  await expect(page.locator("output")).toHaveText("Closed");
+});
+
+test("centers a capture target that is too close to the viewport edge", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setContent(`
+    <main style="height:1600px;position:relative">
+      <a href="#ready" style="position:absolute;top:670px">Open report</a>
+      <div id="ready" style="position:absolute;top:1500px">Ready</div>
+    </main>
+  `);
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        domSnapshot: () => Promise.resolve(""),
+        evaluate: (pageFunction: unknown, argument?: unknown) =>
+          page.evaluate(pageFunction as never, argument),
+        locator: (selector: string) => page.locator(selector),
+        getByRole: (role: string, options: { name: string; exact: boolean }) =>
+          page.getByRole(role as never, options)
+      },
+      url: () => Promise.resolve(page.url())
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+
+  await adapter.prepareTargetForCapture({
+    strategy: "role",
+    role: "link",
+    name: "Open report"
+  });
+
+  const positioned = await page
+    .getByRole("link", { name: "Open report", exact: true })
+    .evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      return { top: rectangle.top, bottom: rectangle.bottom, scrollY };
+    });
+  expect(positioned.scrollY).toBeGreaterThan(0);
+  expect(positioned.top).toBeGreaterThan(240);
+  expect(positioned.bottom).toBeLessThan(480);
+});
+
 test("resolves the viewport target when an offscreen duplicate has the same role and name", async ({
   page
 }) => {
@@ -861,6 +1049,106 @@ test("clips a promoted form-control label to the capture viewport", async ({
   );
   expect(result.scene.html).toContain(
     'data-showkit-interaction-box="sk-weekend"'
+  );
+});
+
+test("promotes a compact disclosure button to its visible sibling label", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; }
+      .control { position: relative; width: 72px; height: 44px; }
+      .label { display: flex; width: 52px; height: 44px; align-items: center; }
+      button {
+        position: absolute;
+        left: 50px;
+        top: 0;
+        width: 22px;
+        height: 44px;
+        border: 0;
+        background: transparent;
+      }
+    </style>
+    <main>
+      <div class="control">
+        <span class="label">Reports</span>
+        <button type="button" aria-label="Reports menu"><span></span></button>
+      </div>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Reports menu", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-reports-menu",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.target?.bounds).toEqual(
+    expect.objectContaining({
+      x: 0,
+      width: expect.closeTo(72 / 1280, 5),
+      height: expect.closeTo(44 / 720, 5)
+    })
+  );
+  expect(result.html).toContain(
+    'data-showkit-interaction-box="sk-reports-menu"'
+  );
+});
+
+test("promotes a wide accordion disclosure button to its full labeled row", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; }
+      .control { position: relative; width: 980px; height: 102px; margin-left: 150px; }
+      h2 { display: flex; width: 980px; height: 102px; margin: 0; align-items: center; }
+      button {
+        position: absolute;
+        right: 5px;
+        top: 14px;
+        width: 27px;
+        height: 74px;
+        border: 0;
+        background: transparent;
+      }
+    </style>
+    <main>
+      <div class="control">
+        <h2>Personal Data Apple Collects from You</h2>
+        <button
+          type="button"
+          aria-label="Personal Data Apple Collects from You"
+        ></button>
+      </div>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", {
+      name: "Personal Data Apple Collects from You",
+      exact: true
+    })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-wide-accordion",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.target?.bounds).toEqual(
+    expect.objectContaining({
+      x: expect.closeTo(150 / 1280, 5),
+      width: expect.closeTo(980 / 1280, 5),
+      height: expect.closeTo(102 / 720, 5)
+    })
+  );
+  expect(result.html).toContain(
+    'data-showkit-interaction-box="sk-wide-accordion"'
   );
 });
 
@@ -1895,7 +2183,7 @@ test("preserves inline icon and text baselines inside bordered controls", async 
   expect(capturedMetrics.textTop).toBeCloseTo(sourceMetrics.textTop, 1);
 });
 
-test("does not replace a wrapping text node's per-line rhythm with its total height", async ({
+test("splits wrapping text into positioned selectable line fragments", async ({
   page
 }) => {
   await page.setContent(`
@@ -1931,12 +2219,112 @@ test("does not replace a wrapping text node's per-line rhythm with its total hei
     }
   };
   transferred.forEach(visit);
-  const wrappingText = textWrappers.find((node) =>
-    JSON.stringify(node.children).includes("Wrapping text")
+  const fragmentText = (node: (typeof transferred)[number]): string =>
+    (node.children ?? [])
+      .map((child) =>
+        typeof child === "object" &&
+        child !== null &&
+        "type" in child &&
+        child.type === "text" &&
+        "text" in child &&
+        typeof child.text === "string"
+          ? child.text
+          : ""
+      )
+      .join("");
+  const wrappingText = textWrappers.filter(
+    (node) => fragmentText(node).trim() !== "Continue"
   );
-  expect(wrappingText).toBeDefined();
-  expect(wrappingText?.styles?.["line-height"]).toBeUndefined();
-  expect(wrappingText?.styles?.["white-space"]).toBe("normal");
+  expect(wrappingText.length).toBeGreaterThan(1);
+  const capturedText = (nodes: Array<(typeof transferred)[number]>): string =>
+    nodes
+      .map((node) =>
+        node.type === "text"
+          ? String(node.text ?? "")
+          : capturedText(node.children ?? [])
+      )
+      .join("");
+  expect(capturedText(transferred).replace(/\s+/g, " ").trim()).toContain(
+    "Wrapping text keeps each captured line aligned."
+  );
+  expect(
+    wrappingText.every(
+      (node) =>
+        node.styles?.["line-height"] !== undefined &&
+        node.styles?.["white-space"] === "pre"
+    )
+  ).toBe(true);
+});
+
+test("preserves explicit newlines between positioned preformatted fragments", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font: 14px/20px Arial, sans-serif">
+      <pre style="font: inherit; margin: 0">First line\nSecond line</pre>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const transferred = JSON.parse(result.nodesJson ?? "[]") as Array<{
+    type: string;
+    text?: string;
+    children?: unknown[];
+  }>;
+  const capturedText = (nodes: unknown[]): string =>
+    nodes
+      .map((node) => {
+        if (typeof node !== "object" || node === null || !("type" in node)) {
+          return "";
+        }
+        const candidate = node as {
+          type: string;
+          text?: string;
+          children?: unknown[];
+        };
+        return candidate.type === "text"
+          ? candidate.text ?? ""
+          : capturedText(candidate.children ?? []);
+      })
+      .join("");
+
+  expect(capturedText(transferred)).toContain("First line\nSecond line");
+});
+
+test("redacts a sensitive value before splitting wrapped text", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="font: 16px/20px monospace">
+      <p style="overflow-wrap:anywhere;width:92px">demo-user@example.invalid</p>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json",
+      sensitiveTextRedaction: {
+        mode: "text-only",
+        consent: "confirmed",
+        selectors: []
+      }
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  const serialized = JSON.stringify(result);
+  expect(serialized).toContain("••••");
+  expect(serialized).not.toMatch(/demo-user|example\.invalid/);
 });
 
 test("keeps a captured single-line text node on one line", async ({
@@ -1978,7 +2366,164 @@ test("keeps a captured single-line text node on one line", async ({
   const singleLineText = textWrappers.find((node) =>
     JSON.stringify(node.children).includes("What’s new")
   );
-  expect(singleLineText?.styles?.["white-space"]).toBe("nowrap");
+  expect(singleLineText?.styles?.["white-space"]).toBe("pre");
+});
+
+test("preserves mixed inline spacing and line geometry without text collisions", async ({
+  page
+}) => {
+  await page.goto(
+    "http://127.0.0.1:4173/assurance/inline-typography.html"
+  );
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.nodesJson).not.toContain('"placeholder":"Search reports"');
+  expect(result.nodesJson).not.toContain('"value":"status:open"');
+  const transferred = JSON.parse(result.nodesJson ?? "[]");
+
+  await page.setContent('<main id="captured-scene"></main>');
+  await page.locator("#captured-scene").evaluate((mount, nodes) => {
+    const svgTags = new Set([
+      "circle",
+      "defs",
+      "ellipse",
+      "g",
+      "image",
+      "line",
+      "path",
+      "polygon",
+      "polyline",
+      "rect",
+      "svg"
+    ]);
+    const createNode = (node: any): Node => {
+      if (node.type === "text") return document.createTextNode(node.text);
+      const element = svgTags.has(node.tag)
+        ? document.createElementNS("http://www.w3.org/2000/svg", node.tag)
+        : document.createElement(node.tag);
+      for (const [name, value] of Object.entries(node.attributes)) {
+        element.setAttribute(name, String(value));
+      }
+      for (const [name, value] of Object.entries(node.styles)) {
+        (element as HTMLElement).style.setProperty(name, String(value));
+      }
+      for (const child of node.children) element.append(createNode(child));
+      return element;
+    };
+    mount.replaceChildren(...nodes.map(createNode));
+  }, transferred);
+
+  const metrics = await page.evaluate(() => {
+    const wrappers = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-showkit-text]")
+    ).map((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const rectangle = range.getBoundingClientRect();
+      return {
+        element,
+        text: element.textContent ?? "",
+        rectangle
+      };
+    });
+    const collisions: Array<{ left: string; right: string; area: number }> = [];
+    for (let leftIndex = 0; leftIndex < wrappers.length; leftIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < wrappers.length;
+        rightIndex += 1
+      ) {
+        const left = wrappers[leftIndex]!;
+        const right = wrappers[rightIndex]!;
+        const overlapWidth = Math.max(
+          0,
+          Math.min(left.rectangle.right, right.rectangle.right) -
+            Math.max(left.rectangle.left, right.rectangle.left)
+        );
+        const overlapHeight = Math.max(
+          0,
+          Math.min(left.rectangle.bottom, right.rectangle.bottom) -
+            Math.max(left.rectangle.top, right.rectangle.top)
+        );
+        if (overlapWidth * overlapHeight > 1) {
+          collisions.push({
+            left: left.text,
+            right: right.text,
+            area: overlapWidth * overlapHeight
+          });
+        }
+      }
+    }
+    const downloaded = wrappers.find(
+      (wrapper) => wrapper.text === "downloaded"
+    );
+    const following = wrappers.find((wrapper) =>
+      wrapper.text.includes("and used for")
+    );
+    if (!downloaded || !following || !following.element.firstChild) {
+      throw new Error("Expected captured inline text fragments");
+    }
+    const followingWord = document.createRange();
+    followingWord.setStart(following.element.firstChild, 1);
+    followingWord.setEnd(following.element.firstChild, 4);
+    return {
+      collisions,
+      syntheticHyphenCount: Array.from(
+        document.querySelectorAll<HTMLElement>('[aria-hidden="true"]')
+      ).filter((element) => element.textContent === "-").length,
+      wordGap:
+        followingWord.getBoundingClientRect().left - downloaded.rectangle.right,
+      text: document.querySelector("[data-showkit-scene-root]")?.textContent
+    };
+  });
+
+  expect(metrics.collisions).toEqual([]);
+  expect(metrics.syntheticHyphenCount).toBeGreaterThan(0);
+  expect(metrics.wordGap).toBeGreaterThan(1);
+  expect(metrics.text?.replace(/\s+/g, " ")).toContain(
+    "Tip: This tutorial is designed for people learning the language, not for readers who already know every concept."
+  );
+});
+
+test("maps relative font-face URLs when an isolated document omits baseURI", async ({
+  page
+}) => {
+  await page.goto("http://127.0.0.1:4173/signed-in/index.html");
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.textContent = `
+      @font-face {
+        font-family: "QA Sans";
+        font-style: normal;
+        font-weight: 600;
+        src: url("/fonts/qa-sans-semibold.woff2") format("woff2");
+      }
+    `;
+    document.head.append(style);
+    Object.defineProperty(document, "baseURI", {
+      configurable: true,
+      value: undefined
+    });
+  });
+  const source = "http://127.0.0.1:4173/fonts/qa-sans-semibold.woff2";
+  const descriptors = await page.evaluate(collectPageFontFaceDescriptors, [
+    source
+  ]);
+  expect(descriptors).toEqual([
+    expect.objectContaining({
+      source,
+      family: "QA Sans",
+      style: "normal",
+      weight: "600"
+    })
+  ]);
 });
 
 test("keeps a declared font stack when no matching font face loaded", async ({
@@ -2512,6 +3057,12 @@ test("preserves visible form controls without persisting their values or UA chro
         placeholder="Ask Gmail"
         value="must-not-persist"
       >
+      <input
+        id="empty-search"
+        aria-label="Search archive"
+        type="search"
+        placeholder="Search archive"
+      >
       <button id="icon" type="button" aria-label="Search options"></button>
     </main>
   `);
@@ -2526,7 +3077,8 @@ test("preserves visible form controls without persisting their values or UA chro
   if (!result.ok || result.scanOnly) return;
   const serialized = result.nodesJson ?? "";
   expect(serialized).toContain('"tag":"input"');
-  expect(serialized).toContain('"placeholder":"Ask Gmail"');
+  expect(serialized).not.toContain('"placeholder":"Ask Gmail"');
+  expect(serialized).toContain('"placeholder":"Search archive"');
   expect(serialized).toContain('"type":"search"');
   expect(serialized).toContain('"appearance":"none"');
   expect(serialized).not.toContain("must-not-persist");
@@ -2879,6 +3431,259 @@ test("selects pseudo icons whose computed content contains only empty image-set 
       })
     })
   ]);
+});
+
+test("replays a bounded private-use icon glyph as an isolated local control asset", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; }
+      .control { height: 102px; margin-left: 150px; position: relative; width: 980px; }
+      h2 { align-items: center; display: flex; height: 102px; margin: 0; width: 980px; }
+      button {
+        background: transparent;
+        border: 0;
+        height: 74px;
+        position: absolute;
+        right: 5px;
+        top: 14px;
+        width: 27px;
+      }
+      button::before {
+        color: #333;
+        content: "\\f309" / "";
+        font: 50px/1 "Unavailable Icons";
+      }
+    </style>
+    <main>
+      <div class="control">
+        <h2>Personal Data Apple Collects from You</h2>
+        <button
+          aria-label="Personal Data Apple Collects from You"
+          type="button"
+        ></button>
+      </div>
+    </main>
+  `);
+  const [candidate] = await page.evaluate(
+    collectRenderedIconCandidatesInPage,
+    []
+  );
+  expect(candidate).toEqual(
+    expect.objectContaining({
+      source: expect.stringMatching(/^showkit:rendered-font-icon:/),
+      width: 27,
+      height: 74,
+      match: expect.objectContaining({
+        fontGlyphElement: true,
+        fontGlyphPseudo: "before"
+      })
+    })
+  );
+  const base64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const bytes = Buffer.from(base64, "base64");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const result = await page
+    .getByRole("button", {
+      name: "Personal Data Apple Collects from You",
+      exact: true
+    })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-private-use-icon",
+      remoteAssetReplacements: [
+        {
+          source: candidate!.source,
+          captureKind: "isolated-rendered-icon",
+          match: candidate!.match,
+          payload: {
+            sha256,
+            mimeType: "image/png",
+            byteLength: bytes.byteLength,
+            base64
+          }
+        }
+      ]
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain(`./assets/${sha256}.png`);
+  expect(result.html).not.toContain("");
+  expect(result.target?.bounds.width).toBeCloseTo(980 / 1280, 5);
+});
+
+test("distinguishes pseudo-glyph visual states in rendered-icon candidates", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      button {
+        background: transparent;
+        border: 0;
+        height: 48px;
+        width: 48px;
+      }
+      button::before {
+        content: "\\f309" / "";
+        display: inline-block;
+        font: 24px/1 "Unavailable Icons";
+      }
+      button[aria-expanded="true"]::before {
+        transform: rotate(180deg);
+      }
+    </style>
+    <main>
+      <button aria-expanded="false" aria-label="Collapsed" type="button"></button>
+      <button aria-expanded="true" aria-label="Expanded" type="button"></button>
+    </main>
+  `);
+  const candidates = await page.evaluate(
+    collectRenderedIconCandidatesInPage,
+    []
+  );
+  expect(candidates).toHaveLength(2);
+  expect(
+    new Set(
+      candidates.map((candidate) => candidate.match.fontGlyphTransform)
+    ).size
+  ).toBe(2);
+});
+
+test("fails closed when a visible private-use icon font cannot be bundled", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      button::before {
+        content: "\\f309" / "";
+        font: 24px/1 "Unavailable Icons";
+      }
+    </style>
+    <main>
+      <button aria-label="Open details" type="button"></button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Open details", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-private-use-icon-missing-font"
+    });
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "icon-font"
+      })
+    })
+  );
+});
+
+test("does not treat clipped accessible text as visible icon fallback text", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      .sr-only {
+        border: 0;
+        clip: rect(0, 0, 0, 0);
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        padding: 0;
+        position: absolute;
+        white-space: nowrap;
+        width: 1px;
+      }
+      button::before {
+        content: "\\f309" / "";
+        font: 24px/1 "Unavailable Icons";
+      }
+    </style>
+    <main>
+      <button type="button"><span class="sr-only">Open details</span></button>
+    </main>
+  `);
+  const result = await page
+    .getByRole("button", { name: "Open details", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-private-use-icon-clipped-label"
+    });
+  expect(result).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "icon-font"
+      })
+    })
+  );
+});
+
+test("removes an unavailable decorative icon glyph from a visible text link", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      a::after {
+        content: "\\f301" / "";
+        font: 17px/1 "Unavailable Icons";
+      }
+    </style>
+    <main>
+      <a href="/legal/warranty/">Find your warranty</a>
+    </main>
+  `);
+  const result = await page
+    .getByRole("link", { name: "Find your warranty", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-decorative-private-use-icon"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain("Find your warranty");
+  expect(result.html).not.toContain("");
+  expect(result.excludedSurfaces).toContain(
+    "decorative-icon-font-glyphs"
+  );
+});
+
+test("does not expose descendants of a scale-zero status badge", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <a aria-label="Shopping Bag" href="/bag">
+        <svg aria-hidden="true" height="44" viewBox="0 0 14 44" width="14">
+          <path d="M1 16h12v12H1z"></path>
+        </svg>
+        <span
+          aria-hidden="true"
+          style="height:13px;position:absolute;transform:scale(0);width:13px"
+        >
+          <span style="background:#000;border-radius:13px;display:block;height:13px;width:13px"></span>
+          <span>0</span>
+        </span>
+      </a>
+    </main>
+  `);
+  const result = await page
+    .getByRole("link", { name: "Shopping Bag", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-hidden-status-badge"
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain('aria-label="Shopping Bag"');
+  expect(result.html).not.toContain(">0<");
+  expect(result.html).not.toContain("border-radius:13px");
 });
 
 test("does not rasterize a bounded content image as a rendered fallback", async ({
