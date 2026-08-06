@@ -555,7 +555,9 @@ function locatorFor(tab, target) {
         exact: true
       });
     case "test-id":
-      return tab.playwright.getByTestId(target.testId);
+      return tab.playwright
+        .getByTestId(target.testId)
+        .filter({ hasText: target.name });
     case "href":
       return tab.playwright.locator(`a[href=${cssAttributeValue(target.path)}]`);
     case "label":

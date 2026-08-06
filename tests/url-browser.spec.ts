@@ -243,6 +243,7 @@ test("resolves every browser-session target strategy in page scope", async ({
     <main>
       <a href="/docs">Open docs</a>
       <button type="button" data-testid="filters-trigger">Open filters</button>
+      <button type="button" data-testid="filters-trigger">Open sorting</button>
       <button type="button" aria-label="Account menu"></button>
       <label for="project-query">Project query</label>
       <input id="project-query" type="search">
@@ -370,6 +371,54 @@ test("resolves every browser-session target strategy in page scope", async ({
     if (!result.ok || result.scanOnly) continue;
     expect(result.target?.name).toBe(target.expectedName);
   }
+});
+
+test("uses the target name to disambiguate repeated browser-session test IDs", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <span data-testid="filter-chip" role="listitem" tabindex="0">Date and time</span>
+      <span data-testid="filter-chip" role="listitem" tabindex="0">Amount</span>
+      <output id="selection">No filter selected</output>
+      <script>
+        for (const chip of document.querySelectorAll('[data-testid="filter-chip"]')) {
+          chip.addEventListener("click", () => {
+            document.querySelector("#selection").textContent = chip.textContent + " opened";
+          });
+        }
+      </script>
+    </main>
+  `);
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        domSnapshot: () => Promise.resolve(""),
+        evaluate: (pageFunction: unknown, argument?: unknown) =>
+          page.evaluate(pageFunction as never, argument),
+        waitForTimeout: (milliseconds: number) => page.waitForTimeout(milliseconds),
+        locator: (selector: string) => page.locator(selector),
+        getByRole: (role: string, options: { name: string; exact: boolean }) =>
+          page.getByRole(role as never, options),
+        getByTestId: (testId: string) => page.getByTestId(testId)
+      },
+      url: () => Promise.resolve(page.url())
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+
+  await adapter.performAction(
+    {
+      strategy: "test-id",
+      testId: "filter-chip",
+      name: "Amount"
+    },
+    "disclose"
+  );
+
+  await expect(page.locator("#selection")).toHaveText("Amount opened");
 });
 
 test("resolves the viewport target when an offscreen duplicate has the same role and name", async ({

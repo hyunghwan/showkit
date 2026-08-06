@@ -1,4 +1,4 @@
-const release = "2026-08-04-stripe-restart-icon";
+const release = "2026-08-05-linear-agent-project";
 const origin = "https://showkit.sqncs.com";
 
 const demos = {
@@ -6,10 +6,10 @@ const demos = {
     title: "Explore flexible travel dates"
   },
   "issue-priority": {
-    title: "Prioritize a new issue"
+    title: "Scaffold a project with Linear Agent"
   },
   "stripe-payments": {
-    title: "Explore Stripe payment tools"
+    title: "Filter payments by date and amount"
   }
 };
 

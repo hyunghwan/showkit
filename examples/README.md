@@ -2,7 +2,8 @@
 
 `gallery/` is the source for the public GitHub Pages selector. It presents the
 three published demos from the ShowKit website: Airbnb travel search, a
-text-redacted Linear issue flow, and text-redacted Stripe payment tools. The
+text-redacted Linear Agent project-and-todo flow, and text-redacted Stripe
+payment tools. The
 gallery keeps those published URLs as the single source. It does not copy their captured
 third-party images or fonts into this MIT-licensed repository.
 

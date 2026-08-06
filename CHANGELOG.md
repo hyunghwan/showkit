@@ -5,6 +5,21 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.5 - 2026-08-05
+
+- Recomputed guide-card placement from the current visual viewport after
+  resize, kept every card action inside the visible scene shell, and reserved
+  adaptive bottom-edge clearance.
+- Added obstacle-bound placement candidates so step cards avoid the active
+  hotspot and visible dialogs, alert dialogs, menus, listboxes, and tooltips
+  instead of merely choosing the least-overlapping fixed side.
+- Disambiguated repeated browser-session test IDs with the target's exact
+  visible name and kept highlights on the complete labeled interaction box.
+- Updated the Stripe gallery flow to use the Date and time and Amount filters
+  while retaining matching payment rows through the completion state.
+- Updated the installed skill compatibility range to require
+  `@showkit/cli >=0.2.5 <0.3.0` for the responsive placement contract.
+
 ## 0.2.4 - 2026-08-05
 
 - Added an explicit Playwright capture viewport contract. New captures default

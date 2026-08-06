@@ -74,7 +74,7 @@ test("selects the three current landing-page demos", async ({ page }) => {
   const frame = page.locator("#showkit-demo");
   await expect(frame).toHaveAttribute(
     "src",
-    "https://showkit.sqncs.com/demos/travel-search/?release=2026-08-04-stripe-restart-icon"
+    "https://showkit.sqncs.com/demos/travel-search/?release=2026-08-05-linear-agent-project"
   );
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(
     "Explore flexible travel dates"
@@ -83,14 +83,16 @@ test("selects the three current landing-page demos", async ({ page }) => {
   await tabs.nth(1).click();
   await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
   await expect(frame).toHaveAttribute("src", /\/demos\/issue-priority\//);
-  await expect(page.getByRole("heading", { level: 2 })).toHaveText("Prioritize a new issue");
+  await expect(page.getByRole("heading", { level: 2 })).toHaveText(
+    "Scaffold a project with Linear Agent"
+  );
 
   await tabs.nth(1).press("ArrowRight");
   await expect(tabs.nth(2)).toBeFocused();
   await expect(tabs.nth(2)).toHaveAttribute("aria-selected", "true");
   await expect(frame).toHaveAttribute("src", /\/demos\/stripe-payments\//);
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(
-    "Explore Stripe payment tools"
+    "Filter payments by date and amount"
   );
   await expect(page.locator("#open-demo")).toHaveAttribute(
     "href",
@@ -112,7 +114,7 @@ test("keeps the selector usable on a narrow viewport", async ({ page }) => {
   );
   await expect(page.locator("#showkit-demo")).toHaveAttribute(
     "title",
-    "Explore Stripe payment tools interactive demo"
+    "Filter payments by date and amount interactive demo"
   );
   await expect(page.locator(".demo-stage")).toBeInViewport();
 });
