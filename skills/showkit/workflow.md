@@ -247,8 +247,14 @@ After a supported capture:
    dialogs, alert dialogs, menus, listboxes, tooltips, and the active hotspot.
    After `document.fonts.ready`, require
    `#scene-viewport[data-text-layout="checked"]` and zero text metric drift,
-   multi-line text wrappers, new text collisions, and suppressed placeholders
-   on every step and the completion scene. Inspect the generated HTML directly.
+   unsafe multi-line text wrappers, new text collisions, and suppressed
+   placeholders on every step and the completion scene. A nonzero
+   `data-redacted-multi-line-fragment-count` is allowed only for explicitly
+   confirmed text-only redaction that remains inside its recorded box with zero
+   drift and collisions. A nonzero
+   `data-bounded-multi-line-fragment-count` is allowed only for intentional
+   wrapping from a pre-`0.2.7` capture with the same zero-drift and
+   zero-collision result. Inspect the generated HTML directly.
    A nonzero
    `data-text-metric-fit-count` is allowed only for the bounded source-declared
    fallback rule in `references/visual-fidelity.md`; never raise the capture

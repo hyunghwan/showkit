@@ -124,9 +124,15 @@ Check all of the following:
   `#scene-viewport[data-text-layout="checked"]`; require
   `data-text-metric-drift-count`, `data-text-multi-line-fragment-count`, and
   `data-text-collision-count`, and `data-suppressed-placeholder-count` to all be
-  `0` on every step and the completion scene. Inspect the generated HTML itself;
-  a source screenshot or capture
-  result is not evidence that the HTML passed. `pending` is not a pass.
+  `0` on every step and the completion scene. A nonzero
+  `data-redacted-multi-line-fragment-count` is allowed only for explicitly
+  confirmed text-only redaction when its synthetic mask remains inside the
+  recorded text box and metric drift and collisions are both `0`. A nonzero
+  `data-bounded-multi-line-fragment-count` is allowed only for intentional
+  wrapping retained from a pre-`0.2.7` capture when the wrapper still matches
+  its recorded box and metric drift and collisions are both `0`.
+  Inspect the generated HTML itself. A source screenshot or capture result is
+  not evidence that the HTML passed. `pending` is not a pass.
   `failed` is a material mismatch.
 - every layout-critical image, icon, mask, inline SVG, and pseudo-element
 - a private-use control icon whose font bytes are unavailable is preserved only
@@ -153,17 +159,23 @@ Check all of the following:
 
 For width-bound text, compare `Range.getClientRects()`. For a bordered control,
 compare visible child `getBoundingClientRect()` values relative to the control.
-Each generated `[data-showkit-text]` wrapper must represent exactly one source
-line fragment. Preserve collapsed leading and trailing inline space inside that
-fragment. A text-only redaction may adjust only its synthetic mask tracking to
-fill the captured fragment width; it must not keep the original text or move
-the source element.
+Each newly captured non-redacted `[data-showkit-text]` wrapper must represent
+exactly one source line fragment. Group multiple client rectangles on the same
+rendered line before classifying a wrapper as multi-line. A pre-`0.2.7` capture
+may retain an intentionally wrapped wrapper only when it has no authored line
+break, its rendered bounds match its recorded box within 4 CSS pixels, and it
+adds no collision. Preserve collapsed leading and trailing inline space inside
+that fragment. A confirmed text-only redaction may
+keep a bounded multi-line synthetic mask only when its rendered bounds remain
+within the recorded text box and the HTML audit reports zero metric drift and
+collisions. It may adjust only synthetic mask tracking; it must not keep the
+original text or move the source element.
 When the documented asset provider rejects an otherwise visible WOFF2 because
 its response type is unsupported, the player may fit the source-declared local
 fallback inside the recorded line rectangle. This is allowed only when both
 axis scale factors remain from `0.8` through `1.25`, translation is no more
 than `8` CSS pixels, the text stays selectable, and the generated HTML audit
-still reports zero drift, multi-line wrappers, and collisions. Record the
+still reports zero drift, unsafe multi-line wrappers, and collisions. Record the
 number in `data-text-metric-fit-count`. Do not fetch the font body through an
 undocumented path, increase the capture resolution, or accept a larger fit.
 The current target must remain visible and undimmed inside the spotlight.
@@ -181,7 +193,7 @@ Report visual fidelity as `checked` only when:
 - task-relevant visible text is present, with the same line count and no new
   clipping
 - the generated HTML typography audit is `checked` with zero metric drift,
-  multi-line wrappers, new text collisions, and suppressed placeholders on
+  unsafe multi-line wrappers, new text collisions, and suppressed placeholders on
   every scene
 - primary layout and hotspot geometry differ by no more than 4 CSS pixels at
   the capture viewport

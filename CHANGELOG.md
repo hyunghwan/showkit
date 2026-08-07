@@ -5,6 +5,19 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.7 - 2026-08-06
+
+- Grouped multiple text client rectangles on the same rendered line before
+  classifying a captured wrapper as multi-line.
+- Kept intentional wrapped text from older captures when its rendered bounds
+  still match the recorded text box, while fitting small fallback-font changes
+  that would otherwise push a captured one-line label onto a second line.
+- Kept explicitly confirmed multi-line redaction masks bounded by their
+  recorded text boxes while preserving zero-drift and zero-collision checks for
+  every visible text fragment.
+- Added a neutral inline-typography assurance case and updated the installed
+  skill compatibility range to require `@showkit/cli >=0.2.7 <0.3.0`.
+
 ## 0.2.6 - 2026-08-06
 
 - Preserved wrapped and mixed-inline text as positioned selectable fragments,
