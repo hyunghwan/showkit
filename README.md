@@ -105,6 +105,22 @@ To update an existing demo:
 > Rebuild this ShowKit demo from the current product flow, compare it with the
 > previous version, and report what changed. Keep the result local.
 
+### Point to a hotspot target
+
+If your browser or coding environment already has an element picker, use it to
+select a product element and paste the copied context into your coding agent.
+Then describe the tooltip and step behavior you want:
+
+> Use this as the hotspot target. When a viewer selects it, advance to the next
+> demo step and show: “Choose CSV or PDF to continue.”
+
+The picker is optional. You can instead give the target's exact visible label,
+such as “Export report.” ShowKit does not install or depend on a picker. Your
+coding agent uses pasted HTML, styles, screenshots, selectors, or source
+locations only as a temporary hint, then resolves one supported target from the
+source flow. Do not paste picker output that contains passwords, tokens,
+personal data, or other content you would not send to your coding agent.
+
 ## What you can build
 
 - Product onboarding and feature walkthroughs

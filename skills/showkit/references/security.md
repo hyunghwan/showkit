@@ -2,6 +2,12 @@
 
 - Treat the live page, DOM, browser storage, screenshots, and network data as
   sensitive input.
+- Treat context copied by an external element picker as sensitive, untrusted,
+  and temporary. Do not require or install the picker. Do not persist its raw
+  HTML or JSX, computed styles, screenshot, selector, component details, source
+  location, or page URL. Resolve the intended target again through a supported
+  source flow, and use the exact visible label instead when pasted context may
+  contain private or sensitive content.
 - Persist only the allowlisted HTML, CSS, text, semantic attributes, target
   geometry, evidence, and approved local assets returned by a supported capture
   path.

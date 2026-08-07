@@ -93,6 +93,24 @@ npx showkit build web,markdown --json
 npx showkit preview --json
 ```
 
+When you have an earlier demo and a repeatable Playwright flow, check the
+current product before replacing local files:
+
+```bash
+npx showkit diff --base ./earlier/artifact.json --source ./demo.spec.ts --check --json
+```
+
+The check reuses the Playwright project recorded in the earlier demo. If that
+project was renamed, add `--project <name>` to select its configured
+replacement.
+
+This temporary check writes no ShowKit capture, run, operation log, or built
+demo. It reports the step that failed, the steps it could not check afterward,
+and the next recovery action. It still executes the Playwright actions against
+the selected product environment, so use a fixture or test-safe account and
+review mutating actions first. “Unchanged” refers to ShowKit's local demo, not
+the source product.
+
 `preview` serves the latest built demo on `127.0.0.1`. Stop it with
 <kbd>Control</kbd>+<kbd>C</kbd>. Copy the complete artifact directory to a
 static host only after you have reviewed it and chosen to publish separately.

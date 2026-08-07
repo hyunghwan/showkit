@@ -29,6 +29,7 @@
     "@playwright/test": "1.62.0",
     "@showkit/cli": "workspace:*",
     "@types/node": "^24.0.0",
+    "ajv": "8.17.1",
     "semver": "7.8.5",
     "typescript": "7.0.2",
     "vitest": "4.1.10"

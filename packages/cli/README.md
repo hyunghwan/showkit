@@ -47,16 +47,34 @@ belong on stderr.
 | `showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json` | Verify Playwright discovers and loads the flow with the default capture contract without running its test or opening its configured browser |
 | `showkit capture static <safe-envelope.json> --json` | Import a sanitized static-source envelope without Playwright |
 | `showkit capture session <safe-envelope.json> --json` | Import a temporary browser envelope after host isolation succeeds |
-| `showkit capture <demo.spec.ts> --viewport 1280x720 --json` | Run an approved Playwright fixture at the default capture viewport |
+| `showkit capture <demo.spec.ts> --viewport 1280x720 --project <name> --json` | Run one approved Playwright fixture project at the default capture viewport; omit `--project` when the config has one project |
 | `showkit story apply <story.json> --json` | Check and immutably save demo content for the latest capture |
 | `showkit validate --json` | Run evidence, player, and artifact checks |
 | `showkit build web,markdown --json` | Build portable HTML and optional Markdown output |
 | `showkit diff --base <artifact.json> --json` | Compare the latest artifact with an earlier manifest |
-| `showkit diff --base <artifact.json> --check --json` | Fail when the demo is out of date |
+| `showkit diff --base <artifact.json> --check --json` | Fail when the latest built files differ from an earlier version |
+| `showkit diff --base <artifact.json> --source <demo.spec.ts> --project <name> --check --json` | Replay the current Playwright source flow and fail when a demo step is out of date; omit `--project` to reuse the project stored in the earlier demo |
 | `showkit preview --json` | Serve the latest artifact on `127.0.0.1` |
 | `showkit publish --version <hash> --json` | Recheck the local publish gate; the current local-only release uploads nothing |
 
 Use `showkit help` to return the command list as JSON.
+
+The source freshness check runs the approved Playwright project with one worker
+in a temporary directory. It writes no ShowKit capture, run, operation log, or
+built demo. Its JSON reports each selected step as `fresh`, `reached`,
+`failed`, or `skipped`, states that the previous demo did not change, and gives
+a recovery action for each failed result. A step is `reached` when the source
+flow reached it before a later failure but ShowKit could not complete the
+comparison. Later steps are `skipped` because their page state is unknown.
+By default it reuses the Playwright project stored in the earlier demo. Pass
+`--project <name>` when that project was renamed or a different configured
+project is the intended replacement.
+
+This check still executes every Playwright step action against the selected
+product environment. Use a fixture or test-safe account, and review any
+mutating action before running it. “The previous demo did not change” describes
+ShowKit's local files; it does not claim that source product actions are
+read-only.
 
 New Playwright captures default to 1280×720. Pass the same viewport to
 preflight and capture. Use another `WIDTHxHEIGHT` value only for an exact
@@ -115,7 +133,8 @@ targets, controls, and layout-critical assets always remain fail-closed.
 - `@showkit/cli/playwright`: the optional `demo.step()` fixture for repeatable
   capture flows
 - `@showkit/cli/schema/*.json`: generated JSON Schemas for capture, story,
-  artifact, verification, quality, fixture, and compatibility contracts
+  artifact, verification, quality, freshness, fixture, and compatibility
+  contracts
 
 The Zod schemas are the runtime source of truth. Readers reject unknown fields
 and unsupported schema versions.

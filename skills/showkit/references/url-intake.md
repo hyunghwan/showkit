@@ -173,6 +173,12 @@ For repeatable release checks, promote the ordered semantic recipe to a
 Playwright source flow that imports `@showkit/cli/playwright` and uses
 `demo.step()`. That promoted source is `ci-replayable`. Keep authentication
 runtime-only, then compare the promoted version with `showkit diff --check`.
+When the earlier demo includes freshness details, run
+`showkit diff --base <artifact.json> --source <demo.spec.ts> --check --json` so
+the current source is replayed without replacing the previous captured flow.
+Use a fixture or test-safe account and review mutating actions first: ShowKit
+does not persist this check, but the approved Playwright actions still execute
+against the selected product environment.
 
 ## Named stops
 

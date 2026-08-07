@@ -5,6 +5,25 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.8 - 2026-08-06
+
+- Added a non-persisting Playwright source freshness check that writes no
+  ShowKit capture, run, operation log, or built demo and compares each
+  selected demo step with an earlier built version before any update is
+  approved.
+- Source-flow failures now report the named stopping step, distinguish reached
+  but unverified steps from later skipped steps, give a specific recovery
+  action, and confirm that the previous demo was not changed.
+- Source freshness now replays the captured Playwright project with one worker
+  and accepts `--project <name>` when that configured project was renamed; its
+  docs distinguish unchanged ShowKit files from product actions executed by the
+  approved source flow.
+- Added provider-neutral guidance for using an optional element picker as a
+  temporary hotspot-authoring hint while resolving the final target again from
+  the supported source flow and keeping picker output out of saved files.
+- Updated the installed skill compatibility range to require
+  `@showkit/cli >=0.2.8 <0.3.0` for the source-freshness contract.
+
 ## 0.2.7 - 2026-08-06
 
 - Grouped multiple text client rectangles on the same rendered line before

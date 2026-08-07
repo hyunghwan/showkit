@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { ShowKitError } from "../core/errors.js";
+import { createFreshnessBaseline } from "../core/freshness.js";
 import { contentHash, replaceDirectoryAtomic, sha256, writeJsonAtomic } from "../core/json.js";
 import {
   ArtifactManifestSchema,
@@ -74,6 +75,7 @@ export async function buildDemo(
   const { verification, quality: validationQuality } = validateStory(capture, story);
   const sourceCaptureHash = contentHash(capture);
   const storyHash = contentHash(story);
+  const freshness = createFreshnessBaseline(capture, story);
   const playerFiles = createPlayerFiles(capture, story);
   const playerGzipBytes = gzipSync(Buffer.from(playerFiles["player.js"])).byteLength;
   const quality = {
@@ -143,6 +145,7 @@ export async function buildDemo(
   const version = contentHash({
     sourceCaptureHash,
     storyHash,
+    freshness,
     builderVersion: BUILDER_VERSION,
     files
   });
@@ -161,6 +164,7 @@ export async function buildDemo(
     version,
     sourceCaptureHash,
     storyHash,
+    freshness,
     builderVersion: BUILDER_VERSION,
     source: capture.source,
     replayLevel: capture.source.replayLevel,

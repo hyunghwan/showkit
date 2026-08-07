@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -23,7 +23,12 @@ const sensitiveTitleCanary = "SHOWKIT_SECRET_CANARY_TITLE_93C1";
 type CliResponse = {
   ok: boolean;
   status: string;
-  error?: { code: string; details?: Record<string, unknown> };
+  error?: {
+    code: string;
+    message?: string;
+    recovery?: string;
+    details?: Record<string, unknown>;
+  };
   [key: string]: unknown;
 };
 
@@ -143,7 +148,7 @@ async function allFileContents(root: string): Promise<Array<{ path: string; cont
     }
   };
   await visit(root);
-  return output;
+  return output.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 async function startPortableStaticServer(
@@ -200,8 +205,10 @@ test.describe("Milestone 1 local workflow", () => {
   let changedDiff: CliResponse;
   let checkedDiff: CliResponse;
   let recoveredVersion: string;
+  let freshnessSpecDirectory: string;
 
   test.beforeAll(async () => {
+    test.setTimeout(120_000);
     projectDirectory = await mkdtemp(path.join(os.tmpdir(), "showkit-player-"));
     expect(runCli(projectDirectory, ["init"]).status).toBe("created");
     const localIgnore = await readFile(
@@ -265,9 +272,12 @@ test.describe("Milestone 1 local workflow", () => {
     ]);
     expect(capture.stepCount).toBe(3);
     expect(capture.fullSceneRasterCount).toBe(0);
+    expect(capture.playwrightProject).toBe("chromium");
     const repeatedCapture = runCli(projectDirectory, [
       "capture",
-      "fixtures/demo-apps/public/public.demo.ts"
+      "fixtures/demo-apps/public/public.demo.ts",
+      "--project",
+      "chromium"
     ]);
     expect(repeatedCapture.runId).not.toBe(capture.runId);
     expect(repeatedCapture.captureId).toBe(capture.captureId);
@@ -516,6 +526,373 @@ test.describe("Milestone 1 local workflow", () => {
     expect(preview.published).toBe(false);
 
     const baseManifest = path.join(artifactDirectory, "artifact.json");
+    const showkitFilesBeforeFreshness = await allFileContents(
+      path.join(projectDirectory, ".showkit")
+    );
+    const captureRunsBeforeFreshness = await readdir(
+      path.join(projectDirectory, ".showkit", "runs")
+    );
+    await mkdir(path.join(repositoryRoot, "test-results"), {
+      recursive: true
+    });
+    freshnessSpecDirectory = await mkdtemp(
+      path.join(repositoryRoot, "test-results", ".freshness-report-")
+    );
+    const invalidManifestPath = path.join(
+      freshnessSpecDirectory,
+      "invalid-artifact.json"
+    );
+    await writeFile(invalidManifestPath, "{not-json}\n");
+    expect(
+      runCli(
+        projectDirectory,
+        ["diff", "--base", "--source", "fixtures/demo-apps/public/public.demo.ts"],
+        2
+      ).error?.code
+    ).toBe("ArtifactBaseMissing");
+    expect(
+      runCli(
+        projectDirectory,
+        [
+          "diff",
+          "--base",
+          "missing-artifact.json",
+          "--source",
+          "fixtures/demo-apps/public/public.demo.ts"
+        ],
+        2
+      ).error?.code
+    ).toBe("ArtifactBaseMissing");
+    expect(
+      runCli(
+        projectDirectory,
+        [
+          "diff",
+          "--base",
+          invalidManifestPath,
+          "--source",
+          "fixtures/demo-apps/public/public.demo.ts"
+        ],
+        2
+      ).error?.code
+    ).toBe("ArtifactBaseInvalid");
+
+    const baseManifestContents = JSON.parse(
+      await readFile(baseManifest, "utf8")
+    ) as Record<string, unknown>;
+    const legacyManifestPath = path.join(
+      freshnessSpecDirectory,
+      "legacy-artifact.json"
+    );
+    const legacyManifest = structuredClone(baseManifestContents);
+    delete legacyManifest.freshness;
+    await writeFile(legacyManifestPath, `${JSON.stringify(legacyManifest)}\n`);
+    expect(
+      runCli(
+        projectDirectory,
+        [
+          "diff",
+          "--base",
+          legacyManifestPath,
+          "--source",
+          "fixtures/demo-apps/public/public.demo.ts"
+        ],
+        2
+      ).error?.code
+    ).toBe("FreshnessBaselineMissing");
+
+    const unsupportedManifestPath = path.join(
+      freshnessSpecDirectory,
+      "unsupported-artifact.json"
+    );
+    const unsupportedManifest = {
+      ...structuredClone(baseManifestContents),
+      replayLevel: "session-captured"
+    };
+    await writeFile(
+      unsupportedManifestPath,
+      `${JSON.stringify(unsupportedManifest)}\n`
+    );
+    expect(
+      runCli(
+        projectDirectory,
+        [
+          "diff",
+          "--base",
+          unsupportedManifestPath,
+          "--source",
+          "fixtures/demo-apps/public/public.demo.ts"
+        ],
+        2
+      ).error?.code
+    ).toBe("FreshnessSourceUnsupported");
+    expect(
+      runCli(
+        projectDirectory,
+        [
+          "diff",
+          "--base",
+          baseManifest,
+          "--source",
+          "missing-source.demo.ts"
+        ],
+        2
+      ).error?.code
+    ).toBe("CaptureSourceMissing");
+    expect(
+      runCli(
+        projectDirectory,
+        [
+          "diff",
+          "--base",
+          baseManifest,
+          "--source",
+          "fixtures/demo-apps/public/public.demo.ts",
+          "--viewport",
+          "invalid"
+        ],
+        2
+      ).error?.code
+    ).toBe("DemoFixtureSetupFailed");
+
+    const sourceFreshness = runCli(projectDirectory, [
+      "diff",
+      "--base",
+      baseManifest,
+      "--source",
+      "fixtures/demo-apps/public/public.demo.ts",
+      "--check"
+    ]);
+    expect(sourceFreshness).toEqual(
+      expect.objectContaining({
+        status: "fresh",
+        sourceMode: "playwright-spec",
+        playwrightProject: "chromium",
+        expectedViewport: { width: 1280, height: 720 },
+        freshness: expect.objectContaining({
+          status: "fresh",
+          previousDemoChanged: false,
+          steps: expect.arrayContaining([
+            expect.objectContaining({ state: "fresh" })
+          ]),
+          completion: expect.objectContaining({ state: "fresh" })
+        })
+      })
+    );
+    expect(
+      await readdir(path.join(projectDirectory, ".showkit", "runs"))
+    ).toEqual(captureRunsBeforeFreshness);
+
+    const renamedProjectManifestPath = path.join(
+      freshnessSpecDirectory,
+      "renamed-project-artifact.json"
+    );
+    const renamedProjectManifest = structuredClone(baseManifestContents) as {
+      source: { projectName?: string };
+    };
+    renamedProjectManifest.source.projectName = "renamed-project";
+    await writeFile(
+      renamedProjectManifestPath,
+      `${JSON.stringify(renamedProjectManifest)}\n`
+    );
+    expect(
+      runCli(projectDirectory, [
+        "diff",
+        "--base",
+        renamedProjectManifestPath,
+        "--source",
+        "fixtures/demo-apps/public/public.demo.ts",
+        "--project",
+        "chromium",
+        "--check"
+      ])
+    ).toEqual(
+      expect.objectContaining({
+        status: "fresh",
+        playwrightProject: "chromium"
+      })
+    );
+
+    const stoppedSourcePath = path.join(
+      freshnessSpecDirectory,
+      "stopped-source.demo.ts"
+    );
+    const changedSourcePath = path.join(
+      freshnessSpecDirectory,
+      "changed-source.demo.ts"
+    );
+    const diagnosticTitleCanary =
+      "SHOWKIT_SECRET_CANARY_STEP_DIAGNOSTIC";
+    await writeFile(
+      changedSourcePath,
+      `import { expect, test } from "@showkit/cli/playwright";
+
+test("reports a changed product state", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.getByRole("heading", { name: "Know what changed before conversion moves." }).evaluate((heading) => {
+    heading.textContent = "Know what changed before the launch moves.";
+  });
+
+  const steps = [
+    ["open-session-filters", "Open session filters", "Add filter"],
+    ["focus-engaged-visitors", "Focus on engaged visitors", "Engaged visitors"],
+    ["review-friction-insight", "Review checkout friction", "Review friction insight"]
+  ] as const;
+
+  for (const [id, title, accessibleName] of steps) {
+    const target = page.getByRole("button", { name: accessibleName });
+    await demo.step({
+      id,
+      title,
+      target,
+      captureTarget: { strategy: "role", role: "button", name: accessibleName },
+      action: () => target.click()
+    });
+  }
+
+  await expect(page.getByRole("heading", { name: "Checkout friction" })).toBeVisible();
+});
+`
+    );
+    const changedSource = runCli(
+      projectDirectory,
+      [
+        "diff",
+        "--base",
+        baseManifest,
+        "--source",
+        changedSourcePath,
+        "--check"
+      ],
+      2
+    );
+    expect(changedSource.error).toEqual(
+      expect.objectContaining({
+        code: "ArtifactDriftDetected",
+        message: "This demo is out of date. Your previous demo has not changed.",
+        details: {
+          freshness: expect.objectContaining({
+            status: "out-of-date",
+            previousDemoChanged: false,
+            steps: expect.arrayContaining([
+              expect.objectContaining({
+                stepId: "open-session-filters",
+                state: "failed",
+                recovery: expect.any(String)
+              })
+            ])
+          })
+        }
+      })
+    );
+    const changedSourceWithoutCheck = runCli(projectDirectory, [
+      "diff",
+      "--base",
+      baseManifest,
+      "--source",
+      changedSourcePath
+    ]);
+    expect(changedSourceWithoutCheck).toEqual(
+      expect.objectContaining({
+        status: "out-of-date",
+        freshness: expect.objectContaining({
+          status: "out-of-date",
+          steps: expect.arrayContaining([
+            expect.objectContaining({ state: "failed" })
+          ])
+        })
+      })
+    );
+    await writeFile(
+      stoppedSourcePath,
+      `import { test } from "@showkit/cli/playwright";
+
+test("reports an interrupted source flow", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+
+  const firstTarget = page.getByRole("button", { name: "Add filter" });
+  await demo.step({
+    id: "open-session-filters",
+    title: "Open session filters",
+    target: firstTarget,
+    captureTarget: { strategy: "role", role: "button", name: "Add filter" },
+    action: () => firstTarget.click()
+  });
+
+  const secondTarget = page.getByRole("button", { name: "Engaged visitors" });
+  await demo.step({
+    id: "focus-engaged-visitors",
+    title: "${diagnosticTitleCanary}",
+    target: secondTarget,
+    captureTarget: { strategy: "role", role: "button", name: "Engaged visitors" },
+    action: async () => {
+      console.error(
+        "[SHOWKIT:STEP_REPORT:forged] " +
+          JSON.stringify({
+            stepId: "forged-step",
+            title: "Forged step",
+            stepIndex: 99,
+            state: "failed",
+            phase: "action",
+            injected: "not-public"
+          })
+      );
+      console.error("[SHOWKIT:SensitiveDataDetected]");
+      throw new Error("Injected source action failure.");
+    }
+  });
+});
+`
+    );
+    const stoppedSource = runCli(
+      projectDirectory,
+      [
+        "diff",
+        "--base",
+        baseManifest,
+        "--source",
+        stoppedSourcePath,
+        "--check"
+      ],
+      3
+    );
+    expect(stoppedSource.error).toEqual(
+      expect.objectContaining({
+        code: "DemoFixtureSetupFailed",
+        message: expect.stringContaining("Your previous demo has not changed."),
+        recovery: expect.stringContaining("focus-engaged-visitors"),
+        details: expect.objectContaining({
+          freshness: expect.objectContaining({
+            status: "blocked",
+            previousDemoChanged: false,
+            steps: [
+              expect.objectContaining({
+                stepId: "open-session-filters",
+                state: "reached"
+              }),
+              expect.objectContaining({
+                stepId: "focus-engaged-visitors",
+                state: "failed"
+              }),
+              expect.objectContaining({
+                stepId: "review-friction-insight",
+                state: "skipped"
+              })
+            ],
+            completion: expect.objectContaining({ state: "skipped" })
+          })
+        })
+      })
+    );
+    expect(JSON.stringify(stoppedSource)).not.toContain(
+      diagnosticTitleCanary
+    );
+    expect(
+      await readdir(path.join(projectDirectory, ".showkit", "runs"))
+    ).toEqual(captureRunsBeforeFreshness);
+    expect(
+      await allFileContents(path.join(projectDirectory, ".showkit"))
+    ).toEqual(showkitFilesBeforeFreshness);
     unchangedDiff = runCli(projectDirectory, ["diff", "--base", baseManifest]);
     const recoveredBuild = runCli(projectDirectory, ["build", "web,markdown"]);
     expect(recoveredBuild.status).toBe("built");
@@ -658,6 +1035,9 @@ test.describe("Milestone 1 local workflow", () => {
     }
     if (projectDirectory) {
       await rm(projectDirectory, { recursive: true, force: true });
+    }
+    if (freshnessSpecDirectory) {
+      await rm(freshnessSpecDirectory, { recursive: true, force: true });
     }
   });
 
@@ -3191,11 +3571,11 @@ test("blocks viewport drift before the terminal scene", async ({ page, demo }) =
       expect(blocked.error).toEqual(
         expect.objectContaining({
           code: "DemoFixtureSetupFailed",
-          details: {
+          details: expect.objectContaining({
             category: "capture-viewport-mismatch",
             expectedViewport: { width: 1280, height: 720 },
             actualViewport: { width: 900, height: 720 }
-          }
+          })
         })
       );
       const blockedFiles = await allFileContents(
@@ -3226,11 +3606,11 @@ test("blocks viewport drift before the terminal scene", async ({ page, demo }) =
         expect(drift.error).toEqual(
           expect.objectContaining({
             code: "DemoFixtureSetupFailed",
-            details: {
+            details: expect.objectContaining({
               category: "capture-viewport-mismatch",
               expectedViewport: { width: 1280, height: 720 },
               actualViewport: { width: 900, height: 720 }
-            }
+            })
           })
         );
         const driftFiles = await allFileContents(
@@ -3303,12 +3683,12 @@ test("blocks viewport drift before the terminal scene", async ({ page, demo }) =
           "capture",
           "fixtures/demo-apps/assurance/nonisolated-browser.demo.ts"
         ],
-        2
+        3
       );
       expect(response.error?.code).toBe("UnsupportedSurface");
-      expect(response.error?.details).toEqual({
+      expect(response.error?.details).toEqual(expect.objectContaining({
         category: "browser-isolation-unavailable"
-      });
+      }));
       const files = await allFileContents(
         path.join(projectDirectory, ".showkit")
       );
@@ -3320,6 +3700,148 @@ test("blocks viewport drift before the terminal scene", async ({ page, demo }) =
       ).toBe(false);
     } finally {
       await rm(projectDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("uses structured capture diagnostics for action, duplicate-ID, and multi-flow recovery", async () => {
+    test.setTimeout(120_000);
+    const actionProjectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-action-diagnostic-")
+    );
+    const duplicateProjectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-duplicate-diagnostic-")
+    );
+    const multiFlowProjectDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "showkit-multi-flow-diagnostic-")
+    );
+    await mkdir(path.join(repositoryRoot, "test-results"), { recursive: true });
+    const specDirectory = await mkdtemp(
+      path.join(repositoryRoot, "test-results", ".freshness-report-diagnostic-")
+    );
+    const actionSpecPath = path.join(specDirectory, "action.demo.ts");
+    const duplicateSpecPath = path.join(specDirectory, "duplicate.demo.ts");
+    const multiFlowSpecPath = path.join(specDirectory, "multi-flow.demo.ts");
+    try {
+      await writeFile(
+        actionSpecPath,
+        `import { test } from "@showkit/cli/playwright";
+
+test("reports the failing action", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const target = page.getByRole("button", { name: "Add filter" });
+  await demo.step({
+    id: "action-failure",
+    title: "Action failure",
+    target,
+    captureTarget: { strategy: "role", role: "button", name: "Add filter" },
+    action: async () => {
+      console.error("[SHOWKIT:SensitiveDataDetected]");
+      throw new Error("Source action stopped.");
+    }
+  });
+});
+`
+      );
+      runCli(actionProjectDirectory, ["init"]);
+      const actionResponse = runCli(
+        actionProjectDirectory,
+        ["capture", actionSpecPath],
+        3
+      );
+      expect(actionResponse.error).toEqual(
+        expect.objectContaining({
+          code: "DemoFixtureSetupFailed",
+          recovery: expect.stringContaining("failing action"),
+          details: expect.objectContaining({
+            failurePhase: "action",
+            stepProgress: [
+              expect.objectContaining({
+                stepId: "action-failure",
+                state: "failed",
+                phase: "action"
+              })
+            ]
+          })
+        })
+      );
+      expect(actionResponse.error?.recovery).not.toContain("viewport");
+
+      await writeFile(
+        duplicateSpecPath,
+        `import { test } from "@showkit/cli/playwright";
+
+test("rejects duplicate step IDs", async ({ page, demo }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const target = page.getByRole("button", { name: "Add filter" });
+  for (const title of ["First", "Second"]) {
+    await demo.step({
+      id: "duplicate-step",
+      title,
+      target,
+      captureTarget: { strategy: "role", role: "button", name: "Add filter" },
+      action: async () => undefined
+    });
+  }
+});
+`
+      );
+      runCli(duplicateProjectDirectory, ["init"]);
+      const duplicateResponse = runCli(
+        duplicateProjectDirectory,
+        ["capture", duplicateSpecPath],
+        2
+      );
+      expect(duplicateResponse.error).toEqual(
+        expect.objectContaining({
+          code: "DemoFixtureSetupFailed",
+          message: expect.stringContaining("same demo step ID"),
+          recovery: expect.stringContaining("different lowercase hyphenated ID"),
+          details: expect.objectContaining({
+            category: "duplicate-step-id"
+          })
+        })
+      );
+
+      await writeFile(
+        multiFlowSpecPath,
+        `import { test } from "@showkit/cli/playwright";
+
+for (const id of ["first-flow", "second-flow"]) {
+  test(id, async ({ page, demo }) => {
+    await page.goto("http://127.0.0.1:4173/public/index.html");
+    const target = page.getByRole("button", { name: "Add filter" });
+    await demo.step({
+      id,
+      title: id,
+      target,
+      captureTarget: { strategy: "role", role: "button", name: "Add filter" },
+      action: async () => undefined
+    });
+  });
+}
+`
+      );
+      runCli(multiFlowProjectDirectory, ["init"]);
+      const multiFlowResponse = runCli(
+        multiFlowProjectDirectory,
+        ["capture", multiFlowSpecPath],
+        3
+      );
+      expect(multiFlowResponse.error).toEqual(
+        expect.objectContaining({
+          code: "DemoFixtureSetupFailed",
+          message: expect.stringContaining("More than one Playwright test or project"),
+          recovery: expect.stringContaining("--project <name>"),
+          details: expect.objectContaining({
+            category: "multiple-playwright-flows"
+          })
+        })
+      );
+    } finally {
+      await rm(specDirectory, { recursive: true, force: true });
+      await rm(actionProjectDirectory, { recursive: true, force: true });
+      await rm(duplicateProjectDirectory, { recursive: true, force: true });
+      await rm(multiFlowProjectDirectory, { recursive: true, force: true });
     }
   });
 
@@ -3397,9 +3919,9 @@ test("blocks viewport drift before the terminal scene", async ({ page, demo }) =
         2
       );
       expect(response.error?.code).toBe("TargetMissing");
-      expect(response.error?.details).toEqual({
+      expect(response.error?.details).toEqual(expect.objectContaining({
         category: "target-locator-mismatch"
-      });
+      }));
       const files = await allFileContents(
         path.join(projectDirectory, ".showkit")
       );

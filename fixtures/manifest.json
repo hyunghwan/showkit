@@ -35,6 +35,18 @@
       ]
     },
     {
+      "id": "source-freshness",
+      "purpose": "proof",
+      "spec": "tests/player.spec.ts",
+      "expectedSignals": [
+        "unchanged current source reports every selected step fresh",
+        "changed source names the failed demo step and recovery action",
+        "interrupted source reports reached, failed, and skipped steps",
+        "diagnostic title canary output 0 matches",
+        "previous demo and captured runs remain unchanged"
+      ]
+    },
+    {
       "id": "sensitive-data",
       "purpose": "assurance",
       "spec": "demo-apps/secret/secret.demo.ts",
