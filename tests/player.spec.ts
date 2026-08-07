@@ -2116,6 +2116,8 @@ test.describe("Milestone 1 local workflow", () => {
       };
       const capturedWidth = renderedWidth("Fallback metric", "Georgia, serif") * 1.4;
       const capturedGlyphWidth = renderedWidth("⌁", "sans-serif") * 1.8;
+      const nearWrapWidth =
+        renderedWidth("ShowKit Agent Demo", "Arial, sans-serif") - 4;
       const payload = (
         window as unknown as {
           __SHOWKIT_DEMO__: {
@@ -2159,6 +2161,24 @@ test.describe("Milestone 1 local workflow", () => {
         },
         children: [{ type: "text", text: "⌁" }]
       });
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: { "data-showkit-text": "", id: "near-wrap-fallback" },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "200px",
+          top: "80px",
+          width: nearWrapWidth + "px",
+          height: "24px",
+          "font-family": "Arial, sans-serif",
+          "font-size": "20px",
+          "line-height": "24px",
+          "white-space": "pre-wrap"
+        },
+        children: [{ type: "text", text: "ShowKit Agent Demo" }]
+      });
     });
     await page.getByRole("button", { name: "Explore demo" }).click();
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
@@ -2174,6 +2194,227 @@ test.describe("Milestone 1 local workflow", () => {
     ).toBeGreaterThan(0);
     await expect(page.locator("#fallback-metric > [data-showkit-text-fit]")).toBeAttached();
     await expect(page.locator("#fallback-glyph > [data-showkit-text-fit]")).toBeAttached();
+    await expect(
+      page.locator("#near-wrap-fallback > [data-showkit-text-fit]")
+    ).toBeAttached();
+  });
+
+  test("fails closed when near-wrap recovery exceeds the scale budget", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.textContent = "ShowKit Agent Demo";
+      Object.assign(probe.style, {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "20px",
+        lineHeight: "24px",
+        position: "absolute",
+        visibility: "hidden",
+        whiteSpace: "pre"
+      });
+      document.body.append(probe);
+      const range = document.createRange();
+      range.selectNodeContents(probe);
+      const unsafeWidth = range.getBoundingClientRect().width * 0.75;
+      probe.remove();
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            steps: Array<{ nodes: Array<Record<string, unknown>> }>;
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: { "data-showkit-text": "", id: "unsafe-near-wrap" },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "200px",
+          top: "80px",
+          width: unsafeWidth + "px",
+          height: "24px",
+          "font-family": "Arial, sans-serif",
+          "font-size": "20px",
+          "line-height": "24px",
+          "white-space": "pre-wrap"
+        },
+        children: [{ type: "text", text: "ShowKit Agent Demo" }]
+      });
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-layout",
+      "failed"
+    );
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-metric-drift-count",
+      "1"
+    );
+  });
+
+  test("groups same-line rectangles and bounds multi-line redaction masks", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const measureText = (text: string, whiteSpace: string) => {
+        const probe = document.createElement("span");
+        probe.textContent = text;
+        Object.assign(probe.style, {
+          display: "block",
+          fontFamily: "Arial, sans-serif",
+          fontSize: "16px",
+          lineHeight: "20px",
+          position: "absolute",
+          visibility: "hidden",
+          whiteSpace
+        });
+        document.body.append(probe);
+        const range = document.createRange();
+        range.selectNodeContents(probe);
+        const rectangle = range.getBoundingClientRect();
+        probe.remove();
+        return rectangle;
+      };
+      const sameLine = measureText(" in ", "pre");
+      const redacted = measureText("••••••••••\n••••••••••", "pre");
+      const wrappedProbe = document.createElement("span");
+      wrappedProbe.textContent = "Bounded visible copy wraps safely";
+      Object.assign(wrappedProbe.style, {
+        display: "block",
+        fontFamily: "Arial, sans-serif",
+        fontSize: "16px",
+        lineHeight: "20px",
+        position: "absolute",
+        visibility: "hidden",
+        whiteSpace: "normal",
+        width: "132px"
+      });
+      document.body.append(wrappedProbe);
+      const wrappedRange = document.createRange();
+      wrappedRange.selectNodeContents(wrappedProbe);
+      const wrapped = wrappedRange.getBoundingClientRect();
+      wrappedProbe.remove();
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            textRedactionActive?: boolean;
+            steps: Array<{ nodes: Array<Record<string, unknown>> }>;
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.textRedactionActive = true;
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: { "data-showkit-text": "", id: "same-line-rectangles" },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "40px",
+          top: "40px",
+          width: sameLine.width + "px",
+          height: sameLine.height + "px",
+          "font-family": "Arial, sans-serif",
+          "font-size": "16px",
+          "line-height": "20px",
+          "white-space": "pre"
+        },
+        children: [
+          {
+            type: "element",
+            tag: "span",
+            attributes: {},
+            styles: { display: "inline" },
+            children: [{ type: "text", text: " " }]
+          },
+          {
+            type: "element",
+            tag: "span",
+            attributes: {},
+            styles: { display: "inline" },
+            children: [{ type: "text", text: "in " }]
+          }
+        ]
+      });
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: {
+          "data-showkit-text": "",
+          id: "bounded-redacted-lines"
+        },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "40px",
+          top: "80px",
+          width: redacted.width + "px",
+          height: redacted.height + "px",
+          "font-family": "Arial, sans-serif",
+          "font-size": "16px",
+          "line-height": "20px",
+          "white-space": "pre"
+        },
+        children: [
+          { type: "text", text: "••••••••••\n••••••••••" }
+        ]
+      });
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: {
+          "data-showkit-text": "",
+          id: "bounded-visible-lines"
+        },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "240px",
+          top: "80px",
+          width: wrapped.width + "px",
+          height: wrapped.height + "px",
+          "font-family": "Arial, sans-serif",
+          "font-size": "16px",
+          "line-height": "20px",
+          "white-space": "normal"
+        },
+        children: [
+          { type: "text", text: "Bounded visible copy wraps safely" }
+        ]
+      });
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-layout",
+      "checked"
+    );
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-multi-line-fragment-count",
+      "0"
+    );
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-redacted-multi-line-fragment-count",
+      "1"
+    );
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-bounded-multi-line-fragment-count",
+      "1"
+    );
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-metric-drift-count",
+      "0"
+    );
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-collision-count",
+      "0"
+    );
   });
 
   test("reports generated HTML text drift and collisions before fidelity is claimed", async ({
@@ -2214,6 +2455,24 @@ test.describe("Milestone 1 local workflow", () => {
           }
         ]
       });
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: { "data-showkit-text": "" },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "80px",
+          top: "80px",
+          width: "100px",
+          height: "40px",
+          "font-family": "Arial, sans-serif",
+          "font-size": "16px",
+          "line-height": "20px",
+          "white-space": "pre"
+        },
+        children: [{ type: "text", text: "Line one\nLine two" }]
+      });
     });
     await page.getByRole("button", { name: "Explore demo" }).click();
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
@@ -2225,6 +2484,13 @@ test.describe("Milestone 1 local workflow", () => {
         await page
           .locator("#scene-viewport")
           .getAttribute("data-text-metric-drift-count")
+      )
+    ).toBeGreaterThan(0);
+    expect(
+      Number(
+        await page
+          .locator("#scene-viewport")
+          .getAttribute("data-text-multi-line-fragment-count")
       )
     ).toBeGreaterThan(0);
     expect(

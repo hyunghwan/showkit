@@ -2492,6 +2492,58 @@ test("preserves mixed inline spacing and line geometry without text collisions",
   );
 });
 
+test("splits confirmed multi-line redaction into positioned line wrappers", async ({
+  page
+}) => {
+  await page.goto(
+    "http://127.0.0.1:4173/assurance/inline-typography.html"
+  );
+  const result = await page
+    .getByRole("button", { name: "Continue", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-continue",
+      nodeMode: "json",
+      sensitiveTextRedaction: {
+        mode: "text-only",
+        consent: "confirmed",
+        selectors: ["[data-private-note]"]
+      }
+    });
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+
+  const redactedWrappers: Array<{
+    attributes?: Record<string, string>;
+    styles?: Record<string, string>;
+    children?: unknown[];
+  }> = [];
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    const node = value as {
+      attributes?: Record<string, string>;
+      styles?: Record<string, string>;
+      children?: unknown[];
+    };
+    if (node.attributes?.["data-showkit-text"] === "redacted") {
+      redactedWrappers.push(node);
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  (JSON.parse(result.nodesJson ?? "[]") as unknown[]).forEach(visit);
+
+  expect(redactedWrappers.length).toBeGreaterThan(1);
+  expect(
+    redactedWrappers.every(
+      (wrapper) => wrapper.styles?.["white-space"] === "pre"
+    )
+  ).toBe(true);
+  expect(JSON.stringify(redactedWrappers)).toContain("••••");
+  expect(JSON.stringify(result)).not.toContain(
+    "Internal planning details wrap across several visible lines."
+  );
+});
+
 test("maps relative font-face URLs when an isolated document omits baseURI", async ({
   page
 }) => {

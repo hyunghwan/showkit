@@ -229,7 +229,11 @@ without blocking the workflow.
 8. Compare the preview with the intended rendered source before reporting
    visual fidelity as `checked`. After `document.fonts.ready`, require
    `#scene-viewport[data-text-layout="checked"]` with zero text metric drift,
-   multi-line text wrappers, and new text collisions on every scene. Otherwise
+   unsafe multi-line text wrappers, and new text collisions on every scene. A
+   pre-`0.2.7` capture may report bounded wrapped-text fragments, and a
+   confirmed text-only redaction may report bounded multi-line mask fragments,
+   only when they remain inside the captured text box with zero drift and
+   collisions. Otherwise
    report `incomplete` or `blocked` as defined by the visual-fidelity contract.
    Inspect the generated HTML directly. When an otherwise visible WOFF2 is
    rejected by the documented asset provider, accept only the contract's
@@ -449,7 +453,13 @@ without blocking the workflow.
     `#scene-viewport[data-text-layout="checked"]` and require
     `data-text-metric-drift-count`, `data-text-multi-line-fragment-count`, and
     `data-text-collision-count`, and `data-suppressed-placeholder-count` to all
-    equal `0` on every step and the completion scene. Read
+    equal `0` on every step and the completion scene. Treat
+    `data-redacted-multi-line-fragment-count` as a diagnostic allowed only for
+    explicitly confirmed text-only redaction whose recorded box still has zero
+    metric drift and collisions. Treat
+    `data-bounded-multi-line-fragment-count` as a compatibility diagnostic
+    allowed only for intentional wrapping from a pre-`0.2.7` capture with the
+    same zero-drift and zero-collision result. Read
     `data-text-metric-fit-count` as a diagnostic; a
     nonzero value is allowed only within the bounded fallback rule in
     `references/visual-fidelity.md`. Follow

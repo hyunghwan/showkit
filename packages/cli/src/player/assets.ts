@@ -52,6 +52,10 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
     title: story.title,
     goal: story.goal,
     locale: story.locale,
+    textRedactionActive:
+      capture.redaction.sensitiveText?.mode === "text-only" &&
+      ((capture.redaction.sensitiveText.redactedTextNodeCount ?? 0) > 0 ||
+        (capture.redaction.sensitiveText.redactedAttributeCount ?? 0) > 0),
     welcome: story.welcome,
     theme: {
       ...story.theme,
@@ -2281,14 +2285,35 @@ const PLAYER_JS = `(() => {
     fitted.style.transform = "none";
     const range = document.createRange();
     range.selectNodeContents(fitted);
-    const rendered = range.getBoundingClientRect();
+    let rendered = range.getBoundingClientRect();
+    const initialRectangles = Array.from(range.getClientRects()).filter(
+      (rectangle) => rectangle.width > 0 && rectangle.height > 0
+    );
+    const firstLineHeight = initialRectangles[0]?.height ?? 0;
+    const wrappedNearCapturedSingleLine =
+      initialRectangles.length > 1 &&
+      firstLineHeight > 0 &&
+      box.height <= firstLineHeight + 2.5 * scale &&
+      !/[\\r\\n]/u.test(element.textContent || "");
+    if (wrappedNearCapturedSingleLine) {
+      fitted.style.whiteSpace = "pre";
+      rendered = range.getBoundingClientRect();
+    }
     if (rendered.width <= 0 || rendered.height <= 0) return false;
     const scaleX = box.width / rendered.width;
     const scaleY = box.height / rendered.height;
     const glyphCount = Array.from((element.textContent || "").trim()).length;
     const shortGlyph = glyphCount > 0 && glyphCount <= 3;
-    const minimumScale = shortGlyph ? 0.5 : 0.67;
-    const maximumScale = shortGlyph ? 2 : 1.5;
+    const minimumScale = wrappedNearCapturedSingleLine
+      ? 0.8
+      : shortGlyph
+        ? 0.5
+        : 0.67;
+    const maximumScale = wrappedNearCapturedSingleLine
+      ? 1.25
+      : shortGlyph
+        ? 2
+        : 1.5;
     if (
       scaleX < minimumScale ||
       scaleX > maximumScale ||
@@ -2308,7 +2333,11 @@ const PLAYER_JS = `(() => {
         fittedBox.top -
         scaleY * (rendered.top - fittedBox.top)) /
       scale;
-    const maximumTranslation = shortGlyph ? 16 : 12;
+    const maximumTranslation = wrappedNearCapturedSingleLine
+      ? 8
+      : shortGlyph
+        ? 16
+        : 12;
     if (
       Math.abs(translateX) > maximumTranslation ||
       Math.abs(translateY) > maximumTranslation
@@ -2440,21 +2469,64 @@ const PLAYER_JS = `(() => {
       const rectangles = Array.from(range.getClientRects()).filter(
         (rectangle) => rectangle.width > 0 && rectangle.height > 0
       );
+      const lineRectangles = rectangles.reduce((lines, rectangle) => {
+        const center = rectangle.top + rectangle.height / 2;
+        const line = lines.find(
+          (candidate) =>
+            center >= candidate.top - 0.75 &&
+            center <= candidate.bottom + 0.75
+        );
+        if (!line) {
+          lines.push({
+            top: rectangle.top,
+            bottom: rectangle.bottom
+          });
+          return lines;
+        }
+        line.top = Math.min(line.top, rectangle.top);
+        line.bottom = Math.max(line.bottom, rectangle.bottom);
+        return lines;
+      }, []);
       const rendered = range.getBoundingClientRect();
-      return { element, box, rectangles, rendered };
+      return {
+        element,
+        box,
+        rectangles,
+        rendered,
+        lineCount: lineRectangles.length
+      };
     });
     let metricDriftCount = 0;
     let multiLineFragmentCount = 0;
+    let redactedMultiLineFragmentCount = 0;
+    let boundedMultiLineFragmentCount = 0;
     for (const fragment of fragments) {
-      if (fragment.rectangles.length !== 1) {
-        multiLineFragmentCount += 1;
-      }
+      const fragmentText = fragment.element.textContent || "";
+      const isConfirmedRedactionMask =
+        fragment.element.getAttribute("data-showkit-text") === "redacted" ||
+        (demo.textRedactionActive === true &&
+          fragment.element.getAttribute("data-showkit-text") === "" &&
+          fragmentText.replace(/\\s/gu, "").length >= 2 &&
+          /^[•\\s]+$/u.test(fragmentText));
       const delta = Math.max(
         Math.abs(fragment.rendered.left - fragment.box.left),
         Math.abs(fragment.rendered.top - fragment.box.top),
         Math.abs(fragment.rendered.width - fragment.box.width),
         Math.abs(fragment.rendered.height - fragment.box.height)
       ) / scale;
+      if (fragment.lineCount !== 1) {
+        if (fragment.lineCount > 1 && isConfirmedRedactionMask) {
+          redactedMultiLineFragmentCount += 1;
+        } else if (
+          fragment.lineCount > 1 &&
+          delta <= 4 &&
+          !/[\\r\\n]/u.test(fragmentText)
+        ) {
+          boundedMultiLineFragmentCount += 1;
+        } else {
+          multiLineFragmentCount += 1;
+        }
+      }
       if (delta > 4) metricDriftCount += 1;
     }
     let collisionCount = 0;
@@ -2499,6 +2571,12 @@ const PLAYER_JS = `(() => {
     elements.viewport.dataset.textMetricDriftCount = String(metricDriftCount);
     elements.viewport.dataset.textMultiLineFragmentCount = String(
       multiLineFragmentCount
+    );
+    elements.viewport.dataset.redactedMultiLineFragmentCount = String(
+      redactedMultiLineFragmentCount
+    );
+    elements.viewport.dataset.boundedMultiLineFragmentCount = String(
+      boundedMultiLineFragmentCount
     );
     elements.viewport.dataset.textCollisionCount = String(collisionCount);
     elements.viewport.dataset.redactionFitCount = String(redactionFitCount);

@@ -248,6 +248,7 @@
         "one positioned wrapper per visual text line",
         "collapsed inline whitespace preserved",
         "automatic or discretionary hyphens preserved without changing selectable text",
+        "confirmed multi-line redaction masks and intentional wrapped legacy text stay bounded without weakening overflow checks",
         "populated transparent controls do not repaint placeholders over visible tokens",
         "compact disclosure controls use the combined visible label and button box",
         "0 generated text collisions",
