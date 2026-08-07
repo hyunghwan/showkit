@@ -505,6 +505,7 @@ export const PlaywrightCaptureSourceProvenanceSchema = z
     specHash: z.string().regex(/^[a-f0-9]{64}$/),
     runtime: z.literal("playwright-test"),
     runtimeVersion: z.string().min(1),
+    projectName: z.string().min(1).max(120).optional(),
     replayLevel: z.literal("ci-replayable"),
     captureSecurity: z
       .object({
@@ -629,7 +630,19 @@ export const CaptureSourceSchema = z.object({
       ])
       .optional()
   }).strict()
-}).strict();
+}).strict().superRefine((capture, context) => {
+  const seenStepIds = new Set<string>();
+  for (const [index, step] of capture.steps.entries()) {
+    if (seenStepIds.has(step.id)) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", index, "id"],
+        message: "Capture step IDs must be unique."
+      });
+    }
+    seenStepIds.add(step.id);
+  }
+});
 
 export const AgentBrowserDemoFixtureSchema = DemoFixtureSchema.extend({
   lifecycle: z
@@ -640,7 +653,7 @@ export const AgentBrowserDemoFixtureSchema = DemoFixtureSchema.extend({
     .strict()
 }).strict();
 
-export const AgentBrowserCaptureSourceSchema = CaptureSourceSchema.extend({
+export const AgentBrowserCaptureSourceSchema = CaptureSourceSchema.safeExtend({
   source: AgentBrowserCaptureSourceProvenanceSchema,
   fixture: AgentBrowserDemoFixtureSchema
 }).strict();
@@ -660,7 +673,7 @@ export const StaticDemoFixtureSchema = DemoFixtureSchema.extend({
     .strict()
 }).strict();
 
-export const StaticCaptureSourceSchema = CaptureSourceSchema.extend({
+export const StaticCaptureSourceSchema = CaptureSourceSchema.safeExtend({
   source: StaticCaptureSourceProvenanceSchema,
   fixture: StaticDemoFixtureSchema
 }).strict();
@@ -1043,12 +1056,168 @@ export const QualityReportSchema = z.object({
   )
 }).strict();
 
+const ContentHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+
+export const FreshnessBaselineSchema = z
+  .object({
+    steps: z
+      .array(
+        z
+          .object({
+            stepId: IdentifierSchema,
+            captureStepId: IdentifierSchema,
+            sourceIndex: z.number().int().nonnegative(),
+            title: z.string().min(1).max(120),
+            sceneHash: ContentHashSchema,
+            targetHash: ContentHashSchema,
+            evidenceIds: z.array(z.string().min(1)).min(1),
+            evidenceHash: ContentHashSchema,
+            actionOutcomeHash: ContentHashSchema
+          })
+          .strict()
+      )
+      .min(1),
+    terminalSceneHash: ContentHashSchema
+  })
+  .strict();
+
+const FreshnessDetailSchema = z.string().min(1).max(600);
+const FreshnessCodeSchema = z
+  .string()
+  .min(1)
+  .max(80)
+  .regex(/^[A-Za-z][A-Za-z0-9]*$/);
+
+const FreshnessFreshResultSchema = z
+  .object({
+    state: z.literal("fresh"),
+    detail: FreshnessDetailSchema
+  })
+  .strict();
+
+const FreshnessReachedResultSchema = z
+  .object({
+    state: z.literal("reached"),
+    detail: FreshnessDetailSchema
+  })
+  .strict();
+
+const FreshnessFailedResultSchema = z
+  .object({
+    state: z.literal("failed"),
+    code: FreshnessCodeSchema,
+    detail: FreshnessDetailSchema,
+    recovery: z.string().min(1).max(600)
+  })
+  .strict();
+
+const FreshnessSkippedResultSchema = z
+  .object({
+    state: z.literal("skipped"),
+    detail: FreshnessDetailSchema
+  })
+  .strict();
+
+const freshnessStep = <T extends z.ZodRawShape>(result: z.ZodObject<T>) =>
+  result.extend({
+    stepId: IdentifierSchema,
+    title: z.string().min(1).max(120)
+  }).strict();
+
+const FreshnessFreshStepSchema = freshnessStep(FreshnessFreshResultSchema);
+const FreshnessReachedStepSchema = freshnessStep(FreshnessReachedResultSchema);
+const FreshnessFailedStepSchema = freshnessStep(FreshnessFailedResultSchema);
+const FreshnessSkippedStepSchema = freshnessStep(FreshnessSkippedResultSchema);
+const FreshnessCompletedStepSchema = z.discriminatedUnion("state", [
+  FreshnessFreshStepSchema,
+  FreshnessFailedStepSchema
+]);
+const FreshnessBlockedStepSchema = z.discriminatedUnion("state", [
+  FreshnessReachedStepSchema,
+  FreshnessFailedStepSchema,
+  FreshnessSkippedStepSchema
+]);
+
+const FreshnessSourceFailureSchema = FreshnessFailedResultSchema.extend({
+  captureStepId: IdentifierSchema.optional(),
+  phase: z.enum(["setup", "capture", "action", "outcome", "finalize"])
+}).strict();
+
+const FreshnessReportIdentityShape = {
+  schemaVersion: z.literal(SCHEMA_VERSION),
+  previousDemoChanged: z.literal(false),
+  baseVersion: ContentHashSchema,
+  baseSourceHash: ContentHashSchema
+} satisfies z.ZodRawShape;
+
+const FreshnessFreshReportSchema = z
+  .object({
+    ...FreshnessReportIdentityShape,
+    status: z.literal("fresh"),
+    currentSourceHash: ContentHashSchema,
+    steps: z.array(FreshnessFreshStepSchema).min(1),
+    completion: FreshnessFreshResultSchema
+  })
+  .strict();
+
+const FreshnessOutOfDateReportSchema = z
+  .object({
+    ...FreshnessReportIdentityShape,
+    status: z.literal("out-of-date"),
+    currentSourceHash: ContentHashSchema,
+    steps: z.array(FreshnessCompletedStepSchema).min(1),
+    completion: z.discriminatedUnion("state", [
+      FreshnessFreshResultSchema,
+      FreshnessFailedResultSchema
+    ])
+  })
+  .strict()
+  .refine(
+    (report) =>
+      report.completion.state === "failed" ||
+      report.steps.some((step) => step.state === "failed"),
+    {
+      path: ["status"],
+      message: "An out-of-date report must identify a failed result."
+    }
+  );
+
+const FreshnessBlockedReportSchema = z
+  .object({
+    ...FreshnessReportIdentityShape,
+    status: z.literal("blocked"),
+    steps: z.array(FreshnessBlockedStepSchema).min(1),
+    completion: z.discriminatedUnion("state", [
+      FreshnessSkippedResultSchema,
+      FreshnessFailedResultSchema
+    ]),
+    sourceFailure: FreshnessSourceFailureSchema.optional()
+  })
+  .strict()
+  .refine(
+    (report) =>
+      report.completion.state === "failed" ||
+      report.steps.some((step) => step.state === "failed") ||
+      report.sourceFailure?.state === "failed",
+    {
+      path: ["status"],
+      message: "A blocked report must identify where the source flow failed."
+    }
+  );
+
+export const FreshnessReportSchema = z.union([
+  FreshnessFreshReportSchema,
+  FreshnessOutOfDateReportSchema,
+  FreshnessBlockedReportSchema
+]);
+
 export const ArtifactManifestSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   state: z.literal("BUILT"),
   version: z.string().length(64),
   sourceCaptureHash: z.string().length(64),
   storyHash: z.string().length(64),
+  freshness: FreshnessBaselineSchema.optional(),
   builderVersion: z.string(),
   source: CaptureSourceProvenanceSchema,
   replayLevel: z.enum([
@@ -1155,4 +1324,6 @@ export type StoryStep = z.infer<typeof StoryStepSchema>;
 export type StorySpec = z.infer<typeof StorySpecSchema>;
 export type VerificationReport = z.infer<typeof VerificationReportSchema>;
 export type QualityReport = z.infer<typeof QualityReportSchema>;
+export type FreshnessBaseline = z.infer<typeof FreshnessBaselineSchema>;
+export type FreshnessReport = z.infer<typeof FreshnessReportSchema>;
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;

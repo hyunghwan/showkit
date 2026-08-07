@@ -4,9 +4,10 @@ import { asShowKitError } from "./core/errors.js";
 import { recordFailedCommand, runCommand } from "./commands.js";
 
 const fallbackOperationId = `op-${randomUUID()}`;
+const commandArguments = process.argv.slice(2);
 
 try {
-  const result = await runCommand(process.argv.slice(2));
+  const result = await runCommand(commandArguments);
   if (result) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   }
@@ -15,11 +16,15 @@ try {
   const command = [process.argv[2], process.argv[2] === "story" ? process.argv[3] : undefined]
     .filter(Boolean)
     .join(" ");
-  await recordFailedCommand(
-    fallbackOperationId,
-    command || "unknown",
-    showkitError.code
-  ).catch(() => undefined);
+  const nonPersistingSourceDiff =
+    commandArguments[0] === "diff" && commandArguments.includes("--source");
+  if (!nonPersistingSourceDiff) {
+    await recordFailedCommand(
+      fallbackOperationId,
+      command || "unknown",
+      showkitError.code
+    ).catch(() => undefined);
+  }
   process.stdout.write(
     `${JSON.stringify({
       ok: false,

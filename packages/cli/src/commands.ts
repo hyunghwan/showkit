@@ -21,6 +21,13 @@ import { commitCaptureEnvelope } from "./capture/session-import.js";
 import { validateAgentBrowserCaptureEnvelope } from "./capture/session-envelope.js";
 import { validateStaticCaptureEnvelope } from "./capture/static.js";
 import { asShowKitError, EXIT_CODES, ShowKitError } from "./core/errors.js";
+import {
+  CaptureFailureDiagnosticSchema,
+  compareCaptureFreshness,
+  createBlockedFreshnessReport,
+  validateCaptureStepProgress,
+  type CaptureStepProgress
+} from "./core/freshness.js";
 import { contentHash, replaceDirectoryAtomic, sha256, writeJsonAtomic } from "./core/json.js";
 import {
   initializeProject,
@@ -41,8 +48,10 @@ import {
   SCHEMA_VERSION,
   SkillCompatibilitySchema,
   StorySpecSchema,
-  VerificationReportSchema
+  VerificationReportSchema,
+  type CaptureSource
 } from "./core/schemas.js";
+import { containsConfiguredSensitiveText } from "./core/security.js";
 import { createEvidenceGroundedStory } from "./core/story.js";
 import { validateStory } from "./core/validate.js";
 import { satisfiesVersionRange } from "./core/version.js";
@@ -218,6 +227,26 @@ function argumentValue(args: string[], flag: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
+function playwrightProjectArgument(args: string[]): string | undefined {
+  if (!args.includes("--project")) return undefined;
+  const value = argumentValue(args, "--project");
+  if (
+    !value ||
+    value.startsWith("--") ||
+    value.length > 120 ||
+    containsConfiguredSensitiveText(value)
+  ) {
+    throw new ShowKitError({
+      code: "DemoFixtureSetupFailed",
+      message: "ShowKit could not identify one Playwright project.",
+      exitCode: EXIT_CODES.environment,
+      recovery:
+        "Pass one safe configured project name with `--project <name>`."
+    });
+  }
+  return value;
+}
+
 function positionalArgs(args: string[]): string[] {
   const values: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -233,16 +262,16 @@ function positionalArgs(args: string[]): string[] {
   return values;
 }
 
-function captureViewportArgument(args: string[]): {
-  width: number;
-  height: number;
-} {
+function captureViewportArgument(
+  args: string[],
+  fallback: { width: number; height: number } = DEFAULT_CAPTURE_VIEWPORT
+): { width: number; height: number } {
   const separated = args.includes("--viewport");
   const inline = args.find((value) => value.startsWith("--viewport="));
   const raw = separated
     ? argumentValue(args, "--viewport")
     : inline?.slice("--viewport=".length);
-  if (!separated && inline === undefined) return { ...DEFAULT_CAPTURE_VIEWPORT };
+  if (!separated && inline === undefined) return { ...fallback };
   const match = typeof raw === "string"
     ? /^(\d{1,4})x(\d{1,4})$/i.exec(raw)
     : null;
@@ -570,10 +599,25 @@ export async function initCommand(): Promise<CommandResult> {
   return result;
 }
 
-function captureFailure(output: string): ShowKitError {
+async function captureFailure(
+  output: string,
+  diagnosticPath?: string
+): Promise<ShowKitError> {
+  const diagnostic = diagnosticPath
+    ? await readFile(diagnosticPath, "utf8")
+        .then((contents) =>
+          CaptureFailureDiagnosticSchema.safeParse(JSON.parse(contents))
+        )
+        .then((result) => (result.success ? result.data : undefined))
+        .catch(() => undefined)
+    : undefined;
   const definitions: Record<
     string,
-    { message: string; recovery: string; exitCode?: (typeof EXIT_CODES)[keyof typeof EXIT_CODES] }
+    {
+      message: string;
+      recovery: string;
+      exitCode?: (typeof EXIT_CODES)[keyof typeof EXIT_CODES];
+    }
   > = {
     SensitiveDataDetected: {
       message: "Sensitive data was found. ShowKit did not save the captured page.",
@@ -599,41 +643,77 @@ function captureFailure(output: string): ShowKitError {
       message:
         "The browser source flow does not match its capture setup. No captured page was saved.",
       recovery:
-        "Keep the fixed Playwright viewport equal to the capture contract. Use another `--viewport WIDTHxHEIGHT` only for an exact requested size or an existing demo.",
+        "Run the Playwright flow directly, fix the failing setup, then try again.",
       exitCode: EXIT_CODES.environment
+    },
+    InternalError: {
+      message:
+        "ShowKit hit an internal capture error. No captured page was saved.",
+      recovery:
+        "Retry once, then report the failure without including private page content.",
+      exitCode: EXIT_CODES.internal
     }
   };
-  const code = Object.keys(definitions).find((candidate) =>
-    output.includes(`[SHOWKIT:${candidate}]`)
-  );
-  if (code) {
-    const definition = definitions[code]!;
-    const category = output.match(
-      /\[SHOWKIT-CATEGORY:([a-z0-9-]{1,80})\]/
-    )?.[1];
-    const viewport = output.match(
-      /\[SHOWKIT-VIEWPORT:(\d{1,4})x(\d{1,4}):(\d{1,4})x(\d{1,4})\]/
-    );
-    const details = {
-      ...(category ? { category } : {}),
-      ...(viewport
+  if (diagnostic) {
+    const code = definitions[diagnostic.code]
+      ? diagnostic.code
+      : "InternalError";
+    const defaultDefinition = definitions[code]!;
+    const definition =
+      code === "DemoFixtureSetupFailed" &&
+      diagnostic.category?.startsWith("capture-viewport-")
         ? {
-            expectedViewport: {
-              width: Number(viewport[1]),
-              height: Number(viewport[2])
-            },
-            actualViewport: {
-              width: Number(viewport[3]),
-              height: Number(viewport[4])
-            }
+            message:
+              "The Playwright viewport does not match the capture contract. No captured page was saved.",
+            recovery:
+              "Keep the fixed Playwright viewport equal to the capture contract. Use another `--viewport WIDTHxHEIGHT` only for an exact requested size or an existing demo."
           }
-        : {})
+        : code === "DemoFixtureSetupFailed" &&
+            diagnostic.category === "duplicate-step-id"
+        ? {
+            message:
+              "The source flow uses the same demo step ID more than once. No captured page was saved.",
+            recovery:
+              "Give every `demo.step()` a different lowercase hyphenated ID, then capture again."
+          }
+        : code === "DemoFixtureSetupFailed" &&
+            diagnostic.category === "multiple-playwright-flows"
+        ? {
+            message:
+              "More than one Playwright test or project tried to produce this flow. No captured page was saved.",
+            recovery:
+              "Keep one test in the source file and pass `--project <name>` when the Playwright config defines multiple projects."
+          }
+        : code === "DemoFixtureSetupFailed" &&
+            diagnostic.phase === "action"
+          ? {
+              message:
+                "The source flow action stopped before capture finished. No captured page was saved.",
+              recovery:
+                "Run the Playwright flow directly and fix the failing action."
+            }
+          : defaultDefinition;
+    const details = {
+      ...(diagnostic.category ? { category: diagnostic.category } : {}),
+      ...(diagnostic.expectedViewport && diagnostic.actualViewport
+        ? {
+            expectedViewport: diagnostic.expectedViewport,
+            actualViewport: diagnostic.actualViewport
+          }
+        : {}),
+      ...(diagnostic.stepProgress.length > 0
+        ? { stepProgress: diagnostic.stepProgress }
+        : {}),
+      failurePhase: diagnostic.phase
     };
     return new ShowKitError({
       code,
       message: definition.message,
       recovery: definition.recovery,
-      ...(definition.exitCode ? { exitCode: definition.exitCode } : {}),
+      exitCode:
+        code === "InternalError"
+          ? EXIT_CODES.internal
+          : diagnostic.exitCode,
       ...(Object.keys(details).length > 0 ? { details } : {})
     });
   }
@@ -710,6 +790,7 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
   const id = operationId();
   const preflightOnly = args.includes("--preflight");
   const expectedViewport = captureViewportArgument(args);
+  const requestedProject = playwrightProjectArgument(args);
   const [specArgument] = positionalArgs(args);
   if (!specArgument) {
     throw new ShowKitError({
@@ -734,6 +815,7 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
   let runCommitted = false;
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "showkit-capture-"));
   const captureOutput = path.join(temporaryDirectory, "capture.json");
+  const failureOutput = path.join(temporaryDirectory, "failure.json");
   const playwrightOutput = path.join(temporaryDirectory, "playwright");
 
   try {
@@ -751,9 +833,29 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
           "Install `@playwright/test`, then run `showkit doctor --capability playwright --json`."
       });
     }
+    const projectArgs = requestedProject
+      ? ["--project", requestedProject]
+      : [];
     const playwrightArgs = preflightOnly
-      ? [playwrightCli, "test", specPath, "--list", "--reporter=line"]
-      : [playwrightCli, "test", specPath, "--reporter=line", "--output", playwrightOutput];
+      ? [
+          playwrightCli,
+          "test",
+          specPath,
+          "--list",
+          "--reporter=line",
+          ...projectArgs
+        ]
+      : [
+          playwrightCli,
+          "test",
+          specPath,
+          "--reporter=line",
+          "--workers=1",
+          "--max-failures=1",
+          "--output",
+          playwrightOutput,
+          ...projectArgs
+        ];
     captureProgress(
       preflightOnly
         ? "Checking the source flow before opening a browser."
@@ -777,6 +879,7 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
         env: {
           ...process.env,
           SHOWKIT_CAPTURE_OUTPUT: captureOutput,
+          SHOWKIT_CAPTURE_DIAGNOSTIC_OUTPUT: failureOutput,
           SHOWKIT_EXPECTED_VIEWPORT: `${expectedViewport.width}x${expectedViewport.height}`
         },
         maxBuffer: CAPTURE_PROCESS_BUFFER_LIMIT
@@ -786,7 +889,7 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
     }
     const commandOutput = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
     if (run.status !== 0) {
-      throw captureFailure(commandOutput);
+      throw await captureFailure(commandOutput, failureOutput);
     }
     captureProgress(
       preflightOnly
@@ -832,6 +935,10 @@ export async function captureCommand(args: string[]): Promise<CommandResult> {
       sourceMode: capture.source.kind,
       replayLevel: capture.source.replayLevel,
       viewport: capture.viewport,
+      ...(capture.source.kind === "playwright-spec" &&
+      capture.source.projectName
+        ? { playwrightProject: capture.source.projectName }
+        : {}),
       policyChecksPassed: true,
       fullSceneRasterCount: 0,
       ...(capturePerformance ? { capturePerformance } : {})
@@ -1390,15 +1497,262 @@ export async function buildCommand(): Promise<CommandResult> {
   }
 }
 
-export async function diffCommand(args: string[]): Promise<CommandResult> {
-  const id = operationId();
+async function replayPlaywrightSource(
+  specArgument: string,
+  expectedViewport: { width: number; height: number },
+  projectName?: string
+): Promise<{
+  capture: CaptureSource;
+  specHash: string;
+  capturePerformance?: ReturnType<typeof capturePerformanceFromOutput>;
+}> {
+  const specPath = path.resolve(process.cwd(), specArgument);
+  if (!(await pathExists(specPath))) {
+    throw new ShowKitError({
+      code: "CaptureSourceMissing",
+      message:
+        "ShowKit could not find the source flow. Your previous demo has not changed.",
+      recovery: `Check the path \`${specArgument}\`, then run the demo check again.`
+    });
+  }
+  const require = createRequire(import.meta.url);
+  let playwrightCli: string;
+  try {
+    playwrightCli = require.resolve("@playwright/test/cli");
+  } catch {
+    throw new ShowKitError({
+      code: "DependencyMissing",
+      message:
+        "This demo check needs Playwright, but Playwright is not installed. Your previous demo has not changed.",
+      exitCode: EXIT_CODES.environment,
+      recovery:
+        "Install `@playwright/test`, then run `showkit doctor --capability playwright --json`."
+    });
+  }
+  const temporaryDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "showkit-freshness-")
+  );
+  const captureOutput = path.join(temporaryDirectory, "capture.json");
+  const failureOutput = path.join(temporaryDirectory, "failure.json");
+  const playwrightOutput = path.join(temporaryDirectory, "playwright");
+  try {
+    captureProgress("Checking the current product flow against the earlier demo.");
+    const progressStartedAt = Date.now();
+    const progressTimer = setInterval(() => {
+      const elapsedSeconds = Math.max(
+        1,
+        Math.round((Date.now() - progressStartedAt) / 1_000)
+      );
+      captureProgress(`Demo check is still running (${elapsedSeconds}s).`);
+    }, 10_000);
+    progressTimer.unref();
+    let run: BufferedProcessResult;
+    try {
+      run = await runBufferedProcess(
+        process.execPath,
+        [
+          playwrightCli,
+          "test",
+          specPath,
+          "--reporter=line",
+          "--workers=1",
+          "--max-failures=1",
+          "--output",
+          playwrightOutput,
+          ...(projectName ? ["--project", projectName] : [])
+        ],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            SHOWKIT_CAPTURE_OUTPUT: captureOutput,
+            SHOWKIT_CAPTURE_OUTPUT_KIND: "freshness",
+            SHOWKIT_CAPTURE_DIAGNOSTIC_OUTPUT: failureOutput,
+            SHOWKIT_EXPECTED_VIEWPORT: `${expectedViewport.width}x${expectedViewport.height}`
+          },
+          maxBuffer: CAPTURE_PROCESS_BUFFER_LIMIT
+        }
+      );
+    } finally {
+      clearInterval(progressTimer);
+    }
+    const commandOutput = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
+    if (run.status !== 0) {
+      throw await captureFailure(commandOutput, failureOutput);
+    }
+    const capture = CaptureSourceSchema.parse(
+      JSON.parse(await readFile(captureOutput, "utf8"))
+    );
+    return {
+      capture,
+      specHash: sha256(await readFile(specPath)),
+      capturePerformance: capturePerformanceFromOutput(commandOutput)
+    };
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function readArtifactBase(args: string[]) {
   const baseArgument = argumentValue(args, "--base");
-  if (!baseArgument) {
+  if (!baseArgument || baseArgument.startsWith("--")) {
     throw new ShowKitError({
       code: "ArtifactBaseMissing",
       message: "ShowKit could not find the earlier demo version.",
       recovery: "Pass an artifact manifest path with `--base <manifest>`."
     });
+  }
+  const basePath = path.resolve(process.cwd(), baseArgument);
+  let contents: string;
+  try {
+    contents = await readFile(basePath, "utf8");
+  } catch {
+    throw new ShowKitError({
+      code: "ArtifactBaseMissing",
+      message: "ShowKit could not read the earlier demo version.",
+      recovery: `Check the path \`${baseArgument}\`, then run the demo check again.`
+    });
+  }
+  try {
+    return ArtifactManifestSchema.parse(JSON.parse(contents));
+  } catch {
+    throw new ShowKitError({
+      code: "ArtifactBaseInvalid",
+      message: "The earlier demo manifest is not valid.",
+      recovery:
+        "Pass an unchanged `artifact.json` produced by ShowKit, then run the demo check again."
+    });
+  }
+}
+
+export async function diffCommand(args: string[]): Promise<CommandResult> {
+  const id = operationId();
+  const base = await readArtifactBase(args);
+  const sourceRequested = args.includes("--source");
+  const sourceArgument = argumentValue(args, "--source");
+  if (
+    sourceRequested &&
+    (!sourceArgument || sourceArgument.startsWith("--"))
+  ) {
+    throw new ShowKitError({
+      code: "CaptureSourceMissing",
+      message:
+        "ShowKit could not find the source flow. Your previous demo has not changed.",
+      recovery:
+        "Pass a Playwright demo spec path with `--source <demo.spec.ts>`, then run the demo check again."
+    });
+  }
+  if (sourceArgument) {
+    if (base.source.kind !== "playwright-spec" || base.replayLevel !== "ci-replayable") {
+      throw new ShowKitError({
+        code: "FreshnessSourceUnsupported",
+        message:
+          "This demo version was not created from a CI-replayable source flow. Your previous demo has not changed.",
+        recovery:
+          "Promote the demo to an approved Playwright source flow, then build a new baseline."
+      });
+    }
+    if (!base.freshness) {
+      throw new ShowKitError({
+        code: "FreshnessBaselineMissing",
+        message:
+          "This demo version does not include step freshness details. Your previous demo has not changed.",
+        recovery:
+          "Build the demo once with the current ShowKit version, then run the source check again."
+      });
+    }
+    const expectedViewport = captureViewportArgument(
+      args,
+      base.environment.viewport
+    );
+    let replay: Awaited<ReturnType<typeof replayPlaywrightSource>>;
+    try {
+      replay = await replayPlaywrightSource(
+        sourceArgument,
+        expectedViewport,
+        base.source.projectName
+      );
+    } catch (error) {
+      const showkitError = asShowKitError(error);
+      const parsedProgress = Array.isArray(showkitError.details?.stepProgress)
+        ? (showkitError.details.stepProgress as CaptureStepProgress[])
+        : [];
+      const stepProgress = validateCaptureStepProgress(
+        parsedProgress,
+        base.freshness
+      );
+      const failedProgress = [...stepProgress]
+        .reverse()
+        .find((step) => step.state === "failed");
+      const failedBaselineStep = failedProgress
+        ? base.freshness.steps.find(
+            (step) => step.captureStepId === failedProgress.stepId
+          )
+        : undefined;
+      const failureMessage = failedBaselineStep
+        ? `The source flow stopped while checking “${failedBaselineStep.title}”. Your previous demo has not changed.`
+        : showkitError.message.includes("previous demo")
+          ? showkitError.message
+          : `${showkitError.message} Your previous demo has not changed.`;
+      const failureRecovery =
+        failedBaselineStep && failedProgress?.phase === "action"
+          ? `Fix the action for step \`${failedBaselineStep.captureStepId}\`, then run the source flow again.`
+          : showkitError.recovery;
+      const freshness = createBlockedFreshnessReport({
+        baseline: base.freshness,
+        baseVersion: base.version,
+        baseSourceHash: base.sourceCaptureHash,
+        progress: stepProgress,
+        failure: {
+          code: showkitError.code,
+          message: failureMessage,
+          recovery: failureRecovery
+        }
+      });
+      const safeDetails = { ...(showkitError.details ?? {}) };
+      delete safeDetails.stepProgress;
+      throw new ShowKitError({
+        code: showkitError.code,
+        message: failureMessage,
+        recovery: failureRecovery,
+        exitCode: showkitError.exitCode,
+        details: {
+          ...safeDetails,
+          ...(stepProgress.length > 0 ? { stepProgress } : {}),
+          freshness
+        }
+      });
+    }
+    const freshness = compareCaptureFreshness({
+      baseline: base.freshness,
+      baseVersion: base.version,
+      baseSourceHash: base.sourceCaptureHash,
+      currentCapture: replay.capture
+    });
+    if (args.includes("--check") && freshness.status !== "fresh") {
+      throw new ShowKitError({
+        code: "ArtifactDriftDetected",
+        message: "This demo is out of date. Your previous demo has not changed.",
+        recovery:
+          "Review the failed steps, then capture and approve the updated demo.",
+        details: { freshness }
+      });
+    }
+    return {
+      ok: true,
+      operationId: id,
+      status: freshness.status === "fresh" ? "fresh" : "out-of-date",
+      sourceMode: "playwright-spec",
+      ...(base.source.projectName
+        ? { playwrightProject: base.source.projectName }
+        : {}),
+      expectedViewport,
+      specHash: replay.specHash,
+      ...(replay.capturePerformance
+        ? { capturePerformance: replay.capturePerformance }
+        : {}),
+      freshness
+    };
   }
   const project = await loadProject();
   if (!project.latestArtifactVersion) {
@@ -1413,8 +1767,6 @@ export async function diffCommand(args: string[]): Promise<CommandResult> {
       await readFile(showkitPath("artifacts", project.latestArtifactVersion, "artifact.json"), "utf8")
     )
   );
-  const basePath = path.resolve(process.cwd(), baseArgument);
-  const base = ArtifactManifestSchema.parse(JSON.parse(await readFile(basePath, "utf8")));
   const changedFiles = [
     ...new Set([
       ...current.files.map((file) => file.path),
@@ -1685,7 +2037,7 @@ export function helpCommand(): CommandResult {
       "showkit doctor --json",
       "showkit init --json",
       "showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json",
-      "showkit capture <demo.spec.ts> --viewport 1280x720 --json",
+      "showkit capture <demo.spec.ts> --viewport 1280x720 [--project <name>] --json",
       "showkit capture session <safe-envelope.json> --json",
       "showkit capture static <safe-envelope.json> --json",
       "showkit story apply <story.json> --json",
@@ -1693,6 +2045,7 @@ export function helpCommand(): CommandResult {
       "showkit build web,markdown --json",
       "showkit diff --base <artifact.json> --json",
       "showkit diff --base <artifact.json> --check --json",
+      "showkit diff --base <artifact.json> --source <demo.spec.ts> --check --json",
       "showkit preview --json",
       "showkit publish --version <hash> --json"
     ]

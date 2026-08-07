@@ -1,5 +1,5 @@
 import type { Locator, Page, Request, TestInfo } from "@playwright/test";
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { contentHash, sha256, writeJsonAtomic } from "../core/json.js";
 import {
@@ -19,12 +19,18 @@ import {
 } from "./browser.js";
 import { EXIT_CODES, ShowKitError } from "../core/errors.js";
 import {
+  CaptureFailureDiagnosticSchema,
+  CaptureStepProgressSchema,
+  type CaptureStepProgress
+} from "../core/freshness.js";
+import {
   assertCaptureSafeForPersistence,
   containsConfiguredSensitiveText
 } from "../core/security.js";
 import type { PageAssetConsent } from "./extractor.js";
 
 const DEFAULT_CAPTURE_VIEWPORT = { width: 1280, height: 720 } as const;
+type CaptureStepPhase = "setup" | "capture" | "action" | "outcome";
 
 function expectedCaptureViewport(): { width: number; height: number } {
   const raw = process.env.SHOWKIT_EXPECTED_VIEWPORT;
@@ -136,7 +142,10 @@ export class CaptureSession implements DemoController {
   readonly #page: Page;
   readonly #testInfo: TestInfo;
   readonly #outputPath: string | undefined;
+  readonly #outputKind: "capture" | "freshness";
+  readonly #diagnosticOutputPath: string | undefined;
   readonly #steps: CaptureStep[] = [];
+  readonly #stepProgress: CaptureStepProgress[] = [];
   readonly #stepTargets: SemanticCaptureTarget[] = [];
   readonly #assets = new Map<string, AssetPayload>();
   readonly #excludedSurfaces = new Set<string>();
@@ -145,6 +154,7 @@ export class CaptureSession implements DemoController {
   #sceneExtractionMs = 0;
   #actionCount = 0;
   #actionMs = 0;
+  #failureRecorded = false;
   #pageAssetConsent: PageAssetConsent | undefined;
   #remoteAssetPolicy: "strict" | "decorative-remove" = "decorative-remove";
   readonly #observedPublicFontSources = new Set<string>();
@@ -178,6 +188,12 @@ export class CaptureSession implements DemoController {
     this.#page = page;
     this.#testInfo = testInfo;
     this.#outputPath = process.env.SHOWKIT_CAPTURE_OUTPUT;
+    this.#outputKind =
+      process.env.SHOWKIT_CAPTURE_OUTPUT_KIND === "freshness"
+        ? "freshness"
+        : "capture";
+    this.#diagnosticOutputPath =
+      process.env.SHOWKIT_CAPTURE_DIAGNOSTIC_OUTPUT;
     this.#fontRequestListener = (request): void => {
       if (
         !this.active ||
@@ -210,12 +226,198 @@ export class CaptureSession implements DemoController {
     return Boolean(this.#outputPath);
   }
 
+  #reportStep(progress: {
+    stepId: string;
+    title: string;
+    stepIndex: number;
+    state: "reached" | "failed";
+    phase: CaptureStepPhase;
+  }): void {
+    const parsedStepId =
+      CaptureSourceSchema.shape.steps.element.shape.id.safeParse(
+        progress.stepId
+      );
+    const parsedTitle =
+      CaptureSourceSchema.shape.steps.element.shape.title.safeParse(
+        progress.title
+      );
+    const stepId =
+      parsedStepId.success &&
+      !containsConfiguredSensitiveText(parsedStepId.data)
+        ? parsedStepId.data
+        : `step-${progress.stepIndex + 1}`;
+    const title =
+      parsedTitle.success &&
+      !containsConfiguredSensitiveText(parsedTitle.data)
+        ? parsedTitle.data
+        : `Step ${progress.stepIndex + 1}`;
+    this.#stepProgress.push(
+      CaptureStepProgressSchema.parse({
+        ...progress,
+        stepId,
+        title
+      })
+    );
+  }
+
   async step(options: DemoStepOptions): Promise<void> {
     if (!this.active) {
       await options.action();
       return;
     }
 
+    const stepIndex = this.#steps.length;
+    const progress: { phase: CaptureStepPhase } = { phase: "setup" };
+    try {
+      if (this.#steps.some((step) => step.id === options.id)) {
+        throw new ShowKitError({
+          code: "DemoFixtureSetupFailed",
+          message:
+            "[SHOWKIT:DemoFixtureSetupFailed] Each demo step needs a unique ID. No captured page was saved. [SHOWKIT-CATEGORY:duplicate-step-id]",
+          exitCode: EXIT_CODES.validation,
+          recovery:
+            "Give every `demo.step()` a different lowercase hyphenated ID, then capture again."
+        });
+      }
+      await this.#captureStep(options, (nextPhase) => {
+        progress.phase = nextPhase;
+      });
+      this.#reportStep({
+        stepId: options.id,
+        title: options.title,
+        stepIndex,
+        state: "reached",
+        phase: "outcome"
+      });
+    } catch (error) {
+      this.#reportStep({
+        stepId: options.id,
+        title: options.title,
+        stepIndex,
+        state: "failed",
+        phase: progress.phase
+      });
+      await this.recordFailure(
+        error,
+        progress.phase,
+        progress.phase === "action"
+          ? "DemoFixtureSetupFailed"
+          : "InternalError"
+      );
+      if (error instanceof ShowKitError) throw error;
+      if (progress.phase === "action") {
+        throw new ShowKitError({
+          code: "DemoFixtureSetupFailed",
+          message:
+            "[SHOWKIT:DemoFixtureSetupFailed] The source flow action stopped before capture finished. No captured page was saved.",
+          exitCode: EXIT_CODES.environment,
+          recovery: "Run the Playwright flow directly and fix the failing action."
+        });
+      }
+      throw new ShowKitError({
+        code: "InternalError",
+        message:
+          "[SHOWKIT:InternalError] ShowKit hit an internal capture error. No captured page was saved.",
+        exitCode: EXIT_CODES.internal,
+        recovery:
+          "Retry once, then report the failure without including private page content."
+      });
+    }
+  }
+
+  async recordFailure(
+    error: unknown,
+    phase: CaptureStepPhase | "finalize",
+    fallbackCode: "DemoFixtureSetupFailed" | "InternalError"
+  ): Promise<void> {
+    if (
+      this.#failureRecorded ||
+      !this.#diagnosticOutputPath
+    ) {
+      return;
+    }
+    const fallbackInternal = fallbackCode === "InternalError";
+    const failure =
+      error instanceof ShowKitError
+        ? error
+        : new ShowKitError({
+            code: fallbackCode,
+            message: fallbackInternal
+              ? "ShowKit hit an internal capture error."
+              : "The source flow stopped before capture finished.",
+            exitCode: fallbackInternal
+              ? EXIT_CODES.internal
+              : EXIT_CODES.environment,
+            recovery: fallbackInternal
+              ? "Retry once, then report the failure without private page content."
+              : "Run the Playwright flow directly and fix the failing action."
+          });
+    const code =
+      /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(failure.code) &&
+      !containsConfiguredSensitiveText(failure.code)
+        ? failure.code
+        : "InternalError";
+    const category = [
+      ...failure.message.matchAll(
+        /\[SHOWKIT-CATEGORY:([a-z0-9-]{1,80})\]/g
+      )
+    ].at(-1)?.[1];
+    const viewport = [
+      ...failure.message.matchAll(
+        /\[SHOWKIT-VIEWPORT:(\d{1,4})x(\d{1,4}):(\d{1,4})x(\d{1,4})\]/g
+      )
+    ].at(-1);
+    await writeJsonAtomic(
+      this.#diagnosticOutputPath,
+      CaptureFailureDiagnosticSchema.parse({
+        schemaVersion: SCHEMA_VERSION,
+        code,
+        exitCode:
+          code === "InternalError" ? EXIT_CODES.internal : failure.exitCode,
+        phase,
+        ...(category ? { category } : {}),
+        ...(viewport
+          ? {
+              expectedViewport: {
+                width: Number(viewport[1]),
+                height: Number(viewport[2])
+              },
+              actualViewport: {
+                width: Number(viewport[3]),
+                height: Number(viewport[4])
+              }
+            }
+          : {}),
+        stepProgress: this.#stepProgress
+      })
+    );
+    this.#failureRecorded = true;
+  }
+
+  async #writeCaptureOutput(value: unknown): Promise<void> {
+    if (!this.#outputPath) return;
+    const lockPath = `${this.#outputPath}.lock`;
+    try {
+      const lock = await open(lockPath, "wx");
+      await lock.close();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      throw new ShowKitError({
+        code: "DemoFixtureSetupFailed",
+        message:
+          "[SHOWKIT:DemoFixtureSetupFailed] More than one Playwright test or project tried to produce this flow. No captured page was saved. [SHOWKIT-CATEGORY:multiple-playwright-flows]",
+        exitCode: EXIT_CODES.environment,
+        recovery:
+          "Keep one test in the source file and pass `--project <name>` when the Playwright config defines multiple projects."
+      });
+    }
+    await writeJsonAtomic(this.#outputPath, value);
+  }
+
+  async #captureStep(
+    options: DemoStepOptions,
+    setPhase: (phase: Exclude<CaptureStepPhase, "setup">) => void
+  ): Promise<void> {
     const viewport = assertCaptureViewport(this.#page);
     if (!this.#fixtureSeed) {
       const currentUrl = new URL(this.#page.url());
@@ -326,6 +528,7 @@ export class CaptureSession implements DemoController {
       this.#remoteAssetPolicy = options.remoteAssetPolicy;
     }
     const anchorId = `sk-${options.id}`;
+    setPhase("capture");
     const extractionStartedAt = performance.now();
     const {
       scene,
@@ -353,16 +556,18 @@ export class CaptureSession implements DemoController {
     for (const surface of excludedSurfaces) {
       this.#excludedSurfaces.add(surface);
     }
+    setPhase("action");
     const actionStartedAt = performance.now();
     await options.action();
     this.#actionCount += 1;
     this.#actionMs += performance.now() - actionStartedAt;
+    setPhase("outcome");
     const safeOutcomeTitle = await this.#page.title();
     if (containsConfiguredSensitiveText(safeOutcomeTitle)) {
       throw new ShowKitError({
         code: "SensitiveDataDetected",
         message:
-          "[SHOWKIT:SensitiveDataDetected] Sensitive data was found in the page title after the action. No captured page was saved. Your previous captured product flow has not changed.",
+          "[SHOWKIT:SensitiveDataDetected] Sensitive data was found in the page title after the action. No captured page was saved. Your previous demo has not changed.",
         exitCode: EXIT_CODES.validation,
         recovery: "Hide the data from the page title, then capture again."
       });
@@ -455,6 +660,20 @@ export class CaptureSession implements DemoController {
     const assetPayloads = [...this.#assets.values()].sort((left, right) =>
       left.sha256.localeCompare(right.sha256)
     );
+    const projectName = this.#testInfo.project.name.trim();
+    if (
+      projectName.length > 120 ||
+      containsConfiguredSensitiveText(projectName)
+    ) {
+      throw new ShowKitError({
+        code: "SensitiveDataDetected",
+        message:
+          "[SHOWKIT:SensitiveDataDetected] The Playwright project name is not safe to save. No captured page was saved.",
+        exitCode: EXIT_CODES.validation,
+        recovery:
+          "Use a short project name that does not contain private data, then capture again."
+      });
+    }
     const sourceWithoutId = {
       schemaVersion: SCHEMA_VERSION,
       source: {
@@ -462,6 +681,7 @@ export class CaptureSession implements DemoController {
         specHash: sha256(specContents),
         runtime: "playwright-test" as const,
         runtimeVersion: playwrightPackage.version,
+        ...(projectName ? { projectName } : {}),
         replayLevel: "ci-replayable" as const,
         captureSecurity: {
           provider: "playwright-cdp" as const,
@@ -470,7 +690,7 @@ export class CaptureSession implements DemoController {
         }
       },
       fixtureHash: contentHash(fixture),
-      browser: this.#testInfo.project.name || "chromium",
+      browser: projectName || "chromium",
       fixture,
       viewport,
       steps: this.#steps,
@@ -512,7 +732,8 @@ export class CaptureSession implements DemoController {
       assetPayloads
     });
     assertCaptureSafeForPersistence(envelope.capture);
-    const captureBytes = Buffer.byteLength(JSON.stringify(envelope));
+    const output = this.#outputKind === "freshness" ? capture : envelope;
+    const captureBytes = Buffer.byteLength(JSON.stringify(output));
     const captureLimitBytes = 25 * 1024 * 1024;
     if (captureBytes > captureLimitBytes) {
       throw new ShowKitError({
@@ -522,7 +743,7 @@ export class CaptureSession implements DemoController {
         recovery: "Reduce the number or size of captured product states, then capture again."
       });
     }
-    await writeJsonAtomic(this.#outputPath, envelope);
+    await this.#writeCaptureOutput(output);
     const rounded = (value: number): number => Number(value.toFixed(3));
     console.error(
       `[SHOWKIT:CAPTURE_PERFORMANCE] ${JSON.stringify({

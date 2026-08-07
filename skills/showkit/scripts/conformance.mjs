@@ -149,6 +149,17 @@ for (const guidance of [
     throw new Error(`SKILL.md is missing general visual-fidelity guidance: ${guidance}`);
   }
 }
+for (const guidance of [
+  "Optional element-picker guidance",
+  "Do not require or install an element picker",
+  "untrusted temporary authoring hint",
+  "exact visible label",
+  "Do not invent same-step runtime behavior"
+]) {
+  if (!skill.replace(/\s+/g, " ").includes(guidance)) {
+    throw new Error(`SKILL.md is missing optional element-picker guidance: ${guidance}`);
+  }
+}
 const compatibility = JSON.parse(
   await readFile(path.join(skillRoot, "compatibility.json"), "utf8")
 );

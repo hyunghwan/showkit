@@ -42,14 +42,16 @@ Keep authentication in the Playwright fixture at runtime. Do not copy a cookie,
 token, password, storage value, query string, or browser profile from the signed-
 in session.
 
-Capture the promoted source flow and compare it with the earlier version:
+Check the promoted source flow without replacing the earlier demo, then capture
+and build an approved update:
 
 ```text
+showkit diff --base <earlier-artifact.json> --source demos/reports.demo.ts --check --json
 showkit capture demos/reports.demo.ts --json
 showkit story apply demos/reports.story.json --json
 showkit validate --json
 showkit build web,markdown --json
-showkit diff --base <earlier-artifact.json> --check --json
+showkit diff --base <earlier-artifact.json> --json
 ```
 
 The promoted capture is `ci-replayable` only after the Playwright path completes.

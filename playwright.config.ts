@@ -11,8 +11,13 @@ export default defineConfig({
     timeout: 5_000
   },
   reporter: [["line"]],
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] }
+    }
+  ],
   use: {
-    ...devices["Desktop Chrome"],
     viewport: { width: 1280, height: 720 },
     locale: "en-US",
     timezoneId: "America/Los_Angeles",

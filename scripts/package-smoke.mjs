@@ -12,6 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import Ajv2020 from "ajv/dist/2020.js";
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -275,6 +276,7 @@ try {
     "dist/index.js",
     "dist/playwright.js",
     "dist/schema/artifact-manifest.json",
+    "dist/schema/freshness-report.json",
     "package.json"
   ]) {
     if (!packedFiles.has(required)) {
@@ -669,6 +671,7 @@ try {
     "capture-source.json",
     "browser-flow-recipe.json",
     "demo-fixture.json",
+    "freshness-report.json",
     "run-envelope.json",
     "session-capture-envelope.json",
     "skill-compatibility.json",
@@ -685,6 +688,135 @@ try {
         schema
       )
     );
+  }
+  const freshnessSchemaPath = path.join(
+    installDirectory,
+    "node_modules",
+    "@showkit",
+    "cli",
+    "dist",
+    "schema",
+    "freshness-report.json"
+  );
+  const captureSourceSchema = JSON.parse(
+    await readFile(
+      path.join(
+        installDirectory,
+        "node_modules",
+        "@showkit",
+        "cli",
+        "dist",
+        "schema",
+        "capture-source.json"
+      ),
+      "utf8"
+    )
+  );
+  if (
+    captureSourceSchema.properties?.steps?.uniqueItems !== true ||
+    captureSourceSchema.properties?.steps?.["x-showkit-uniqueBy"] !== "id"
+  ) {
+    throw new Error(
+      "Packed capture JSON Schema does not declare unique capture step IDs."
+    );
+  }
+  const validateFreshnessSchema = new Ajv2020({ allErrors: true }).compile(
+    JSON.parse(await readFile(freshnessSchemaPath, "utf8"))
+  );
+  const hash = "a".repeat(64);
+  const freshReport = {
+    schemaVersion: "0.1",
+    status: "fresh",
+    previousDemoChanged: false,
+    baseVersion: hash,
+    baseSourceHash: hash,
+    currentSourceHash: hash,
+    steps: [
+      {
+        stepId: "open-settings",
+        title: "Open settings",
+        state: "fresh",
+        detail: "The step still matches the product."
+      }
+    ],
+    completion: {
+      state: "fresh",
+      detail: "The final product state still matches the product."
+    }
+  };
+  if (!validateFreshnessSchema(freshReport)) {
+    throw new Error(
+      `Packed freshness JSON Schema rejected a valid report: ${JSON.stringify(
+        validateFreshnessSchema.errors
+      )}`
+    );
+  }
+  const invalidFreshnessReports = [
+    {
+      ...structuredClone(freshReport),
+      status: "out-of-date"
+    },
+    {
+      ...structuredClone(freshReport),
+      status: "out-of-date",
+      steps: [
+        {
+          stepId: "open-settings",
+          title: "Open settings",
+          state: "failed",
+          code: "SourceSceneChanged",
+          detail: "The source scene changed."
+        }
+      ]
+    },
+    {
+      schemaVersion: "0.1",
+      status: "blocked",
+      previousDemoChanged: false,
+      baseVersion: hash,
+      baseSourceHash: hash,
+      steps: [
+        {
+          stepId: "open-settings",
+          title: "Open settings",
+          state: "skipped",
+          detail: "The step was not checked."
+        }
+      ],
+      completion: {
+        state: "skipped",
+        detail: "The final state was not checked."
+      }
+    },
+    {
+      schemaVersion: "0.1",
+      status: "blocked",
+      previousDemoChanged: false,
+      baseVersion: hash,
+      baseSourceHash: hash,
+      currentSourceHash: hash,
+      steps: [
+        {
+          stepId: "open-settings",
+          title: "Open settings",
+          state: "failed",
+          code: "DemoFixtureSetupFailed",
+          detail: "The source flow stopped.",
+          recovery: "Fix the flow."
+        }
+      ],
+      completion: {
+        state: "skipped",
+        detail: "The final state was not checked."
+      }
+    }
+  ];
+  for (const invalidReport of invalidFreshnessReports) {
+    if (validateFreshnessSchema(invalidReport)) {
+      throw new Error(
+        "Packed freshness JSON Schema accepted a contradictory report."
+      );
+    }
   }
   const packedPackage = JSON.parse(
     await readFile(

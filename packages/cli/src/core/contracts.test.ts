@@ -2,12 +2,20 @@ import { describe, expect, it } from "vitest";
 import { canonicalJson, contentHash, sha256 } from "./json.js";
 import {
   CaptureSourceSchema,
+  FreshnessReportSchema,
   SCHEMA_VERSION,
   SceneFontFaceSchema,
   StorySpecSchema,
   type CaptureSource
 } from "./schemas.js";
 import { createPlayerFiles } from "../player/assets.js";
+import {
+  CaptureStepProgressSchema,
+  compareCaptureFreshness,
+  createBlockedFreshnessReport,
+  createFreshnessBaseline,
+  validateCaptureStepProgress
+} from "./freshness.js";
 import { createEvidenceGroundedStory } from "./story.js";
 import { validateStory } from "./validate.js";
 
@@ -380,6 +388,369 @@ describe("data contracts", () => {
         })
       })
     );
+  });
+
+  it("checks current source steps against the built demo baseline", () => {
+    const capture = captureFixture();
+    const story = createEvidenceGroundedStory(capture);
+    const baseline = createFreshnessBaseline(capture, story);
+    const baseVersion = "d".repeat(64);
+    const baseSourceHash = contentHash(capture);
+
+    const fresh = compareCaptureFreshness({
+      baseline,
+      baseVersion,
+      baseSourceHash,
+      currentCapture: capture
+    });
+    expect(fresh).toEqual(
+      expect.objectContaining({
+        status: "fresh",
+        previousDemoChanged: false,
+        currentSourceHash: baseSourceHash
+      })
+    );
+
+    const metadataOnlyChange = structuredClone(capture);
+    if (metadataOnlyChange.source.kind !== "playwright-spec") {
+      throw new Error("Expected a Playwright capture.");
+    }
+    metadataOnlyChange.source.specHash = "e".repeat(64);
+    const metadataReport = compareCaptureFreshness({
+      baseline,
+      baseVersion,
+      baseSourceHash,
+      currentCapture: metadataOnlyChange
+    });
+    expect(metadataReport.status).toBe("fresh");
+    expect(metadataReport.currentSourceHash).not.toBe(baseSourceHash);
+
+    const evidenceChange = structuredClone(capture);
+    evidenceChange.steps[0]!.evidence[0]!.text = "Create another workspace";
+    const stale = compareCaptureFreshness({
+      baseline,
+      baseVersion,
+      baseSourceHash,
+      currentCapture: evidenceChange
+    });
+    expect(stale.status).toBe("out-of-date");
+    expect(stale.steps[0]).toEqual(
+      expect.objectContaining({
+        stepId: "create-workspace",
+        state: "failed",
+        code: "CopyEvidenceDrift",
+        recovery: "Update the tooltip or capture the flow again."
+      })
+    );
+    const incompleteFailure = structuredClone(stale);
+    delete incompleteFailure.steps[0]!.recovery;
+    expect(FreshnessReportSchema.safeParse(incompleteFailure).success).toBe(
+      false
+    );
+  });
+
+  it("names every structural source-freshness mismatch", () => {
+    const capture = captureFixture();
+    const story = createEvidenceGroundedStory(capture);
+    const baseline = createFreshnessBaseline(capture, story);
+    const options = {
+      baseline,
+      baseVersion: "d".repeat(64),
+      baseSourceHash: contentHash(capture)
+    };
+    const cases: Array<{
+      code: string;
+      change: (candidate: CaptureSource) => void;
+    }> = [
+      {
+        code: "SourceStepMissing",
+        change: (candidate) => {
+          candidate.steps = [];
+        }
+      },
+      {
+        code: "SourceStepOrderChanged",
+        change: (candidate) => {
+          const inserted = structuredClone(candidate.steps[0]!);
+          inserted.id = "earlier-step";
+          candidate.steps.unshift(inserted);
+        }
+      },
+      {
+        code: "HotspotAnchorDrift",
+        change: (candidate) => {
+          candidate.steps[0]!.scene.target!.bounds.x += 1;
+        }
+      },
+      {
+        code: "SourceOutcomeChanged",
+        change: (candidate) => {
+          candidate.steps[0]!.actionOutcome.title = "Workspace created";
+        }
+      },
+      {
+        code: "SourceSceneChanged",
+        change: (candidate) => {
+          candidate.steps[0]!.scene.html += "<!-- changed -->";
+        }
+      },
+      {
+        code: "SourceCompletionChanged",
+        change: (candidate) => {
+          candidate.terminalScene.html += "<!-- changed -->";
+        }
+      }
+    ];
+
+    for (const entry of cases) {
+      const currentCapture = structuredClone(capture);
+      entry.change(currentCapture);
+      const report = compareCaptureFreshness({
+        ...options,
+        currentCapture
+      });
+      const failures = [...report.steps, report.completion].filter(
+        (result) => result.state === "failed"
+      );
+      expect(failures).toEqual([
+        expect.objectContaining({ code: entry.code, recovery: expect.any(String) })
+      ]);
+    }
+  });
+
+  it("fails baseline construction when a selected step or evidence item is missing", () => {
+    const capture = captureFixture();
+    const missingStepStory = createEvidenceGroundedStory(capture);
+    missingStepStory.steps[0]!.captureStepId = "missing-step";
+    expect(() => createFreshnessBaseline(capture, missingStepStory)).toThrowError(
+      expect.objectContaining({ code: "ArtifactBuildFailed" })
+    );
+
+    const missingEvidenceStory = createEvidenceGroundedStory(capture);
+    missingEvidenceStory.steps[0]!.evidenceIds = ["missing-evidence"];
+    expect(() =>
+      createFreshnessBaseline(capture, missingEvidenceStory)
+    ).toThrowError(expect.objectContaining({ code: "ArtifactBuildFailed" }));
+  });
+
+  it("rejects duplicate capture step IDs before freshness indexing", () => {
+    const capture = captureFixture();
+    const duplicate = structuredClone(capture.steps[0]!);
+    duplicate.title = "Duplicate workspace step";
+    duplicate.scene.html += "<!-- duplicate state -->";
+    capture.steps.push(duplicate);
+
+    const parsed = CaptureSourceSchema.safeParse(capture);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["steps", 1, "id"],
+            message: "Capture step IDs must be unique."
+          })
+        ])
+      );
+    }
+  });
+
+  it("marks later demo steps skipped when the source flow stops", () => {
+    const capture = captureFixture();
+    const first = capture.steps[0]!;
+    capture.steps = [
+      first,
+      {
+        ...structuredClone(first),
+        id: "invite-team",
+        title: "Invite a teammate",
+        evidence: [{ id: "ev-invite", text: "Invite teammate" }]
+      },
+      {
+        ...structuredClone(first),
+        id: "review-report",
+        title: "Review the report",
+        evidence: [{ id: "ev-review", text: "Review report" }]
+      }
+    ];
+    const story = createEvidenceGroundedStory(capture);
+    const baseline = createFreshnessBaseline(capture, story);
+    const blocked = createBlockedFreshnessReport({
+      baseline,
+      baseVersion: "f".repeat(64),
+      baseSourceHash: contentHash(capture),
+      progress: [
+        {
+          stepId: "create-workspace",
+          title: "Create your first workspace",
+          stepIndex: 0,
+          state: "reached",
+          phase: "outcome"
+        },
+        {
+          stepId: "invite-team",
+          title: "Invite a teammate",
+          stepIndex: 1,
+          state: "failed",
+          phase: "action"
+        }
+      ],
+      failure: {
+        code: "DemoFixtureSetupFailed",
+        message: "The source flow stopped at “Invite a teammate”.",
+        recovery: "Fix the action, then run the source flow again."
+      }
+    });
+
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.previousDemoChanged).toBe(false);
+    expect(blocked.steps.map((step) => step.state)).toEqual([
+      "reached",
+      "failed",
+      "skipped"
+    ]);
+    expect(blocked.completion.state).toBe("skipped");
+  });
+
+  it("keeps unselected and terminal source failures outside selected step IDs", () => {
+    const capture = captureFixture();
+    const story = createEvidenceGroundedStory(capture);
+    const baseline = createFreshnessBaseline(capture, story);
+    const progress = validateCaptureStepProgress(
+      [
+        {
+          stepId: "create-workspace",
+          title: "Create your first workspace",
+          stepIndex: 0,
+          state: "reached",
+          phase: "outcome"
+        },
+        {
+          stepId: "unselected-source-step",
+          title: "Unselected source step",
+          stepIndex: 1,
+          state: "failed",
+          phase: "action"
+        }
+      ],
+      baseline
+    );
+    const blocked = createBlockedFreshnessReport({
+      baseline,
+      baseVersion: "f".repeat(64),
+      baseSourceHash: contentHash(capture),
+      progress,
+      failure: {
+        code: "DemoFixtureSetupFailed",
+        message: "The source flow stopped.",
+        recovery: "Fix the source flow."
+      }
+    });
+    expect(blocked.steps).toHaveLength(1);
+    expect(blocked.steps[0]).toEqual(
+      expect.objectContaining({ stepId: "create-workspace", state: "reached" })
+    );
+    expect(blocked.sourceFailure).toEqual(
+      expect.objectContaining({
+        state: "failed",
+        captureStepId: "unselected-source-step",
+        phase: "action"
+      })
+    );
+
+    const terminalFailure = createBlockedFreshnessReport({
+      baseline,
+      baseVersion: "f".repeat(64),
+      baseSourceHash: contentHash(capture),
+      progress: progress.slice(0, 1),
+      failure: {
+        code: "InternalError",
+        message: "The terminal state could not be checked.",
+        recovery: "Retry the source flow."
+      }
+    });
+    expect(terminalFailure.completion).toEqual(
+      expect.objectContaining({ state: "failed", code: "InternalError" })
+    );
+    expect(terminalFailure).not.toHaveProperty("sourceFailure");
+  });
+
+  it("rejects contradictory reports and untrusted progress shapes", () => {
+    const capture = captureFixture();
+    const story = createEvidenceGroundedStory(capture);
+    const baseline = createFreshnessBaseline(capture, story);
+    const fresh = compareCaptureFreshness({
+      baseline,
+      baseVersion: "d".repeat(64),
+      baseSourceHash: contentHash(capture),
+      currentCapture: capture
+    });
+    const outOfDateWithoutFailure = {
+      ...structuredClone(fresh),
+      status: "out-of-date"
+    };
+    expect(
+      FreshnessReportSchema.safeParse(outOfDateWithoutFailure).success
+    ).toBe(false);
+
+    const blockedWithoutFailure = {
+      schemaVersion: SCHEMA_VERSION,
+      status: "blocked",
+      previousDemoChanged: false,
+      baseVersion: "d".repeat(64),
+      baseSourceHash: "e".repeat(64),
+      steps: [
+        {
+          stepId: "create-workspace",
+          title: "Create your first workspace",
+          state: "skipped",
+          detail: "The step was not checked."
+        }
+      ],
+      completion: {
+        state: "skipped",
+        detail: "The final state was not checked."
+      }
+    };
+    expect(FreshnessReportSchema.safeParse(blockedWithoutFailure).success).toBe(
+      false
+    );
+    expect(
+      FreshnessReportSchema.safeParse({
+        ...blockedWithoutFailure,
+        currentSourceHash: "f".repeat(64),
+        sourceFailure: {
+          state: "failed",
+          code: "DemoFixtureSetupFailed",
+          detail: "The flow stopped.",
+          recovery: "Fix the flow.",
+          phase: "setup"
+        }
+      }).success
+    ).toBe(false);
+    expect(
+      CaptureStepProgressSchema.safeParse({
+        stepId: "create-workspace",
+        title: "Create your first workspace",
+        stepIndex: 0,
+        state: "reached",
+        phase: "outcome",
+        injected: "not-public"
+      }).success
+    ).toBe(false);
+    expect(
+      validateCaptureStepProgress(
+        [
+          {
+            stepId: "create-workspace",
+            title: "Create your first workspace",
+            stepIndex: 1,
+            state: "failed",
+            phase: "action"
+          }
+        ],
+        baseline
+      )
+    ).toEqual([]);
   });
 
   it("rejects executable or remote scene content", () => {
