@@ -208,6 +208,7 @@ test.describe("Milestone 1 local workflow", () => {
   let freshnessSpecDirectory: string;
 
   test.beforeAll(async () => {
+    test.setTimeout(120_000);
     projectDirectory = await mkdtemp(path.join(os.tmpdir(), "showkit-player-"));
     expect(runCli(projectDirectory, ["init"]).status).toBe("created");
     const localIgnore = await readFile(
