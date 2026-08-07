@@ -2199,6 +2199,64 @@ test.describe("Milestone 1 local workflow", () => {
     ).toBeAttached();
   });
 
+  test("fails closed when near-wrap recovery exceeds the scale budget", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.textContent = "ShowKit Agent Demo";
+      Object.assign(probe.style, {
+        fontFamily: "Arial, sans-serif",
+        fontSize: "20px",
+        lineHeight: "24px",
+        position: "absolute",
+        visibility: "hidden",
+        whiteSpace: "pre"
+      });
+      document.body.append(probe);
+      const range = document.createRange();
+      range.selectNodeContents(probe);
+      const unsafeWidth = range.getBoundingClientRect().width * 0.75;
+      probe.remove();
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            steps: Array<{ nodes: Array<Record<string, unknown>> }>;
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.steps[0]!.nodes.push({
+        type: "element",
+        tag: "span",
+        attributes: { "data-showkit-text": "", id: "unsafe-near-wrap" },
+        styles: {
+          display: "block",
+          position: "absolute",
+          left: "200px",
+          top: "80px",
+          width: unsafeWidth + "px",
+          height: "24px",
+          "font-family": "Arial, sans-serif",
+          "font-size": "20px",
+          "line-height": "24px",
+          "white-space": "pre-wrap"
+        },
+        children: [{ type: "text", text: "ShowKit Agent Demo" }]
+      });
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-layout",
+      "failed"
+    );
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-text-metric-drift-count",
+      "1"
+    );
+  });
+
   test("groups same-line rectangles and bounds multi-line redaction masks", async ({
     page
   }) => {

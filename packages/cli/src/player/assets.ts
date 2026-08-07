@@ -2304,8 +2304,16 @@ const PLAYER_JS = `(() => {
     const scaleY = box.height / rendered.height;
     const glyphCount = Array.from((element.textContent || "").trim()).length;
     const shortGlyph = glyphCount > 0 && glyphCount <= 3;
-    const minimumScale = shortGlyph ? 0.5 : 0.67;
-    const maximumScale = shortGlyph ? 2 : 1.5;
+    const minimumScale = wrappedNearCapturedSingleLine
+      ? 0.8
+      : shortGlyph
+        ? 0.5
+        : 0.67;
+    const maximumScale = wrappedNearCapturedSingleLine
+      ? 1.25
+      : shortGlyph
+        ? 2
+        : 1.5;
     if (
       scaleX < minimumScale ||
       scaleX > maximumScale ||
@@ -2325,7 +2333,11 @@ const PLAYER_JS = `(() => {
         fittedBox.top -
         scaleY * (rendered.top - fittedBox.top)) /
       scale;
-    const maximumTranslation = shortGlyph ? 16 : 12;
+    const maximumTranslation = wrappedNearCapturedSingleLine
+      ? 8
+      : shortGlyph
+        ? 16
+        : 12;
     if (
       Math.abs(translateX) > maximumTranslation ||
       Math.abs(translateY) > maximumTranslation
