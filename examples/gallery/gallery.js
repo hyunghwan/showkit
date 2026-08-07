@@ -1,4 +1,4 @@
-const release = "2026-08-06-capture-fidelity";
+const release = "2026-08-06-linear-text-layout-v3";
 const origin = "https://showkit.sqncs.com";
 
 const demos = {
