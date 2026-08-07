@@ -1374,6 +1374,9 @@ test.describe("Milestone 1 local workflow", () => {
         obstacleCount: 1,
         reportedOverlap: 0
       });
+    await expect
+      .poll(async () => (await completionLayoutMetrics())?.controlMode)
+      .toBe("labels");
     const regularCompletion = await completionLayoutMetrics();
     expect(regularCompletion).not.toBeNull();
     expect(regularCompletion?.height).toBeLessThanOrEqual(180);
@@ -1392,6 +1395,9 @@ test.describe("Milestone 1 local workflow", () => {
         obstacleCount: 1,
         reportedOverlap: 0
       });
+    await expect
+      .poll(async () => (await completionLayoutMetrics())?.controlMode)
+      .toBe("icons");
     const compactCompletion = await completionLayoutMetrics();
     expect(compactCompletion).not.toBeNull();
     expect(compactCompletion?.height).toBeLessThanOrEqual(180);
@@ -1446,6 +1452,9 @@ test.describe("Milestone 1 local workflow", () => {
         obstacleCount: 1,
         reportedOverlap: 0
       });
+    await expect
+      .poll(async () => (await completionLayoutMetrics())?.controlMode)
+      .toBe("icons");
     const extraNarrowCompletion = await completionLayoutMetrics();
     expect(extraNarrowCompletion).not.toBeNull();
     expect(extraNarrowCompletion?.height).toBeLessThanOrEqual(180);
