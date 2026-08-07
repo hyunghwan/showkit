@@ -20,7 +20,7 @@
 | `showkit preview --json` | Starts a loopback-only local server |
 | `showkit diff --base <manifest> --json` | Compares 2 demo versions without changing them |
 | `showkit diff --base <manifest> --check --json` | Fails CI when the latest built files differ from an earlier version |
-| `showkit diff --base <manifest> --source <spec> --check --json` | Replays a CI-ready Playwright flow without saving it and fails when a selected demo step is out of date |
+| `showkit diff --base <manifest> --source <spec> --project <name> --check --json` | Replays a CI-ready Playwright flow without saving it and fails when a selected demo step is out of date; omit `--project` to reuse the project stored in the earlier demo |
 | `showkit publish --version <hash> --json` | Rechecks the local publish gate; Cloud remains unavailable in the local-only release |
 
 Exit codes are `0` for success, `2` for validation, `3` for environment,

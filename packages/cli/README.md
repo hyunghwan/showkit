@@ -53,7 +53,7 @@ belong on stderr.
 | `showkit build web,markdown --json` | Build portable HTML and optional Markdown output |
 | `showkit diff --base <artifact.json> --json` | Compare the latest artifact with an earlier manifest |
 | `showkit diff --base <artifact.json> --check --json` | Fail when the latest built files differ from an earlier version |
-| `showkit diff --base <artifact.json> --source <demo.spec.ts> --check --json` | Replay the current Playwright source flow and fail when a demo step is out of date |
+| `showkit diff --base <artifact.json> --source <demo.spec.ts> --project <name> --check --json` | Replay the current Playwright source flow and fail when a demo step is out of date; omit `--project` to reuse the project stored in the earlier demo |
 | `showkit preview --json` | Serve the latest artifact on `127.0.0.1` |
 | `showkit publish --version <hash> --json` | Recheck the local publish gate; the current local-only release uploads nothing |
 
@@ -66,6 +66,9 @@ built demo. Its JSON reports each selected step as `fresh`, `reached`,
 a recovery action for each failed result. A step is `reached` when the source
 flow reached it before a later failure but ShowKit could not complete the
 comparison. Later steps are `skipped` because their page state is unknown.
+By default it reuses the Playwright project stored in the earlier demo. Pass
+`--project <name>` when that project was renamed or a different configured
+project is the intended replacement.
 
 This check still executes every Playwright step action against the selected
 product environment. Use a fixture or test-safe account, and review any

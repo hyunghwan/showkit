@@ -683,6 +683,36 @@ test.describe("Milestone 1 local workflow", () => {
       await readdir(path.join(projectDirectory, ".showkit", "runs"))
     ).toEqual(captureRunsBeforeFreshness);
 
+    const renamedProjectManifestPath = path.join(
+      freshnessSpecDirectory,
+      "renamed-project-artifact.json"
+    );
+    const renamedProjectManifest = structuredClone(baseManifestContents) as {
+      source: { projectName?: string };
+    };
+    renamedProjectManifest.source.projectName = "renamed-project";
+    await writeFile(
+      renamedProjectManifestPath,
+      `${JSON.stringify(renamedProjectManifest)}\n`
+    );
+    expect(
+      runCli(projectDirectory, [
+        "diff",
+        "--base",
+        renamedProjectManifestPath,
+        "--source",
+        "fixtures/demo-apps/public/public.demo.ts",
+        "--project",
+        "chromium",
+        "--check"
+      ])
+    ).toEqual(
+      expect.objectContaining({
+        status: "fresh",
+        playwrightProject: "chromium"
+      })
+    );
+
     const stoppedSourcePath = path.join(
       freshnessSpecDirectory,
       "stopped-source.demo.ts"

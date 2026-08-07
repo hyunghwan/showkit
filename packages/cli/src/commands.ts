@@ -1643,6 +1643,7 @@ export async function diffCommand(args: string[]): Promise<CommandResult> {
     });
   }
   if (sourceArgument) {
+    const requestedProject = playwrightProjectArgument(args);
     if (base.source.kind !== "playwright-spec" || base.replayLevel !== "ci-replayable") {
       throw new ShowKitError({
         code: "FreshnessSourceUnsupported",
@@ -1665,12 +1666,13 @@ export async function diffCommand(args: string[]): Promise<CommandResult> {
       args,
       base.environment.viewport
     );
+    const replayProject = requestedProject ?? base.source.projectName;
     let replay: Awaited<ReturnType<typeof replayPlaywrightSource>>;
     try {
       replay = await replayPlaywrightSource(
         sourceArgument,
         expectedViewport,
-        base.source.projectName
+        replayProject
       );
     } catch (error) {
       const showkitError = asShowKitError(error);
@@ -1743,8 +1745,8 @@ export async function diffCommand(args: string[]): Promise<CommandResult> {
       operationId: id,
       status: freshness.status === "fresh" ? "fresh" : "out-of-date",
       sourceMode: "playwright-spec",
-      ...(base.source.projectName
-        ? { playwrightProject: base.source.projectName }
+      ...(replayProject
+        ? { playwrightProject: replayProject }
         : {}),
       expectedViewport,
       specHash: replay.specHash,
@@ -2045,7 +2047,7 @@ export function helpCommand(): CommandResult {
       "showkit build web,markdown --json",
       "showkit diff --base <artifact.json> --json",
       "showkit diff --base <artifact.json> --check --json",
-      "showkit diff --base <artifact.json> --source <demo.spec.ts> --check --json",
+      "showkit diff --base <artifact.json> --source <demo.spec.ts> [--project <name>] --check --json",
       "showkit preview --json",
       "showkit publish --version <hash> --json"
     ]

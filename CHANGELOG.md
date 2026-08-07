@@ -14,9 +14,10 @@ fixes ship as a new version.
 - Source-flow failures now report the named stopping step, distinguish reached
   but unverified steps from later skipped steps, give a specific recovery
   action, and confirm that the previous demo was not changed.
-- Source freshness now replays the captured Playwright project with one worker;
-  its docs distinguish unchanged ShowKit files from product actions executed by
-  the approved source flow.
+- Source freshness now replays the captured Playwright project with one worker
+  and accepts `--project <name>` when that configured project was renamed; its
+  docs distinguish unchanged ShowKit files from product actions executed by the
+  approved source flow.
 - Added provider-neutral guidance for using an optional element picker as a
   temporary hotspot-authoring hint while resolving the final target again from
   the supported source flow and keeping picker output out of saved files.

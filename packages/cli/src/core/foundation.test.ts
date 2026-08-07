@@ -52,7 +52,7 @@ describe("public package contract", () => {
           "showkit build web,markdown --json",
           "showkit diff --base <artifact.json> --json",
           "showkit diff --base <artifact.json> --check --json",
-          "showkit diff --base <artifact.json> --source <demo.spec.ts> --check --json",
+          "showkit diff --base <artifact.json> --source <demo.spec.ts> [--project <name>] --check --json",
           "showkit preview --json",
           "showkit publish --version <hash> --json",
         ],

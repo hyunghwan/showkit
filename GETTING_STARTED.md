@@ -100,6 +100,10 @@ current product before replacing local files:
 npx showkit diff --base ./earlier/artifact.json --source ./demo.spec.ts --check --json
 ```
 
+The check reuses the Playwright project recorded in the earlier demo. If that
+project was renamed, add `--project <name>` to select its configured
+replacement.
+
 This temporary check writes no ShowKit capture, run, operation log, or built
 demo. It reports the step that failed, the steps it could not check afterward,
 and the next recovery action. It still executes the Playwright actions against
