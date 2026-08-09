@@ -264,7 +264,7 @@ describe("private publication receipt", () => {
     else process.env.SHOWKIT_PROJECT_ROOT = previousRoot;
   });
 
-  it("is mode 0600, ignored, and reuses only a matching pending operation", async () => {
+  it("is a private ignored file and reuses only a matching pending operation", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "showkit-hosted-receipt-"));
     process.env.SHOWKIT_PROJECT_ROOT = root;
     const first = await pendingIdempotencyKey({
@@ -287,7 +287,11 @@ describe("private publication receipt", () => {
       "publications",
       `${sha256("project-one")}.json`
     );
-    expect((await stat(receiptPath)).mode & 0o777).toBe(0o600);
+    const receiptStat = await stat(receiptPath);
+    expect(receiptStat.isFile()).toBe(true);
+    if (process.platform !== "win32") {
+      expect(receiptStat.mode & 0o777).toBe(0o600);
+    }
     expect(await readFile(path.join(root, ".showkit", ".gitignore"), "utf8")).toContain(
       "hosted/"
     );

@@ -1,0 +1,6 @@
+examples/product-insights/*.json text eol=lf
+examples/product-insights/*.html text eol=lf
+examples/product-insights/*.js text eol=lf
+examples/product-insights/*.css text eol=lf
+examples/product-insights/*.md text eol=lf
+examples/product-insights/assets/*.png binary
