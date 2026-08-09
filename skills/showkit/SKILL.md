@@ -521,10 +521,12 @@ or a prior publish in another project.
 2. The CLI re-runs the local publish gate before opening a browser or sending a
    network request. If it fails, report the named error and recovery action;
    the previous published demo remains unchanged.
-3. On the first publish, use the exact account URL printed by the CLI. The
-   person signs in through the Firebase email link and selects **Connect CLI**.
-   Do not ask for, copy, or store the email link or CLI credential unless the
-   person separately authorizes handling their mailbox or browser.
+3. Whenever publish prints an account URL, use that exact URL. The person signs
+   in through the Firebase email link and selects **Connect CLI**. P0 keeps the
+   CLI credential only for the current publish process, so a later publish can
+   require connecting again. Do not ask for, copy, or store the email link or
+   CLI credential unless the person separately authorizes handling their
+   mailbox or browser.
 4. Claim `published` only when the command returns `ok: true`, the hosted URL,
    and the dashboard URL. A sent email, successful sign-in, local check,
    Firebase deploy, or HTTP response is not publish proof by itself.

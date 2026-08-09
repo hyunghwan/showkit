@@ -202,6 +202,39 @@ describe("hosted CLI request and transport", () => {
       expect(call[1]?.body).toBe(prepared.json);
     }
   });
+
+  it("rejects a success response for a different artifact version", async () => {
+    const contents = demoContents();
+    const prepared = createHostedPublishRequest({
+      projectId: "project-one",
+      manifest: artifact(contents),
+      contents
+    });
+    const transport = new FetchHostedPublishTransport({
+      baseUrl: "http://127.0.0.1:5000/api",
+      tokens: { getIdToken: async () => "valid-token" },
+      fetch: async () => Response.json({
+        ok: true,
+        status: "published",
+        action: "created",
+        version: "f".repeat(64),
+        demoId: "demo_123456789012",
+        publicId: "01HZZZZZZZZZZZZZZZZZZZZZZZ",
+        generation: 1,
+        url: "https://demos.showkit.sqncs.com/d/01HZZZZZZZZZZZZZZZZZZZZZZZ",
+        dashboardUrl: "https://app.showkit.sqncs.com/demos"
+      })
+    });
+
+    await expect(transport.publish({
+      request: prepared.request,
+      json: prepared.json,
+      idempotencyKey: "operation-key-1234"
+    })).rejects.toMatchObject({
+      code: "HostedRequestFailed",
+      exitCode: 4
+    });
+  });
 });
 
 describe("device authorization client", () => {

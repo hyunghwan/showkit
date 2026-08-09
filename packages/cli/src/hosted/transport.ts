@@ -127,6 +127,9 @@ export class FetchHostedPublishTransport implements HostedPublishTransport {
       }
       const parsed = HostedPublishResponseSchema.safeParse(value);
       if (!parsed.success) throw new Error("Invalid success response");
+      if (parsed.data.version !== invocation.request.artifact.version) {
+        throw new Error("Mismatched published artifact version");
+      }
       return parsed.data;
     } catch (error) {
       throw transportError(error);
