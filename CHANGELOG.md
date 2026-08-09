@@ -13,7 +13,7 @@ fixes ship as a new version.
 - Added the hosted account contract for listing and unpublishing demos while
   keeping Cloud implementation, deployment configuration, and operator
   documentation outside the public export.
-- Rejected unsafe cloud-receipt symlinks and aligned the installed ShowKit skill
+- Rejected unsafe hosted-receipt symlinks and aligned the installed ShowKit skill
   compatibility range with `@showkit/cli >=0.2.9 <0.3.0`.
 
 ## 0.2.8 - 2026-08-06

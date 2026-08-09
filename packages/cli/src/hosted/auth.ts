@@ -68,7 +68,7 @@ function delay(milliseconds: number): Promise<void> {
 
 function authError(message: string, recovery: string): ShowKitError {
   return new ShowKitError({
-    code: "CloudAuthExpired",
+    code: "HostedAuthExpired",
     message,
     exitCode: EXIT_CODES.external,
     recovery

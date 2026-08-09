@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { asShowKitError } from "./core/errors.js";
 import { recordFailedCommand, runCommand } from "./commands.js";
-import { createProductionHostedPublishTransport } from "./cloud/production.js";
+import { createProductionHostedPublishTransport } from "./hosted/production.js";
 
 const fallbackOperationId = `op-${randomUUID()}`;
 const commandArguments = process.argv.slice(2);

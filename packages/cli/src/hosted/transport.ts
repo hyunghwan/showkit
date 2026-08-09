@@ -24,7 +24,7 @@ export interface HostedIdTokenProvider {
 function transportError(error: unknown): ShowKitError {
   if (error instanceof ShowKitError) return error;
   return new ShowKitError({
-    code: "CloudRequestFailed",
+    code: "HostedRequestFailed",
     message: "ShowKit could not reach the hosted publish service. Nothing in the local demo changed.",
     exitCode: EXIT_CODES.external,
     recovery: "Check the connection, then run the same publish command again."
@@ -110,10 +110,10 @@ export class FetchHostedPublishTransport implements HostedPublishTransport {
         const parsed = HostedApiErrorSchema.safeParse(value);
         if (!parsed.success) throw new Error("Invalid API error");
         const validationCodes = new Set([
-          "CloudArtifactRejected",
-          "CloudArtifactTooLarge",
-          "CloudProjectMismatch",
-          "CloudRequestInvalid"
+          "HostedArtifactRejected",
+          "HostedArtifactTooLarge",
+          "HostedProjectMismatch",
+          "HostedRequestInvalid"
         ]);
         throw new ShowKitError({
           code: parsed.data.error.code,

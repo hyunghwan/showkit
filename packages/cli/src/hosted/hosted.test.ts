@@ -265,7 +265,7 @@ describe("private publication receipt", () => {
   });
 
   it("is mode 0600, ignored, and reuses only a matching pending operation", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "showkit-cloud-receipt-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "showkit-hosted-receipt-"));
     process.env.SHOWKIT_PROJECT_ROOT = root;
     const first = await pendingIdempotencyKey({
       projectId: "project-one",
@@ -283,13 +283,13 @@ describe("private publication receipt", () => {
     const receiptPath = path.join(
       root,
       ".showkit",
-      "cloud",
+      "hosted",
       "publications",
       `${sha256("project-one")}.json`
     );
     expect((await stat(receiptPath)).mode & 0o777).toBe(0o600);
     expect(await readFile(path.join(root, ".showkit", ".gitignore"), "utf8")).toContain(
-      "cloud/"
+      "hosted/"
     );
 
     await commitPublicationReceipt({
@@ -319,13 +319,13 @@ describe("private publication receipt", () => {
   });
 
   it("refuses a symlinked private receipt directory without touching its target", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "showkit-cloud-receipt-link-"));
-    const outside = await mkdtemp(path.join(os.tmpdir(), "showkit-cloud-receipt-outside-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "showkit-hosted-receipt-link-"));
+    const outside = await mkdtemp(path.join(os.tmpdir(), "showkit-hosted-receipt-outside-"));
     process.env.SHOWKIT_PROJECT_ROOT = root;
     await mkdir(path.join(root, ".showkit"));
     const markerPath = path.join(outside, "marker.txt");
     await writeFile(markerPath, "unchanged\n");
-    await symlink(outside, path.join(root, ".showkit", "cloud"), "dir");
+    await symlink(outside, path.join(root, ".showkit", "hosted"), "dir");
 
     await expect(
       pendingIdempotencyKey({
@@ -334,7 +334,7 @@ describe("private publication receipt", () => {
         create: () => "must-not-be-used",
         now: "2026-08-07T12:00:00.000Z"
       })
-    ).rejects.toMatchObject({ code: "CloudReceiptUnsafe", exitCode: 3 });
+    ).rejects.toMatchObject({ code: "HostedReceiptUnsafe", exitCode: 3 });
     expect(await readFile(markerPath, "utf8")).toBe("unchanged\n");
     await expect(stat(path.join(outside, "publications"))).rejects.toMatchObject({
       code: "ENOENT"
@@ -342,7 +342,7 @@ describe("private publication receipt", () => {
   });
 
   it("runs the existing local gate before an injected emulator publish", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "showkit-cloud-command-"));
+    const root = await mkdtemp(path.join(os.tmpdir(), "showkit-hosted-command-"));
     process.env.SHOWKIT_PROJECT_ROOT = root;
     const example = new URL("../../../../examples/product-insights/", import.meta.url);
     const exampleManifest = JSON.parse(

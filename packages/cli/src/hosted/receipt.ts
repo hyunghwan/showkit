@@ -31,12 +31,12 @@ const ReceiptSchema = z
 type Receipt = z.infer<typeof ReceiptSchema>;
 
 function receiptPath(projectId: string): string {
-  return showkitPath("cloud", "publications", `${sha256(projectId)}.json`);
+  return showkitPath("hosted", "publications", `${sha256(projectId)}.json`);
 }
 
 function unsafeReceiptPath(): ShowKitError {
   return new ShowKitError({
-    code: "CloudReceiptUnsafe",
+    code: "HostedReceiptUnsafe",
     message: "The private publication receipt path is not a regular path inside this project. Nothing was published.",
     exitCode: EXIT_CODES.environment,
     recovery: "Remove the symlinked .showkit receipt path, then run publish again."
@@ -89,10 +89,10 @@ async function ensureIgnoredAndPrivate(): Promise<void> {
   const rootRealPath = await realpath(projectRoot());
   const showkitDirectory = showkitPath();
   const showkitRealPath = await ensurePrivateDirectory(showkitDirectory, rootRealPath);
-  const cloudDirectory = showkitPath("cloud");
-  const cloudRealPath = await ensurePrivateDirectory(cloudDirectory, showkitRealPath);
-  const publicationsDirectory = path.join(cloudDirectory, "publications");
-  await ensurePrivateDirectory(publicationsDirectory, cloudRealPath);
+  const hostedDirectory = showkitPath("hosted");
+  const hostedRealPath = await ensurePrivateDirectory(hostedDirectory, showkitRealPath);
+  const publicationsDirectory = path.join(hostedDirectory, "publications");
+  await ensurePrivateDirectory(publicationsDirectory, hostedRealPath);
   const ignorePath = showkitPath(".gitignore");
   await ensureSafeFileOrMissing(ignorePath, showkitRealPath);
   let ignore = "";
@@ -101,8 +101,8 @@ async function ensureIgnoredAndPrivate(): Promise<void> {
   } catch {
     // The project loader reports a missing project before this path is reached.
   }
-  if (!ignore.split(/\r?\n/).includes("cloud/")) {
-    const next = `${ignore.replace(/\s*$/, "\n")}cloud/\n`;
+  if (!ignore.split(/\r?\n/).includes("hosted/")) {
+    const next = `${ignore.replace(/\s*$/, "\n")}hosted/\n`;
     await writeFileAtomic(ignorePath, next);
   }
   await ensureSafeFileOrMissing(ignorePath, showkitRealPath);

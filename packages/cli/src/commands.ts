@@ -19,13 +19,13 @@ import { spawn } from "node:child_process";
 import { buildDemo } from "./build/build.js";
 import {
   HOSTED_REQUEST_WARNING_BYTES
-} from "./cloud/contracts.js";
+} from "./hosted/contracts.js";
 import {
   commitPublicationReceipt,
   pendingIdempotencyKey
-} from "./cloud/receipt.js";
-import { createHostedPublishRequest } from "./cloud/request.js";
-import type { HostedPublishTransport } from "./cloud/transport.js";
+} from "./hosted/receipt.js";
+import { createHostedPublishRequest } from "./hosted/request.js";
+import type { HostedPublishTransport } from "./hosted/transport.js";
 import { commitCaptureEnvelope } from "./capture/session-import.js";
 import { validateAgentBrowserCaptureEnvelope } from "./capture/session-envelope.js";
 import { validateStaticCaptureEnvelope } from "./capture/static.js";
@@ -1969,7 +1969,7 @@ export async function publishCommand(
 
   if (!transport) {
     throw new ShowKitError({
-      code: "CloudFeatureUnavailable",
+      code: "HostedFeatureUnavailable",
       message:
         "This demo passed the local publish gate, but this CLI invocation has no hosted publish transport. Nothing was uploaded or published.",
       exitCode: EXIT_CODES.external,
@@ -2010,7 +2010,7 @@ export async function publishCommand(
     });
   } catch {
     throw new ShowKitError({
-      code: "CloudReceiptUnavailable",
+      code: "HostedReceiptUnavailable",
       message: "ShowKit could not save the private pending publish receipt. Nothing was uploaded or published.",
       exitCode: EXIT_CODES.environment,
       recovery: "Check permissions for the local .showkit directory, then publish again."

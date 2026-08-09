@@ -58,7 +58,7 @@ export async function initializeProject(): Promise<{ created: boolean; project: 
       "support/",
       "auth/",
       "credentials/",
-      "cloud/",
+      "hosted/",
       "debug/",
       "runs/*/trace.zip",
       "runs/*/diagnostics/",
