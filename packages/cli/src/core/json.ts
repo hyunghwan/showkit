@@ -30,19 +30,30 @@ export function contentHash(value: unknown): string {
   return sha256(canonicalJson(value));
 }
 
-export async function writeFileAtomic(filePath: string, contents: string | Uint8Array): Promise<void> {
+export async function writeFileAtomic(
+  filePath: string,
+  contents: string | Uint8Array,
+  mode?: number
+): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
   try {
-    await writeFile(temporaryPath, contents, { flag: "wx" });
+    await writeFile(temporaryPath, contents, {
+      flag: "wx",
+      ...(mode === undefined ? {} : { mode })
+    });
     await rename(temporaryPath, filePath);
   } finally {
     await rm(temporaryPath, { force: true });
   }
 }
 
-export async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  await writeFileAtomic(filePath, canonicalJson(value));
+export async function writeJsonAtomic(
+  filePath: string,
+  value: unknown,
+  mode?: number
+): Promise<void> {
+  await writeFileAtomic(filePath, canonicalJson(value), mode);
 }
 
 export async function replaceDirectoryAtomic(

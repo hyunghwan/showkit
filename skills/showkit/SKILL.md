@@ -509,6 +509,32 @@ without blocking the workflow.
     1- or 2-link completion card. Ask for exact destinations before adding lead
     actions.
 
+## Hosted publish after explicit authorization
+
+Use this path only when the person explicitly asks to publish the checked
+demo. Do not infer publish permission from capture, build, preview, deployment,
+or a prior publish in another project.
+
+1. Read the exact version hash returned by the successful build. Run the
+   project's installed CLI as `showkit publish --version <hash> --json`; never
+   publish an implicit latest version or a preview URL.
+2. The CLI re-runs the local publish gate before opening a browser or sending a
+   network request. If it fails, report the named error and recovery action;
+   the previous published demo remains unchanged.
+3. On the first publish, use the exact account URL printed by the CLI. The
+   person signs in through the Firebase email link and selects **Connect CLI**.
+   Do not ask for, copy, or store the email link or CLI credential unless the
+   person separately authorizes handling their mailbox or browser.
+4. Claim `published` only when the command returns `ok: true`, the hosted URL,
+   and the dashboard URL. A sent email, successful sign-in, local check,
+   Firebase deploy, or HTTP response is not publish proof by itself.
+5. State that the URL is unlisted, not access-controlled. Free accounts support
+   three active hosted demos; unpublish a current demo before publishing a
+   fourth unless a server-confirmed entitlement raises the limit.
+6. Do not add or use an alternate hosted endpoint, Firebase project, access
+   token, API key, or hidden publish mode. The installed CLI owns the fixed
+   first-party connection.
+
 ## Stop conditions
 
 - Pause on `SensitiveDataDetected`. State that ShowKit did not save the captured

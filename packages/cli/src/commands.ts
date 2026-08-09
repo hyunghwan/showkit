@@ -17,6 +17,15 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { buildDemo } from "./build/build.js";
+import {
+  HOSTED_REQUEST_WARNING_BYTES
+} from "./cloud/contracts.js";
+import {
+  commitPublicationReceipt,
+  pendingIdempotencyKey
+} from "./cloud/receipt.js";
+import { createHostedPublishRequest } from "./cloud/request.js";
+import type { HostedPublishTransport } from "./cloud/transport.js";
 import { commitCaptureEnvelope } from "./capture/session-import.js";
 import { validateAgentBrowserCaptureEnvelope } from "./capture/session-envelope.js";
 import { validateStaticCaptureEnvelope } from "./capture/static.js";
@@ -1816,7 +1825,11 @@ function publishBlocked(
   });
 }
 
-export async function publishCommand(args: string[]): Promise<never> {
+export async function publishCommand(
+  args: string[],
+  transport?: HostedPublishTransport
+): Promise<CommandResult> {
+  const id = operationId();
   const version = argumentValue(args, "--version");
   if (!version || !/^[a-f0-9]{64}$/.test(version)) {
     throw publishBlocked(
@@ -1885,14 +1898,46 @@ export async function publishCommand(args: string[]): Promise<never> {
     /SHOWKIT_SECRET_CANARY_[A-Z0-9_-]+/i,
     /\b(?:api|access|auth|secret)[_-]?(?:key|token)\s*[:=]\s*[^\s]+/i,
     /\bsk-[A-Za-z0-9]{16,}\b/,
+    /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{12,}\b/,
+    /\bwhsec_[A-Za-z0-9]{12,}\b/,
     /\bgh[oprsu]_[A-Za-z0-9]{20,}\b/
   ];
+  const contentsByPath = new Map<string, Buffer>();
+  let artifactRoot: string;
+  try {
+    const directoryStat = await lstat(directory);
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+      throw new Error("unsafe artifact directory");
+    }
+    artifactRoot = await realpath(directory);
+  } catch {
+    throw publishBlocked(
+      "The built demo version is not a regular artifact directory.",
+      "Rebuild the demo before publishing."
+    );
+  }
   for (const file of manifest.files) {
     const filePath = path.resolve(directory, file.path);
     if (!filePath.startsWith(`${path.resolve(directory)}${path.sep}`)) {
       throw publishBlocked(
         "A demo file path leaves the built demo directory.",
         "Rebuild the demo from a valid StorySpec."
+      );
+    }
+    try {
+      const fileStat = await lstat(filePath);
+      const resolvedFile = await realpath(filePath);
+      if (
+        !fileStat.isFile() ||
+        fileStat.isSymbolicLink() ||
+        !resolvedFile.startsWith(`${artifactRoot}${path.sep}`)
+      ) {
+        throw new Error("unsafe artifact file");
+      }
+    } catch {
+      throw publishBlocked(
+        `The built demo file \`${file.path}\` is not a regular file inside the artifact.`,
+        "Rebuild the demo before publishing."
       );
     }
     let contents: Buffer;
@@ -1919,15 +1964,78 @@ export async function publishCommand(args: string[]): Promise<never> {
         "Remove the sensitive value from the product state, capture again, and rebuild."
       );
     }
+    contentsByPath.set(file.path, contents);
   }
 
-  throw new ShowKitError({
-    code: "CloudFeatureUnavailable",
-    message:
-      "This demo passed the local publish gate, but Cloud publishing is not available in this local-only release. Nothing was uploaded or published.",
-    exitCode: EXIT_CODES.external,
-    recovery: "Keep using the portable local files or a static host you control."
+  if (!transport) {
+    throw new ShowKitError({
+      code: "CloudFeatureUnavailable",
+      message:
+        "This demo passed the local publish gate, but this CLI invocation has no hosted publish transport. Nothing was uploaded or published.",
+      exitCode: EXIT_CODES.external,
+      recovery:
+        "Run publish through the project's installed ShowKit CLI, or keep using the portable local files on a static host you control."
+    });
+  }
+
+  const project = await loadProject();
+  let prepared;
+  try {
+    prepared = createHostedPublishRequest({
+      projectId: project.projectId,
+      manifest,
+      contents: contentsByPath
+    });
+  } catch (error) {
+    throw publishBlocked(
+      error instanceof Error ? error.message : "The hosted demo request is invalid.",
+      "Rebuild the checked demo before publishing."
+    );
+  }
+  const mib = (prepared.bytes / (1024 * 1024)).toFixed(1);
+  captureProgress(`Checked demo · ${manifest.files.length} files · ${mib} MiB`);
+  if (prepared.bytes > HOSTED_REQUEST_WARNING_BYTES) {
+    captureProgress("This hosted demo is above the 2 MiB warning threshold.");
+  }
+  captureProgress(`Publishing the checked version to ${transport.destination}`);
+
+  const requestHash = contentHash(prepared.request);
+  let idempotencyKey: string;
+  try {
+    idempotencyKey = await pendingIdempotencyKey({
+      projectId: project.projectId,
+      requestHash,
+      create: randomUUID,
+      now: new Date().toISOString()
+    });
+  } catch {
+    throw new ShowKitError({
+      code: "CloudReceiptUnavailable",
+      message: "ShowKit could not save the private pending publish receipt. Nothing was uploaded or published.",
+      exitCode: EXIT_CODES.environment,
+      recovery: "Check permissions for the local .showkit directory, then publish again."
+    });
+  }
+  const result = await transport.publish({
+    request: prepared.request,
+    json: prepared.json,
+    idempotencyKey
   });
+  try {
+    await commitPublicationReceipt({
+      projectId: project.projectId,
+      requestHash,
+      idempotencyKey,
+      result,
+      now: new Date().toISOString()
+    });
+  } catch {
+    captureProgress(
+      "Published, but the private local receipt could not be updated. Keep the returned URL."
+    );
+  }
+  await recordOperation({ operationId: id, command: "publish", status: "ok" });
+  return { ...result, operationId: id };
 }
 
 function contentType(filePath: string): string {
@@ -2054,7 +2162,14 @@ export function helpCommand(): CommandResult {
   };
 }
 
-export async function runCommand(argv: string[]): Promise<CommandResult | undefined> {
+export type CommandDependencies = {
+  hostedPublish?: HostedPublishTransport;
+};
+
+export async function runCommand(
+  argv: string[],
+  dependencies: CommandDependencies = {}
+): Promise<CommandResult | undefined> {
   const [command, subcommand] = argv;
   switch (command) {
     case "doctor":
@@ -2078,8 +2193,7 @@ export async function runCommand(argv: string[]): Promise<CommandResult | undefi
       await previewCommand(argv.slice(1));
       return undefined;
     case "publish":
-      await publishCommand(argv.slice(1));
-      return undefined;
+      return publishCommand(argv.slice(1), dependencies.hostedPublish);
     case "help":
     case "--help":
     case "-h":

@@ -2895,7 +2895,7 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
     expect(checkedDiff.error?.code).toBe("ArtifactDriftDetected");
   });
 
-  test("blocks failed reports before the local-only Cloud boundary", async () => {
+  test("blocks failed reports before the hosted publish boundary", async () => {
     const qualityPath = path.join(artifactDirectory, "quality.json");
     const originalQuality = await readFile(qualityPath, "utf8");
     const failedQuality = JSON.parse(originalQuality) as {
@@ -2916,12 +2916,6 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       await writeFile(qualityPath, originalQuality);
     }
 
-    const localOnly = runCli(
-      projectDirectory,
-      ["publish", "--version", firstVersion],
-      4
-    );
-    expect(localOnly.error?.code).toBe("CloudFeatureUnavailable");
     const manifest = JSON.parse(
       await readFile(path.join(artifactDirectory, "artifact.json"), "utf8")
     ) as { state: string; publish: unknown };

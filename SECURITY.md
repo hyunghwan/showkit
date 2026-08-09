@@ -42,8 +42,9 @@ as sensitive input.
   icon may instead use direct element capture when its original bytes are not
   safely reusable. Neither path may rasterize the control, its text, or the
   scene.
-- `showkit publish` rechecks reports and file hashes. The local-only release
-  does not upload anything.
+- `showkit publish` rechecks reports and file hashes before the installed CLI
+  connects to ShowKit's fixed first-party hosted service. A failed check uploads
+  nothing and leaves the previous published demo unchanged.
 
 Passing ShowKit checks is not a security, compliance, or approval guarantee.
 
