@@ -55,7 +55,7 @@ belong on stderr.
 | `showkit diff --base <artifact.json> --check --json` | Fail when the latest built files differ from an earlier version |
 | `showkit diff --base <artifact.json> --source <demo.spec.ts> --project <name> --check --json` | Replay the current Playwright source flow and fail when a demo step is out of date; omit `--project` to reuse the project stored in the earlier demo |
 | `showkit preview --json` | Serve the latest artifact on `127.0.0.1` |
-| `showkit publish --version <hash> --json` | Recheck the local publish gate; the current local-only release uploads nothing |
+| `showkit publish --version <hash> --json` | Recheck the local publish gate, then publish that exact checked version to ShowKit's fixed first-party hosted service |
 
 Use `showkit help` to return the command list as JSON.
 

@@ -5,6 +5,17 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.9 - 2026-08-08
+
+- Added explicit hosted publishing through the ShowKit CLI, including browser
+  email-link authorization, checked-version upload, deterministic publish
+  receipts, and exact-version republish behavior.
+- Added the hosted account contract for listing and unpublishing demos while
+  keeping Cloud implementation, deployment configuration, and operator
+  documentation outside the public export.
+- Rejected unsafe hosted-receipt symlinks and aligned the installed ShowKit skill
+  compatibility range with `@showkit/cli >=0.2.9 <0.3.0`.
+
 ## 0.2.8 - 2026-08-06
 
 - Added a non-persisting Playwright source freshness check that writes no

@@ -2,12 +2,18 @@
 import { randomUUID } from "node:crypto";
 import { asShowKitError } from "./core/errors.js";
 import { recordFailedCommand, runCommand } from "./commands.js";
+import { createProductionHostedPublishTransport } from "./hosted/production.js";
 
 const fallbackOperationId = `op-${randomUUID()}`;
 const commandArguments = process.argv.slice(2);
 
 try {
-  const result = await runCommand(commandArguments);
+  const result = await runCommand(
+    commandArguments,
+    commandArguments[0] === "publish"
+      ? { hostedPublish: createProductionHostedPublishTransport() }
+      : {}
+  );
   if (result) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   }
