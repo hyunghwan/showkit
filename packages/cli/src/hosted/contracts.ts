@@ -185,6 +185,17 @@ export const HostedDemoListResponseSchema = z
   })
   .strict();
 
+export const HostedDemoRenameRequestSchema = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .regex(/^[^\u0000-\u001F\u007F]+$/u, "Demo names cannot contain control characters")
+  })
+  .strict();
+
 export const PublicDemoResolveRequestSchema = z
   .object({ publicId: PublicIdSchema })
   .strict();
@@ -240,10 +251,19 @@ export const HostedUrlResponseSchema = z
   .object({ ok: z.literal(true), url: z.string().url() })
   .strict();
 
-export const HostedUnpublishResponseSchema = z
+export const HostedDemoRenameResponseSchema = z
   .object({
     ok: z.literal(true),
-    status: z.literal("unpublished"),
+    status: z.literal("renamed"),
+    demoId: DemoIdSchema,
+    title: z.string().min(1).max(120)
+  })
+  .strict();
+
+export const HostedDemoDeleteResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    status: z.literal("deleted"),
     demoId: DemoIdSchema
   })
   .strict();

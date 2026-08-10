@@ -5,6 +5,12 @@ fixes ship as a new version.
 
 ## Unreleased
 
+- Added owner-only rename and delete actions to **Your demos**. Rename keeps the
+  public URL and published content unchanged; delete closes the URL, returns the
+  hosted slot, and preserves only a non-reusable public-ID tombstone.
+- Split completion layouts when every overlay position would cover meaningful
+  scene content, including the reserved bottom safe area in the fit calculation.
+
 ## 0.2.9 - 2026-08-08
 
 - Added explicit hosted publishing through the ShowKit CLI, including browser
