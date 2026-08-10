@@ -5,11 +5,16 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.10 - 2026-08-10
+
 - Added owner-only rename and delete actions to **Your demos**. Rename keeps the
   public URL and published content unchanged; delete closes the URL, returns the
   hosted slot, and preserves only a non-reusable public-ID tombstone.
 - Split completion layouts when every overlay position would cover meaningful
   scene content, including the reserved bottom safe area in the fit calculation.
+- Rejected control characters in hosted demo names, validated rename and delete
+  API results, and aligned the installed ShowKit skill compatibility range with
+  `@showkit/cli >=0.2.10 <0.3.0`.
 
 ## 0.2.9 - 2026-08-08
 
