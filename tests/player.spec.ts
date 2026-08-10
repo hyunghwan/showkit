@@ -1968,6 +1968,105 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       });
   });
 
+  test("splits the completion layout when meaningful scene content fills every overlay candidate", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            terminal: { nodes: Array<Record<string, unknown>> };
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      payload.terminal.nodes = [
+        {
+          type: "element",
+          tag: "span",
+          attributes: { "data-showkit-text": "" },
+          styles: {
+            position: "absolute",
+            inset: "0px",
+            display: "block"
+          },
+          children: [{ type: "text", text: "Captured product content" }]
+        }
+      ];
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+    for (let step = 0; step < 3; step += 1) {
+      await page.locator("#tooltip-next").click();
+    }
+    await expect(page.locator("#step-count")).toHaveText("Complete");
+
+    await expect
+      .poll(() =>
+        page.locator("#tooltip").evaluate((tooltip) => ({
+          placement: tooltip.dataset.placement,
+          sceneOverlap: Number(tooltip.dataset.sceneOverlap),
+          contentOverlap: Number(tooltip.dataset.contentOverlap)
+        }))
+      )
+      .toEqual({
+        placement: expect.stringMatching(/^split-/),
+        sceneOverlap: 0,
+        contentOverlap: 0
+      });
+
+    await page.setViewportSize({ width: 1024, height: 768 });
+    const splitBottomMetrics = () =>
+      page.evaluate(() => {
+        const shell = document.querySelector("#scene-shell");
+        const scene = document.querySelector("#scene-viewport");
+        const tooltip = document.querySelector("#tooltip");
+        if (
+          !(shell instanceof HTMLElement) ||
+          !(scene instanceof HTMLElement) ||
+          !(tooltip instanceof HTMLElement)
+        ) {
+          return null;
+        }
+        const shellRect = shell.getBoundingClientRect();
+        const sceneRect = scene.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const overlapWidth = Math.max(
+          0,
+          Math.min(sceneRect.right, tooltipRect.right) -
+            Math.max(sceneRect.left, tooltipRect.left)
+        );
+        const overlapHeight = Math.max(
+          0,
+          Math.min(sceneRect.bottom, tooltipRect.bottom) -
+            Math.max(sceneRect.top, tooltipRect.top)
+        );
+        return {
+          placement: tooltip.dataset.placement,
+          sceneOverlap: Number(tooltip.dataset.sceneOverlap),
+          contentOverlap: Number(tooltip.dataset.contentOverlap),
+          sceneTooltipOverlap: overlapWidth * overlapHeight,
+          bottomClearance: shellRect.bottom - tooltipRect.bottom,
+          bottomSafeArea: Number(tooltip.dataset.bottomSafeArea)
+        };
+      });
+    await expect
+      .poll(splitBottomMetrics)
+      .toEqual(
+        expect.objectContaining({
+          placement: "split-bottom",
+          sceneOverlap: 0,
+          contentOverlap: 0,
+          sceneTooltipOverlap: 0
+        })
+      );
+    const bottomMetrics = await splitBottomMetrics();
+    expect(bottomMetrics).not.toBeNull();
+    expect(bottomMetrics?.bottomClearance).toBeGreaterThanOrEqual(
+      (bottomMetrics?.bottomSafeArea ?? Number.POSITIVE_INFINITY) - 1
+    );
+  });
+
   test("centers completion cards when the scene center is clear", async ({
     page
   }) => {

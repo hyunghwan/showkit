@@ -2047,7 +2047,7 @@ const PLAYER_JS = `(() => {
     );
     const bottomAvailableHeight = Math.max(
       0,
-      shellRect.height - tooltipRect.height - gap - margin * 2
+      placementBounds.maxTop - gap - margin
     );
     const sideScale = Math.min(
       sideAvailableWidth / renderedViewport.width,
@@ -2674,7 +2674,11 @@ const PLAYER_JS = `(() => {
           );
         }
       }
-      if (selected.sceneOverlap > 0 && sceneObstacles.length > 0) {
+      const contentObstacles = completionContentObstacles(shellRect);
+      if (
+        (selected.sceneOverlap > 0 && sceneObstacles.length > 0) ||
+        (selected.contentOverlap > 0 && contentObstacles.length > 0)
+      ) {
         completionSplitLayout = true;
         elements.tooltip.style.removeProperty("width");
         tooltipRect = elements.tooltip.getBoundingClientRect();

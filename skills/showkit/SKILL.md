@@ -531,7 +531,7 @@ or a prior publish in another project.
    and the dashboard URL. A sent email, successful sign-in, local check,
    Firebase deploy, or HTTP response is not publish proof by itself.
 5. State that the URL is unlisted, not access-controlled. Free accounts support
-   three active hosted demos; unpublish a current demo before publishing a
+   three active hosted demos; delete a current demo before publishing a
    fourth unless a server-confirmed entitlement raises the limit.
 6. Do not add or use an alternate hosted endpoint, Firebase project, access
    token, API key, or hidden publish mode. The installed CLI owns the fixed
