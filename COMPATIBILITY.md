@@ -12,7 +12,7 @@ explicit reader migration before the supported range changes.
 | Static-source capture | Built into `@showkit/cli`; Playwright is not required |
 | `@playwright/test` | Optional trusted CI replay, `>=1.60.0 <2` |
 | Public web capture | Fresh signed-out HTTP or HTTPS pages with supported semantic HTML, localizable visible images, static SVG backgrounds, and WOFF2 fonts; video, large canvas, maps, cross-origin frames, and closed or interactive shadow surfaces remain fail-closed |
-| ShowKit skill | `@showkit/cli >=0.2.9 <0.3.0` |
+| ShowKit skill | `@showkit/cli >=0.2.10 <0.3.0` |
 | Capture and StorySpec schema | `0.1` |
 | Player browsers | Current Playwright Chromium, Firefox, and WebKit in release checks |
 
