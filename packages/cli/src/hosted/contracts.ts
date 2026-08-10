@@ -192,7 +192,7 @@ export const HostedDemoRenameRequestSchema = z
       .trim()
       .min(1)
       .max(120)
-      .regex(/^[^\u0000-\u001F\u007F]+$/u, "Demo names cannot contain control characters")
+      .regex(/^[^\u0000-\u001F\u007F-\u009F]+$/u, "Demo names cannot contain control characters")
   })
   .strict();
 

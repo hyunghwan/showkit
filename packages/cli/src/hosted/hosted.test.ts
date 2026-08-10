@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ArtifactManifest } from "../core/schemas.js";
 import { contentHash, sha256 } from "../core/json.js";
 import { publishCommand } from "../commands.js";
-import { HostedPublishResponseSchema } from "./contracts.js";
+import {
+  HostedDemoRenameRequestSchema,
+  HostedPublishResponseSchema
+} from "./contracts.js";
 import {
   FirebaseDeviceAuthTokenProvider,
   MemoryHostedTokenStore
@@ -63,6 +66,18 @@ function demoContents(styles = "body {}\n"): Map<string, Buffer> {
 }
 
 describe("hosted CLI request and transport", () => {
+  it("rejects C0 and C1 controls in hosted demo names", () => {
+    expect(HostedDemoRenameRequestSchema.safeParse({ title: "Bad\u0000title" }).success).toBe(
+      false
+    );
+    expect(HostedDemoRenameRequestSchema.safeParse({ title: "Bad\u0085title" }).success).toBe(
+      false
+    );
+    expect(HostedDemoRenameRequestSchema.parse({ title: "  Launch tour  " })).toEqual({
+      title: "Launch tour"
+    });
+  });
+
   it("builds the bounded envelope without changing the artifact manifest", () => {
     const contents = demoContents();
     const manifest = artifact(contents);
