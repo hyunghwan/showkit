@@ -1599,6 +1599,8 @@ const PLAYER_JS = `(() => {
   let overlayTrackUntil = 0;
   let overlayRevealAt = 0;
   let overlayRevealTimer = 0;
+  let renderRevision = 0;
+  let animatedCameraRevision = -1;
   let completionSplitLayout = false;
   const defaultChrome = {
     mode: "overlay",
@@ -3396,10 +3398,12 @@ const PLAYER_JS = `(() => {
       sceneMoves &&
       current >= 0 &&
       camera === "focus" &&
+      animatedCameraRevision !== renderRevision &&
       !document.body.hasAttribute("data-initial-render") &&
       !window.matchMedia("(prefers-reduced-motion: reduce)").matches
     ) {
-      overlayRevealAt = Math.max(overlayRevealAt, performance.now() + 650);
+      animatedCameraRevision = renderRevision;
+      overlayRevealAt = performance.now() + 650;
       elements.shell.dataset.cameraTransitioning = "true";
       window.clearTimeout(overlayRevealTimer);
       overlayRevealTimer = window.setTimeout(
@@ -3435,6 +3439,7 @@ const PLAYER_JS = `(() => {
   }
 
   function render() {
+    renderRevision += 1;
     const welcome = hasWelcome && current < 0;
     const complete = current >= demo.steps.length;
     const step = welcome

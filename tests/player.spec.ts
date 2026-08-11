@@ -2034,15 +2034,26 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
     await page.evaluate(() => {
       const testWindow = window as Window & {
         __showkitOriginalRequestAnimationFrame?: typeof window.requestAnimationFrame;
+        __showkitCameraChurnTimer?: number;
       };
       const scrollLayer = document.querySelector("#scene-scroll");
-      if (!(scrollLayer instanceof HTMLElement)) {
-        throw new Error("Scene scroll layer is unavailable.");
+      const shell = document.querySelector("#scene-shell");
+      if (
+        !(scrollLayer instanceof HTMLElement) ||
+        !(shell instanceof HTMLElement)
+      ) {
+        throw new Error("Scene camera layers are unavailable.");
       }
       testWindow.__showkitOriginalRequestAnimationFrame =
         window.requestAnimationFrame;
       window.requestAnimationFrame = () => 0;
       scrollLayer.dispatchEvent(new Event("scroll"));
+      let narrow = false;
+      testWindow.__showkitCameraChurnTimer = window.setInterval(() => {
+        narrow = !narrow;
+        shell.style.width = narrow ? "calc(100% - 1px)" : "100%";
+        window.dispatchEvent(new Event("resize"));
+      }, 80);
     });
 
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
@@ -2062,7 +2073,16 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
     await page.evaluate(() => {
       const testWindow = window as Window & {
         __showkitOriginalRequestAnimationFrame?: typeof window.requestAnimationFrame;
+        __showkitCameraChurnTimer?: number;
       };
+      if (testWindow.__showkitCameraChurnTimer !== undefined) {
+        window.clearInterval(testWindow.__showkitCameraChurnTimer);
+        delete testWindow.__showkitCameraChurnTimer;
+      }
+      const shell = document.querySelector("#scene-shell");
+      if (shell instanceof HTMLElement) {
+        shell.style.removeProperty("width");
+      }
       if (testWindow.__showkitOriginalRequestAnimationFrame) {
         window.requestAnimationFrame =
           testWindow.__showkitOriginalRequestAnimationFrame;
