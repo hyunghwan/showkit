@@ -2087,6 +2087,21 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
         return matrix.a;
       })
     ).toBeGreaterThan(1.15);
+    await expect.poll(() =>
+      page.evaluate(() => {
+        const anchor = document.querySelector("[data-showkit-anchor]");
+        const hotspot = document.querySelector("#hotspot");
+        if (!(anchor instanceof HTMLElement) || !(hotspot instanceof HTMLElement)) {
+          return Number.POSITIVE_INFINITY;
+        }
+        const anchorBox = anchor.getBoundingClientRect();
+        const hotspotBox = hotspot.getBoundingClientRect();
+        return Math.max(
+          Math.abs(anchorBox.left - hotspotBox.left),
+          Math.abs(anchorBox.top - hotspotBox.top)
+        );
+      })
+    ).toBeLessThanOrEqual(4);
     await expect(page.locator("#hotspot")).toBeFocused();
     const focused = await page.evaluate(() => {
       const shell = document.querySelector("#scene-shell");
@@ -2108,18 +2123,13 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       return {
         viewportLeft: viewportBox.left - shellBox.left,
         targetCenterRatio:
-          (anchorBox.left + anchorBox.width / 2 - shellBox.left) / shellBox.width,
-        overlayError: Math.max(
-          Math.abs(anchorBox.left - hotspotBox.left),
-          Math.abs(anchorBox.top - hotspotBox.top)
-        )
+          (anchorBox.left + anchorBox.width / 2 - shellBox.left) / shellBox.width
       };
     });
     expect(focused).not.toBeNull();
     expect(focused?.viewportLeft).toBeLessThan(0);
     expect(focused?.targetCenterRatio).toBeGreaterThan(0.74);
     expect(focused?.targetCenterRatio).toBeLessThan(0.9);
-    expect(focused?.overlayError).toBeLessThanOrEqual(4);
 
     await page.locator("#back").click();
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
