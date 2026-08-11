@@ -59,6 +59,25 @@ content-addressed assets. ShowKit fails closed when it cannot reproduce a
 surface safely. There is no full-scene screenshot fallback, Playwright trace
 input, product-script replay, or remote request in a built demo.
 
+Capture support is capability-based, not URL-based. For an authored Playwright
+flow or explicitly confirmed browser-session content, ShowKit may retain the
+semantic scroll range from the document origin through the currently revealed
+viewport, including the equivalent revealed range in nested scroll containers.
+Content beyond that range remains excluded. The player restores those offsets
+with native scrolling and keeps captured fixed or sticky context aligned.
+
+The default camera mode is `fit`, so the complete HTML scene does not zoom. Its
+first guided state is rendered already settled, without scene, progress, or
+hotspot entrance animation.
+`player.camera: "focus"` is an optional global presentation mode applied only
+after the first complete preview. In that mode, camera motion remains a
+deterministic player decision derived from normalized target geometry and the
+available embed size: compact edge targets may receive a restrained focus zoom,
+while ordinary targets, small embeds, and tall scenes remain fitted. Demo
+content never stores per-step camera coordinates or a camera timeline. The
+optional welcome cover is also deterministic and uses the first live HTML scene
+rather than a raster preview; it is omitted by default.
+
 Passing ShowKit checks establishes the player and artifact properties recorded
 in its reports. It does not certify the source product's security,
 accessibility, compliance, or approval status.

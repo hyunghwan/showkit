@@ -484,6 +484,47 @@ test("uses the target name to disambiguate repeated browser-session test IDs", a
   }
 });
 
+test("keeps browser-session inspect actions read-only", async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <button type="button">Defer action to human</button>
+      <output id="selection">Unchanged</output>
+      <script>
+        document.querySelector("button").addEventListener("click", () => {
+          document.querySelector("#selection").textContent = "Selected";
+        });
+      </script>
+    </main>
+  `);
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        domSnapshot: () => Promise.resolve(""),
+        evaluate: (pageFunction: unknown, argument?: unknown) =>
+          page.evaluate(pageFunction as never, argument),
+        locator: (selector: string) => page.locator(selector),
+        getByRole: (role: string, options: { name: string; exact: boolean }) =>
+          page.getByRole(role as never, options)
+      },
+      url: () => Promise.resolve(page.url())
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1440, height: 900 }
+  });
+
+  await adapter.performAction(
+    {
+      strategy: "role",
+      role: "button",
+      name: "Defer action to human"
+    },
+    "inspect"
+  );
+
+  await expect(page.locator("#selection")).toHaveText("Unchanged");
+});
+
 test("normalizes absolute browser-session href targets and follows the matched URL", async ({
   page
 }) => {
@@ -864,6 +905,64 @@ test("matches Playwright's native table roles and accessible names", async ({
       })
     );
   }
+});
+
+test("captures in isolated worlds without HTML element constructors", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <label for="receipt">Upload evidence</label>
+      <input id="receipt" type="file">
+      <datalist id="people"><option value="Ada"></option></datalist>
+      <input list="people" aria-label="People">
+      <select size="2" aria-label="Choices">
+        <option selected>One</option><option>Two</option>
+      </select>
+      <details open><summary>Policy details</summary><p>Visible policy</p></details>
+      <textarea placeholder="Add a note"></textarea>
+      <img alt="Report thumbnail" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">
+    </main>
+  `);
+  await page.evaluate(() => {
+    for (const name of [
+      "HTMLElement",
+      "HTMLDetailsElement",
+      "HTMLImageElement",
+      "HTMLInputElement",
+      "HTMLOptionElement",
+      "HTMLSelectElement",
+      "HTMLTextAreaElement"
+    ]) {
+      Object.defineProperty(globalThis, name, {
+        configurable: true,
+        value: undefined,
+        writable: true
+      });
+    }
+  });
+
+  const target = page.getByRole("button", {
+    name: "Upload evidence",
+    exact: true
+  });
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Upload evidence"
+    },
+    anchorId: "sk-isolated-constructor-free"
+  });
+
+  expect(captured.scene.target).toEqual(
+    expect.objectContaining({ role: "button", name: "Upload evidence" })
+  );
+  expect(captured.scene.html).toContain("Upload evidence");
+  expect(captured.scene.html).toContain("selected");
+  expect(captured.scene.html).toContain("open");
+  expect(captured.scene.html).toContain("Add a note");
 });
 
 test("preserves safe live control state through capture and the final player", async ({
@@ -2347,6 +2446,93 @@ test("positions visible virtual-list content independently of its live scroll of
     return undefined;
   };
   expect(anchoredTop(root!)).toBeCloseTo(targetTop, 0);
+});
+
+test("captures the revealed semantic scroll range and restores nested scroll state", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 800, height: 500 });
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; width: 800px; }
+      header { background: white; height: 48px; position: sticky; top: 0; z-index: 2; }
+      main { height: 1600px; position: relative; }
+      #intro { left: 24px; position: absolute; top: 80px; }
+      #panel { height: 120px; left: 80px; overflow-y: auto; position: absolute; top: 850px; width: 420px; }
+      #panel-content { height: 620px; position: relative; }
+      #review-row { left: 24px; position: absolute; top: 340px; }
+      #nested-unrevealed { left: 24px; position: absolute; top: 520px; }
+      #document-unrevealed { left: 24px; position: absolute; top: 1450px; }
+    </style>
+    <header>Workspace navigation</header>
+    <main>
+      <p id="intro">Previously revealed overview</p>
+      <section id="panel" aria-label="Review queue">
+        <div id="panel-content">
+          <button id="review-row" type="button">Review row</button>
+          <p id="nested-unrevealed">Nested content not revealed yet</p>
+        </div>
+      </section>
+      <p id="document-unrevealed">Document content not revealed yet</p>
+    </main>
+  `);
+  await page.evaluate(() => {
+    window.scrollTo(0, 700);
+    const panel = document.querySelector("#panel");
+    if (panel instanceof HTMLElement) panel.scrollTop = 300;
+  });
+
+  const result = await page
+    .getByRole("button", { name: "Review row", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-review-row",
+      nodeMode: "json",
+      scrollCapture: "revealed"
+    });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.scroll).toEqual({ x: 0, y: 700, width: 800, height: 1200 });
+  expect(result.html).toContain("Previously revealed overview");
+  expect(result.html).toContain("Review row");
+  expect(result.html).not.toContain("Nested content not revealed yet");
+  expect(result.html).not.toContain("Document content not revealed yet");
+  expect(result.html).toContain('data-showkit-scroll-y="300"');
+  expect(result.html).toContain('data-showkit-position-lock="sticky"');
+
+  const transferred = JSON.parse(result.nodesJson ?? "[]") as unknown[];
+  type TransferNode = {
+    type: string;
+    attributes?: Record<string, string>;
+    styles?: Record<string, string>;
+    children?: unknown[];
+  };
+  const findNode = (
+    nodes: unknown[],
+    predicate: (node: TransferNode) => boolean
+  ): TransferNode | undefined => {
+    for (const candidate of nodes) {
+      if (typeof candidate !== "object" || candidate === null) continue;
+      const node = candidate as TransferNode;
+      if (predicate(node)) return node;
+      const match = findNode(node.children ?? [], predicate);
+      if (match) return match;
+    }
+    return undefined;
+  };
+  expect(
+    findNode(
+      transferred,
+      (node) => node.attributes?.["data-showkit-scroll-y"] === "300"
+    )?.styles
+  ).toEqual(expect.objectContaining({ height: "120px" }));
+  expect(
+    findNode(
+      transferred,
+      (node) => node.attributes?.["data-showkit-anchor"] === "sk-review-row"
+    )?.styles?.top
+  ).toBe("340px");
 });
 
 test("preserves named grid placement when replaying a captured scene", async ({

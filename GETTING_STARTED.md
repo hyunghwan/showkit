@@ -43,10 +43,13 @@ separate publication states.
    > Use ShowKit for this site. The flow is open in Chrome. Build and preview a
    > checked local interactive HTML demo. Do not publish.
 
-3. Review the first preview. Confirm the default colors and local font stacks,
-   and keep, change, or remove the default completion email link. Check every
-   step, Back and Next navigation, keyboard focus, and the final Restart demo
-   action.
+3. Review the first preview. It starts on step one with the full scene fitted
+   and settled without an entrance animation; the generated cover and focus
+   zoom are off. Confirm the default colors and local font stacks, and keep,
+   change, or remove the default completion email link. Check every step, Back
+   and Next navigation, keyboard focus, and the final Restart demo action. After
+   that complete preview passes, the skill asks whether to add a generated
+   cover, restrained focus zoom, both, or neither.
 
 The skill chooses a supported source and reports the local output path. It does
 not ask you to compare capture implementations. If the current browser cannot
@@ -81,8 +84,8 @@ npx showkit capture static ./safe-envelope.json --json
 # Or run a repeatable Playwright flow after installing the optional peer.
 npm install -D @playwright/test
 npx showkit doctor --capability playwright --browser-channel chrome --json
-npx showkit capture ./demo.spec.ts --viewport 1280x720 --preflight --json
-npx showkit capture ./demo.spec.ts --viewport 1280x720 --json
+npx showkit capture ./demo.spec.ts --viewport 1440x900 --preflight --json
+npx showkit capture ./demo.spec.ts --viewport 1440x900 --json
 ```
 
 Complete the local lifecycle:

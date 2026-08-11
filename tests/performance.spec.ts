@@ -13,7 +13,8 @@ function runCli(projectDirectory: string, args: string[]): Record<string, unknow
     cwd: repositoryRoot,
     env: {
       ...process.env,
-      SHOWKIT_PROJECT_ROOT: projectDirectory
+      SHOWKIT_PROJECT_ROOT: projectDirectory,
+      SHOWKIT_TEST_REUSE_FIXTURE_SERVER: "true"
     },
     encoding: "utf8"
   });

@@ -22,6 +22,14 @@ const OPENAI_BROWSER_CDP_METHODS = new Set([
 const OPENAI_BROWSER_CDP_RESULT_LIMIT = 2_000_000;
 const TRUSTED_OPENAI_BROWSER_BUILDS = new Map([
   [
+    "browser@26.803.41515",
+    "323bc3e687e17d7e377238d9f4c69111c4d0e6219103b6316d8c52082489533b"
+  ],
+  [
+    "chrome@26.803.41515",
+    "323bc3e687e17d7e377238d9f4c69111c4d0e6219103b6316d8c52082489533b"
+  ],
+  [
     "browser@26.730.61639",
     "091a81603ff202a16ed56557709bf42d97caf8f0dd2e07ae9e26d7c014d71035"
   ],
@@ -1215,6 +1223,7 @@ function sceneFromKernel(result, anchorId) {
       ? { fontFaces: result.fontFaces }
       : {}),
     viewport: result.viewport,
+    scroll: result.scroll,
     ...(anchorId
       ? {
           anchorId,
@@ -1242,6 +1251,10 @@ function isKernelSceneResult(result, { targetRequired }) {
       Number.isInteger(result.viewport?.height) &&
       result.viewport.width > 0 &&
       result.viewport.height > 0 &&
+      Number.isInteger(result.scroll?.x) &&
+      Number.isInteger(result.scroll?.y) &&
+      Number.isInteger(result.scroll?.width) &&
+      Number.isInteger(result.scroll?.height) &&
       Array.isArray(result.evidenceTexts) &&
       result.evidenceTexts.every((text) => typeof text === "string") &&
       Array.isArray(result.assetPayloads) &&
@@ -1293,6 +1306,9 @@ function kernelOptions(cli, options) {
       : {}),
     ...(options.privateContentConsent
       ? { privateContentConsent: options.privateContentConsent }
+      : {}),
+    ...(options.pageAssetConsent
+      ? { pageAssetConsent: options.pageAssetConsent }
       : {}),
     ...(options.fontFaces?.length > 0
       ? { fontFaces: options.fontFaces }
@@ -2604,6 +2620,13 @@ export function createCodexBrowserAdapter({
       return [...pageAssets, ...renderedIcons];
     },
     async performAction(target, actionKind) {
+      if (actionKind === "inspect") {
+        const inspectTarget = await viewportLocatorFor(tab, target);
+        if (inspectTarget.count !== 1) {
+          throw new Error("The selected inspection target is unavailable.");
+        }
+        return;
+      }
       if (actionKind === "navigate" && typeof tab.goto === "function") {
         const currentUrl = await tab.url();
         if (typeof currentUrl !== "string") {
@@ -4034,6 +4057,7 @@ export async function captureBrowserSession({
           sensitiveSelectors,
           sensitiveTextRedaction: confirmedRedaction,
           privateContentConsent: confirmedPrivateContent,
+          pageAssetConsent: confirmedAssets,
           remoteAssetPolicy,
           fontFaces,
           remoteAssetReplacements
@@ -4160,6 +4184,7 @@ export async function captureBrowserSession({
         sensitiveSelectors,
         sensitiveTextRedaction: confirmedRedaction,
         privateContentConsent: confirmedPrivateContent,
+        pageAssetConsent: confirmedAssets,
         remoteAssetPolicy,
         fontFaces: terminalFontFaces,
         remoteAssetReplacements: terminalRemoteAssetReplacements

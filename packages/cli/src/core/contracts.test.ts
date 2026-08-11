@@ -147,6 +147,8 @@ describe("data contracts", () => {
 
     expect(StorySpecSchema.parse(story).steps).toHaveLength(1);
     expect(story.steps[0]?.evidenceIds).toEqual(["ev-create"]);
+    expect(story.welcome).toBeUndefined();
+    expect(story.player.camera).toBe("fit");
     expect(story.player.chrome).toEqual({
       mode: "overlay",
       placements: {
@@ -308,9 +310,10 @@ describe("data contracts", () => {
     };
 
     const parsed = StorySpecSchema.parse(story);
-    expect(parsed.welcome.backdrop).toBe("heavy");
+    expect(parsed.welcome?.backdrop).toBe("heavy");
     expect(parsed.steps[0]!.tooltip.backdrop).toBe("light");
     expect(parsed.player.navigation).toBe("hotspots");
+    expect(parsed.player.camera).toBe("fit");
     expect(parsed.completion?.actions).toHaveLength(2);
     expect(() =>
       StorySpecSchema.parse({
@@ -325,6 +328,41 @@ describe("data contracts", () => {
               style: "secondary"
             }
           ]
+        }
+      })
+    ).toThrow();
+  });
+
+  it("keeps the cover optional and focus zoom opt-in", () => {
+    const capture = captureFixture();
+    const story = createEvidenceGroundedStory(capture);
+
+    const defaultStory = StorySpecSchema.parse(story);
+    expect(defaultStory.welcome).toBeUndefined();
+    expect(defaultStory.player.camera).toBe("fit");
+
+    const focusedStory = StorySpecSchema.parse({
+      ...story,
+      welcome: {
+        title: "Welcome to the workspace",
+        body: "Explore the captured product flow.",
+        actionLabel: "Explore workspace",
+        backdrop: "heavy"
+      },
+      player: {
+        ...story.player,
+        camera: "focus"
+      }
+    });
+    expect(focusedStory.welcome?.title).toBe("Welcome to the workspace");
+    expect(focusedStory.player.camera).toBe("focus");
+
+    expect(() =>
+      StorySpecSchema.parse({
+        ...story,
+        player: {
+          ...story.player,
+          camera: "cinematic"
         }
       })
     ).toThrow();
@@ -548,6 +586,30 @@ describe("data contracts", () => {
           expect.objectContaining({
             path: ["steps", 1, "id"],
             message: "Capture step IDs must be unique."
+          })
+        ])
+      );
+    }
+  });
+
+  it("rejects captured scroll ranges that cannot contain their viewport", () => {
+    const capture = captureFixture();
+    capture.steps[0]!.scene.scroll = {
+      x: 1,
+      y: 0,
+      width: 1280,
+      height: 720
+    };
+
+    const parsed = CaptureSourceSchema.safeParse(capture);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["steps", 0, "scene", "scroll", "x"],
+            message:
+              "Scene horizontal scroll offset must stay inside the captured range."
           })
         ])
       );

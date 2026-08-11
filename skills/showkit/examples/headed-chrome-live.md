@@ -81,8 +81,8 @@ Run:
 ```text
 showkit doctor --capability playwright --browser-channel chrome --json
 showkit init --json
-showkit capture temporary-live.spec.ts --viewport 1280x720 --preflight --json
-showkit capture temporary-live.spec.ts --viewport 1280x720 --json
+showkit capture temporary-live.spec.ts --viewport 1440x900 --preflight --json
+showkit capture temporary-live.spec.ts --viewport 1440x900 --json
 ```
 
 Delete the temporary spec only after the resulting captured product flow is

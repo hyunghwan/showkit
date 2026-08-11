@@ -68,7 +68,7 @@ import { satisfiesVersionRange } from "./core/version.js";
 const NODE_RANGE = ">=22.12 <25";
 const PLAYWRIGHT_RANGE = ">=1.60.0 <2";
 const CAPTURE_PROCESS_BUFFER_LIMIT = 10 * 1024 * 1024;
-const DEFAULT_CAPTURE_VIEWPORT = { width: 1280, height: 720 } as const;
+const DEFAULT_CAPTURE_VIEWPORT = { width: 1440, height: 900 } as const;
 
 type BufferedProcessResult = {
   status: number | null;
@@ -301,7 +301,7 @@ function captureViewportArgument(
         "The capture viewport must use WIDTHxHEIGHT CSS pixels. No browser was opened and no captured page was saved.",
       exitCode: EXIT_CODES.validation,
       recovery:
-        "Use `--viewport 1280x720`, or pass the exact requested or existing-demo viewport."
+        "Use `--viewport 1440x900`, or pass the exact requested or existing-demo viewport."
     });
   }
   return { width, height };
@@ -748,7 +748,7 @@ export async function captureFailure(
       message:
         "Playwright did not discover this source flow. No browser was opened and no captured page was saved.",
       recovery:
-        "Rename the file to `*.spec.ts` or configure Playwright `testMatch` to include it, then run `showkit capture <spec> --viewport 1280x720 --preflight --json`."
+        "Rename the file to `*.spec.ts` or configure Playwright `testMatch` to include it, then run `showkit capture <spec> --viewport 1440x900 --preflight --json`."
     });
   }
   if (/ERR_PACKAGE_PATH_NOT_EXPORTED|ERR_REQUIRE_ESM|No "exports" main defined/i.test(output)) {
@@ -757,7 +757,7 @@ export async function captureFailure(
       message:
         "Playwright could not load the ShowKit fixture in this project module format. No browser was opened and no captured page was saved.",
       recovery:
-        "Update `@showkit/cli`, or use a new ESM output folder with `npm pkg set type=module`, then run `showkit capture <spec> --viewport 1280x720 --preflight --json`."
+        "Update `@showkit/cli`, or use a new ESM output folder with `npm pkg set type=module`, then run `showkit capture <spec> --viewport 1440x900 --preflight --json`."
     });
   }
   return new ShowKitError({
@@ -2162,8 +2162,8 @@ export function helpCommand(): CommandResult {
     commands: [
       "showkit doctor --json",
       "showkit init --json",
-      "showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json",
-      "showkit capture <demo.spec.ts> --viewport 1280x720 [--project <name>] --json",
+      "showkit capture <demo.spec.ts> --viewport 1440x900 --preflight --json",
+      "showkit capture <demo.spec.ts> --viewport 1440x900 [--project <name>] --json",
       "showkit capture session <safe-envelope.json> --json",
       "showkit capture static <safe-envelope.json> --json",
       "showkit story apply <story.json> --json",

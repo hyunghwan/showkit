@@ -353,6 +353,9 @@ function kernelOptions(
     ...(!options.scanOnly ? { transferEncoding: "lzss-json" as const } : {}),
     ...(options.anchorId ? { anchorId: options.anchorId } : {}),
     ...(options.scopeTarget ? { scopeTarget: options.scopeTarget } : {}),
+    ...(options.scrollCapture
+      ? { scrollCapture: options.scrollCapture }
+      : {}),
     ...(options.pageAssetConsent
       ? { pageAssetConsent: options.pageAssetConsent }
       : {}),
@@ -940,6 +943,7 @@ export async function captureScene(
       ...(targetOptions?.captureTarget
         ? { scopeTarget: targetOptions.captureTarget }
         : {}),
+      scrollCapture: "revealed",
       ...(options?.remoteAssetPolicy
         ? { remoteAssetPolicy: options.remoteAssetPolicy }
         : {}),
@@ -1103,6 +1107,7 @@ export async function captureScene(
       html: result.html,
       nodes: result.nodes,
       viewport: result.viewport,
+      scroll: result.scroll,
       ...(result.fontFaces.length > 0
         ? { fontFaces: result.fontFaces }
         : {}),

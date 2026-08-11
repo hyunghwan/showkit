@@ -125,6 +125,7 @@ function runCli(
     env: {
       ...process.env,
       SHOWKIT_PROJECT_ROOT: projectDirectory,
+      SHOWKIT_TEST_REUSE_FIXTURE_SERVER: "true",
       ...environment
     },
     encoding: "utf8"
@@ -198,6 +199,8 @@ test.describe("Milestone 1 local workflow", () => {
   let frameUrl: string;
   let hotspotsOnlyServer: Server;
   let hotspotsOnlyUrl: string;
+  let noCoverServer: Server;
+  let noCoverUrl: string;
   let artifactDirectory: string;
   let firstVersion: string;
   let baseAssetRevision: string;
@@ -668,7 +671,7 @@ test.describe("Milestone 1 local workflow", () => {
         status: "fresh",
         sourceMode: "playwright-spec",
         playwrightProject: "chromium",
-        expectedViewport: { width: 1280, height: 720 },
+        expectedViewport: { width: 1440, height: 900 },
         freshness: expect.objectContaining({
           status: "fresh",
           previousDemoChanged: false,
@@ -923,7 +926,8 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
             restart: "top-right",
             cta: "hidden"
           }
-        }
+        },
+        camera: "focus"
       }
     };
     await writeFile(
@@ -1013,6 +1017,26 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
     );
     hotspotsOnlyServer = hotspotsOnlyPreview.server;
     hotspotsOnlyUrl = hotspotsOnlyPreview.url;
+
+    const noCoverStoryPath = path.join(projectDirectory, "no-cover-story.json");
+    const noCoverStory = {
+      ...launchStory,
+      id: "no-cover-story"
+    };
+    delete noCoverStory.welcome;
+    await writeFile(
+      noCoverStoryPath,
+      `${JSON.stringify(noCoverStory, null, 2)}\n`
+    );
+    expect(
+      runCli(projectDirectory, ["story", "apply", noCoverStoryPath]).status
+    ).toBe("applied");
+    const noCoverBuild = runCli(projectDirectory, ["build", "web"]);
+    const noCoverPreview = await startPortableStaticServer(
+      String(noCoverBuild.path)
+    );
+    noCoverServer = noCoverPreview.server;
+    noCoverUrl = noCoverPreview.url;
   });
 
   test.afterAll(async () => {
@@ -1031,6 +1055,11 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
     if (hotspotsOnlyServer) {
       await new Promise<void>((resolve) =>
         hotspotsOnlyServer.close(() => resolve())
+      );
+    }
+    if (noCoverServer) {
+      await new Promise<void>((resolve) =>
+        noCoverServer.close(() => resolve())
       );
     }
     if (projectDirectory) {
@@ -1587,6 +1616,481 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
     ).toBe(true);
     expect(externalRequests).toEqual([]);
     expect(consoleErrors).toEqual([]);
+  });
+
+  test("starts on step one with a fitted scene when cover and focus are not enabled", async ({
+    page
+  }) => {
+    await page.goto(noCoverUrl);
+
+    await expect(page.locator("body")).toHaveAttribute("data-player-state", "step");
+    await expect(page.locator("#step-count")).toHaveText("Step 1 of 3");
+    await expect(page.locator("#welcome-layer")).toBeHidden();
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-camera",
+      "fit"
+    );
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-camera-zoom",
+      "1.00"
+    );
+    await expect(page.getByRole("button", { name: "Back" })).toBeDisabled();
+    expect(
+      await page.evaluate(() =>
+        document
+          .getAnimations({ subtree: true })
+          .filter((animation) => animation.playState === "running")
+          .map((animation) =>
+            animation instanceof CSSAnimation
+              ? animation.animationName
+              : animation instanceof CSSTransition
+                ? animation.transitionProperty
+                : animation.constructor.name
+          )
+      )
+    ).toEqual([]);
+
+    for (let index = 0; index < 3; index += 1) {
+      await page.keyboard.press("ArrowRight");
+    }
+    await expect(page.locator("#step-count")).toHaveText("Complete");
+    await page.getByRole("button", { name: "Restart demo" }).click();
+    await expect(page.locator("body")).toHaveAttribute("data-player-state", "step");
+    await expect(page.locator("#step-count")).toHaveText("Step 1 of 3");
+    await expect(page.locator("#welcome-layer")).toBeHidden();
+    expect(
+      await page.evaluate(() =>
+        document
+          .getAnimations({ subtree: true })
+          .filter((animation) => animation.playState === "running")
+      )
+    ).toEqual([]);
+  });
+
+  test("builds a polished cover from the first live HTML scene", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(previewUrl);
+    await expect(
+      page.getByRole("dialog", { name: "Welcome to the product demo" })
+    ).toBeVisible();
+    const cover = await page.evaluate(() => {
+      const shell = document.querySelector("#scene-shell");
+      const layer = document.querySelector("#welcome-layer");
+      const card = document.querySelector(".welcome-card");
+      const title = document.querySelector("#welcome-title");
+      const liveScene = document.querySelector(
+        "#scene-content [data-showkit-scene-root]"
+      );
+      if (
+        !(shell instanceof HTMLElement) ||
+        !(layer instanceof HTMLElement) ||
+        !(card instanceof HTMLElement) ||
+        !(title instanceof HTMLElement)
+      ) {
+        return null;
+      }
+      const shellBox = shell.getBoundingClientRect();
+      const cardBox = card.getBoundingClientRect();
+      return {
+        cardCenterRatio:
+          (cardBox.left + cardBox.width / 2 - shellBox.left) / shellBox.width,
+        cardWidthRatio: cardBox.width / shellBox.width,
+        livePreviewWidth: shellBox.right - cardBox.right,
+        titleSize: Number.parseFloat(getComputedStyle(title).fontSize),
+        background: getComputedStyle(layer).backgroundImage,
+        hasLiveHtmlScene: liveScene instanceof HTMLElement
+      };
+    });
+
+    expect(cover).not.toBeNull();
+    expect(cover?.cardCenterRatio).toBeLessThan(0.4);
+    expect(cover?.cardWidthRatio).toBeLessThanOrEqual(0.5);
+    expect(cover?.livePreviewWidth).toBeGreaterThan(420);
+    expect(cover?.titleSize).toBeGreaterThanOrEqual(32);
+    expect(cover?.background).toContain("gradient");
+    expect(cover?.hasLiveHtmlScene).toBe(true);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const narrowCover = await page.evaluate(() => {
+      const shell = document.querySelector("#scene-shell");
+      const card = document.querySelector(".welcome-card");
+      const action = document.querySelector("#welcome-action");
+      if (
+        !(shell instanceof HTMLElement) ||
+        !(card instanceof HTMLElement) ||
+        !(action instanceof HTMLElement)
+      ) {
+        return null;
+      }
+      const shellBox = shell.getBoundingClientRect();
+      const cardBox = card.getBoundingClientRect();
+      return {
+        centerError: Math.abs(
+          cardBox.left + cardBox.width / 2 -
+            (shellBox.left + shellBox.width / 2)
+        ),
+        widthRatio: cardBox.width / shellBox.width,
+        actionHeight: action.getBoundingClientRect().height
+      };
+    });
+    expect(narrowCover).not.toBeNull();
+    expect(narrowCover?.centerError).toBeLessThanOrEqual(2);
+    expect(narrowCover?.widthRatio).toBeLessThanOrEqual(0.94);
+    expect(narrowCover?.actionHeight).toBeGreaterThanOrEqual(44);
+  });
+
+  test("replays the revealed HTML range with native scrolling and sticky context", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1000, height: 650 });
+    await page.goto(previewUrl);
+    await page.evaluate(() => {
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            steps: Array<{
+              anchorId: string;
+              viewport: { width: number; height: number };
+              scroll?: { x: number; y: number; width: number; height: number };
+              target: {
+                tag: string;
+                role?: string;
+                name: string;
+                bounds: { x: number; y: number; width: number; height: number };
+              };
+              nodes: unknown[];
+            }>;
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      const step = payload.steps[0]!;
+      step.viewport = { width: 800, height: 500 };
+      step.scroll = { x: 0, y: 300, width: 800, height: 900 };
+      step.target = {
+        tag: "button",
+        role: "button",
+        name: "Review revealed row",
+        bounds: { x: 0.45, y: 0.44, width: 0.1, height: 0.08 }
+      };
+      step.nodes = [
+        {
+          type: "element",
+          tag: "div",
+          attributes: {
+            "aria-label": "Captured product state",
+            "data-showkit-scene-root": ""
+          },
+          styles: {
+            background: "#f5f3ed",
+            height: "900px",
+            overflow: "hidden",
+            position: "relative",
+            width: "800px"
+          },
+          children: [
+            {
+              type: "element",
+              tag: "header",
+              attributes: { "data-showkit-position-lock": "sticky" },
+              styles: {
+                background: "#17211b",
+                color: "white",
+                height: "48px",
+                left: "0px",
+                position: "absolute",
+                top: "300px",
+                width: "800px"
+              },
+              children: [{ type: "text", text: "Workspace navigation" }]
+            },
+            {
+              type: "element",
+              tag: "p",
+              attributes: {},
+              styles: {
+                left: "32px",
+                position: "absolute",
+                top: "80px"
+              },
+              children: [{ type: "text", text: "Previously revealed overview" }]
+            },
+            {
+              type: "element",
+              tag: "main",
+              attributes: { "data-showkit-scroll-y": "120" },
+              styles: {
+                background: "#ffffff",
+                height: "120px",
+                left: "520px",
+                overflow: "auto",
+                position: "absolute",
+                top: "340px",
+                width: "220px"
+              },
+              children: [
+                {
+                  type: "element",
+                  tag: "div",
+                  attributes: {},
+                  styles: {
+                    height: "320px",
+                    position: "relative",
+                    width: "220px"
+                  },
+                  children: [
+                    {
+                      type: "element",
+                      tag: "p",
+                      attributes: {},
+                      styles: {
+                        left: "16px",
+                        position: "absolute",
+                        top: "250px"
+                      },
+                      children: [{ type: "text", text: "Nested revealed detail" }]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              type: "element",
+              tag: "button",
+              attributes: {
+                "data-showkit-anchor": step.anchorId,
+                type: "button"
+              },
+              styles: {
+                height: "40px",
+                left: "360px",
+                position: "absolute",
+                top: "520px",
+                width: "80px"
+              },
+              children: [{ type: "text", text: "Review revealed row" }]
+            },
+            {
+              type: "element",
+              tag: "p",
+              attributes: {},
+              styles: {
+                left: "32px",
+                position: "absolute",
+                top: "840px"
+              },
+              children: [{ type: "text", text: "End of captured range" }]
+            }
+          ]
+        }
+      ];
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+
+    await expect.poll(() =>
+      page.locator("#scene-scroll").evaluate((element) => ({
+        top: Math.round(element.scrollTop),
+        height: element.scrollHeight,
+        viewport: element.clientHeight
+      }))
+    ).toEqual({ top: 300, height: 900, viewport: 500 });
+
+    const nestedScrollLayer = page.locator("[data-showkit-scroll-y]");
+    await expect(nestedScrollLayer).toHaveAttribute(
+      "data-showkit-scroll-y",
+      "120"
+    );
+    await expect.poll(() =>
+      nestedScrollLayer.evaluate((element) => ({
+        top: Math.round(element.scrollTop),
+        height: element.scrollHeight,
+        viewport: element.clientHeight
+      }))
+    ).toEqual({ top: 120, height: 320, viewport: 120 });
+
+    const scrollLayer = page.locator("#scene-scroll");
+    await scrollLayer.hover({ position: { x: 760, y: 460 } });
+    await page.mouse.wheel(0, -120);
+    await expect.poll(() => scrollLayer.evaluate((element) => element.scrollTop))
+      .toBeLessThan(300);
+
+    await scrollLayer.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await expect(page.getByText("Previously revealed overview", { exact: true })).toBeVisible();
+    await expect.poll(() =>
+      page.evaluate(() => {
+        const viewport = document.querySelector("#scene-viewport");
+        const sticky = document.querySelector("[data-showkit-position-lock]");
+        if (!(viewport instanceof HTMLElement) || !(sticky instanceof HTMLElement)) {
+          return Number.POSITIVE_INFINITY;
+        }
+        return Math.abs(
+          sticky.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+        );
+      })
+    ).toBeLessThanOrEqual(2);
+
+    await scrollLayer.evaluate((element) => {
+      element.scrollTop = 250;
+    });
+    await expect.poll(() =>
+      page.evaluate(() => {
+        const anchor = document.querySelector("[data-showkit-anchor]");
+        const hotspot = document.querySelector("#hotspot");
+        if (!(anchor instanceof HTMLElement) || !(hotspot instanceof HTMLElement)) {
+          return Number.POSITIVE_INFINITY;
+        }
+        const anchorBox = anchor.getBoundingClientRect();
+        const hotspotBox = hotspot.getBoundingClientRect();
+        return Math.max(
+          Math.abs(anchorBox.left - hotspotBox.left),
+          Math.abs(anchorBox.top - hotspotBox.top)
+        );
+      })
+    ).toBeLessThanOrEqual(4);
+  });
+
+  test("zooms toward compact edge targets and returns to the full HTML scene", async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(customOverlayUrl);
+    await page.evaluate(() => {
+      const payload = (
+        window as unknown as {
+          __SHOWKIT_DEMO__: {
+            steps: Array<{
+              anchorId: string;
+              viewport: { width: number; height: number };
+              scroll?: { x: number; y: number; width: number; height: number };
+              target: {
+                tag: string;
+                role?: string;
+                name: string;
+                bounds: { x: number; y: number; width: number; height: number };
+              };
+              nodes: unknown[];
+            }>;
+          };
+        }
+      ).__SHOWKIT_DEMO__;
+      const step = payload.steps[0]!;
+      step.viewport = { width: 1280, height: 720 };
+      step.scroll = { x: 0, y: 0, width: 1280, height: 720 };
+      step.target = {
+        tag: "button",
+        role: "button",
+        name: "Open services",
+        bounds: { x: 0.81, y: 0.458, width: 0.06, height: 0.056 }
+      };
+      step.nodes = [
+        {
+          type: "element",
+          tag: "div",
+          attributes: {
+            "aria-label": "Captured product state",
+            "data-showkit-scene-root": ""
+          },
+          styles: {
+            background: "linear-gradient(135deg, #f5f1e8, #dfe7df)",
+            height: "720px",
+            overflow: "hidden",
+            position: "relative",
+            width: "1280px"
+          },
+          children: [
+            {
+              type: "element",
+              tag: "h1",
+              attributes: {},
+              styles: {
+                left: "80px",
+                position: "absolute",
+                top: "86px"
+              },
+              children: [{ type: "text", text: "Agent configuration" }]
+            },
+            {
+              type: "element",
+              tag: "button",
+              attributes: {
+                "data-showkit-anchor": step.anchorId,
+                type: "button"
+              },
+              styles: {
+                height: "40px",
+                left: "1037px",
+                position: "absolute",
+                top: "330px",
+                width: "77px"
+              },
+              children: [{ type: "text", text: "Open services" }]
+            }
+          ]
+        }
+      ];
+    });
+    await page.getByRole("button", { name: "Explore demo" }).click();
+
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-camera",
+      "focus"
+    );
+    await expect.poll(() =>
+      page.locator("#scene-viewport").evaluate((element) => {
+        const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+        return matrix.a;
+      })
+    ).toBeGreaterThan(1.15);
+    await expect(page.locator("#scene-shell")).not.toHaveAttribute(
+      "data-camera-transitioning",
+      "true"
+    );
+    await expect(page.locator("#hotspot")).toBeFocused();
+    const focused = await page.evaluate(() => {
+      const shell = document.querySelector("#scene-shell");
+      const viewport = document.querySelector("#scene-viewport");
+      const anchor = document.querySelector("[data-showkit-anchor]");
+      const hotspot = document.querySelector("#hotspot");
+      if (
+        !(shell instanceof HTMLElement) ||
+        !(viewport instanceof HTMLElement) ||
+        !(anchor instanceof HTMLElement) ||
+        !(hotspot instanceof HTMLElement)
+      ) {
+        return null;
+      }
+      const shellBox = shell.getBoundingClientRect();
+      const viewportBox = viewport.getBoundingClientRect();
+      const anchorBox = anchor.getBoundingClientRect();
+      const hotspotBox = hotspot.getBoundingClientRect();
+      return {
+        viewportLeft: viewportBox.left - shellBox.left,
+        targetCenterRatio:
+          (anchorBox.left + anchorBox.width / 2 - shellBox.left) / shellBox.width,
+        overlayError: Math.max(
+          Math.abs(anchorBox.left - hotspotBox.left),
+          Math.abs(anchorBox.top - hotspotBox.top)
+        )
+      };
+    });
+    expect(focused).not.toBeNull();
+    expect(focused?.viewportLeft).toBeLessThan(0);
+    expect(focused?.targetCenterRatio).toBeGreaterThan(0.74);
+    expect(focused?.targetCenterRatio).toBeLessThan(0.9);
+    expect(focused?.overlayError).toBeLessThanOrEqual(4);
+
+    await page.locator("#back").click();
+    await expect(page.locator("#scene-viewport")).toHaveAttribute(
+      "data-camera",
+      "fit"
+    );
+    await expect.poll(() =>
+      page.locator("#scene-viewport").evaluate((element) => {
+        const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+        return matrix.a;
+      })
+    ).toBeLessThanOrEqual(1.01);
   });
 
   test("keeps the completion card clear of a prominent captured dialog", async ({
@@ -2173,7 +2677,7 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
   test("preserves source-sized controls for tall captures without painting over them", async ({
     page
   }) => {
-    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(previewUrl);
     await page.evaluate(() => {
       const payload = (
@@ -3588,7 +4092,7 @@ test("captures one viewport-bound step", async ({ page, demo }) => {
       stepDriftSpecPath,
       `import { test } from "@showkit/cli/playwright";
 
-test.use({ viewport: { width: 1280, height: 720 } });
+test.use({ viewport: { width: 1440, height: 900 } });
 
 test("blocks viewport drift before a later step", async ({ page, demo }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
@@ -3622,7 +4126,7 @@ test("blocks viewport drift before a later step", async ({ page, demo }) => {
       terminalDriftSpecPath,
       `import { test } from "@showkit/cli/playwright";
 
-test.use({ viewport: { width: 1280, height: 720 } });
+test.use({ viewport: { width: 1440, height: 900 } });
 
 test("blocks viewport drift before the terminal scene", async ({ page, demo }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
@@ -3649,7 +4153,7 @@ test("blocks viewport drift before the terminal scene", async ({ page, demo }) =
         specPath,
         "--preflight"
       ]);
-      expect(preflight.expectedViewport).toEqual({ width: 1280, height: 720 });
+      expect(preflight.expectedViewport).toEqual({ width: 1440, height: 900 });
 
       const missingValue = runCli(
         projectDirectory,
@@ -3666,7 +4170,7 @@ test("blocks viewport drift before the terminal scene", async ({ page, demo }) =
           code: "DemoFixtureSetupFailed",
           details: expect.objectContaining({
             category: "capture-viewport-mismatch",
-            expectedViewport: { width: 1280, height: 720 },
+            expectedViewport: { width: 1440, height: 900 },
             actualViewport: { width: 900, height: 720 }
           })
         })
@@ -3701,7 +4205,7 @@ test("blocks viewport drift before the terminal scene", async ({ page, demo }) =
             code: "DemoFixtureSetupFailed",
             details: expect.objectContaining({
               category: "capture-viewport-mismatch",
-              expectedViewport: { width: 1280, height: 720 },
+              expectedViewport: { width: 1440, height: 900 },
               actualViewport: { width: 900, height: 720 }
             })
           })

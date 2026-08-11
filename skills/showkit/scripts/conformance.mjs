@@ -439,8 +439,8 @@ for (const requirement of [
   "captureTarget",
   "non-persistent",
   "Page.createIsolatedWorld",
-  "showkit capture temporary-live.spec.ts --viewport 1280x720 --preflight --json",
-  "showkit capture temporary-live.spec.ts --viewport 1280x720 --json",
+  "showkit capture temporary-live.spec.ts --viewport 1440x900 --preflight --json",
+  "showkit capture temporary-live.spec.ts --viewport 1440x900 --json",
   "retained foreground"
 ]) {
   if (!headedChromeExample.includes(requirement)) {
@@ -454,7 +454,7 @@ const openChromeExample = await readFile(
 for (const requirement of [
   "Use ShowKit for this site",
   "What product URL or currently open product flow should I use?",
-  "1280×720",
+  "1440×900",
   "Claude Cowork",
   "verifyOpenAIBrowserHostIsolation()",
   "Do not respond with",
@@ -478,12 +478,17 @@ for (const requirement of [
   "Do not run the doctor's Skills CLI recovery",
   "Do not ask an open-ended routing question",
   "What product URL or currently open product flow should I use?",
-  "1280×720",
+  "1440×900",
   "one-shot reconnaissance browser",
   "do not override the host's action-safety policy",
   "Do not restart the browser",
   "Do not install Playwright for the primary setup",
-  "flow-appropriate set of 3 to 7 ordered"
+  "flow-appropriate set of 3 to 7 ordered",
+  'player.camera: "fit"',
+  "omit `welcome`",
+  "no scene, progress, or hotspot entrance animation",
+  "Would you like to add an optional generated cover, restrained focus zoom, both, or neither?",
+  "never author per-step camera coordinates or a site-specific zoom rule"
 ]) {
   if (!skill.replace(/\s+/g, " ").includes(requirement)) {
     throw new Error(`SKILL.md is missing one-command bootstrap guidance: ${requirement}`);

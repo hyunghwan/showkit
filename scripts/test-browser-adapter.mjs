@@ -80,6 +80,7 @@ function sceneResult(name, options) {
       }
     ],
     viewport: { width: 1280, height: 720 },
+    scroll: { x: 0, y: 0, width: 1280, height: 720 },
     target: {
       tag: "button",
       role: "button",
@@ -121,6 +122,7 @@ function terminalResult() {
       }
     ],
     viewport: { width: 1280, height: 720 },
+    scroll: { x: 0, y: 0, width: 1280, height: 720 },
     evidenceTexts: [],
     assetPayloads: [],
     fontFaces: [],
@@ -2307,6 +2309,7 @@ const transferLocator = {
         nodesJsonLength: transferredNodesJson.length
       },
       viewport: { width: 1280, height: 720 },
+      scroll: { x: 0, y: 0, width: 1280, height: 720 },
       evidenceTexts: ["Compose"],
       assetPayloads: [],
       excludedSurfaces: [],
@@ -2475,6 +2478,7 @@ const compressedTransferLocator = {
         nodesJsonLength: transferredNodesJson.length
       },
       viewport: { width: 1280, height: 720 },
+      scroll: { x: 0, y: 0, width: 1280, height: 720 },
       evidenceTexts: ["Compose"],
       assetPayloads: [],
       excludedSurfaces: [],

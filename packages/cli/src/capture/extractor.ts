@@ -63,6 +63,7 @@ export type SceneKernelOptions = {
     mode: "visible-session";
     consent: "confirmed";
   };
+  scrollCapture?: "revealed";
   pageAssetConsent?: PageAssetConsent;
   fontFaces?: SceneFontFace[];
   remoteAssetReplacements?: Array<{
@@ -146,6 +147,12 @@ export type SceneKernelResult =
             nodesJsonLength: number;
           };
       viewport: { width: number; height: number };
+      scroll: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      };
       target?: {
         tag: string;
         role?: string;
@@ -525,7 +532,7 @@ export async function extractSceneKernel(
     if (tag === "textarea") return "textbox";
     if (tag === "select") {
       return element.hasAttribute("multiple") ||
-        (element instanceof HTMLSelectElement && element.size > 1)
+        (element as HTMLSelectElement).size > 1
         ? "listbox"
         : "combobox";
     }
@@ -540,8 +547,7 @@ export async function extractSceneKernel(
       if (type === "range") return "slider";
       if (
         ["email", "search", "tel", "text", "url"].includes(type) &&
-        element instanceof HTMLInputElement &&
-        element.list
+        Boolean((element as HTMLInputElement).list)
       ) {
         return "combobox";
       }
@@ -817,8 +823,9 @@ export async function extractSceneKernel(
             }
             return (
               target.role === "button" &&
-              element instanceof HTMLInputElement &&
-              element.type.toLowerCase() === "file" &&
+              element.tagName.toLowerCase() === "input" &&
+              (element.getAttribute("type") ?? "text").toLowerCase() ===
+                "file" &&
               explicitLabelName(element) === "" &&
               requestedName !== "" &&
               requestedName.length <= 180
@@ -1166,9 +1173,63 @@ export async function extractSceneKernel(
     return blocked("UnsupportedSurface", "page-asset-consent-invalid");
   }
   const pageAssetConsentActive = pageAssetConsent !== undefined;
+  const privateContentConsent = options.privateContentConsent;
+  if (
+    privateContentConsent !== undefined &&
+    (privateContentConsent.mode !== "visible-session" ||
+      privateContentConsent.consent !== "confirmed")
+  ) {
+    return blocked("SensitiveDataDetected", "private-content-consent-required");
+  }
+  const privateContentConsentActive = privateContentConsent !== undefined;
+  const captureScrollableContent =
+    options.nodeMode === "json" &&
+    (options.scrollCapture === "revealed" ||
+      pageAssetConsentActive ||
+      privateContentConsentActive);
+  const rawScrollX = Math.max(0, window.scrollX);
+  const rawScrollY = Math.max(0, window.scrollY);
+  const rawDocumentWidth = Math.max(
+    window.innerWidth,
+    pageDocument.documentElement.scrollWidth,
+    pageDocument.body.scrollWidth
+  );
+  const rawDocumentHeight = Math.max(
+    window.innerHeight,
+    pageDocument.documentElement.scrollHeight,
+    pageDocument.body.scrollHeight
+  );
+  const capturedScroll = {
+    x: captureScrollableContent ? Math.round(rawScrollX) : 0,
+    y: captureScrollableContent ? Math.round(rawScrollY) : 0,
+    width: Math.max(
+      window.innerWidth,
+      Math.ceil(
+        captureScrollableContent
+          ? Math.min(rawDocumentWidth, rawScrollX + window.innerWidth)
+          : window.innerWidth
+      )
+    ),
+    height: Math.max(
+      window.innerHeight,
+      Math.ceil(
+        captureScrollableContent
+          ? Math.min(rawDocumentHeight, rawScrollY + window.innerHeight)
+          : window.innerHeight
+      )
+    )
+  };
+  if (
+    capturedScroll.x > 100_000 ||
+    capturedScroll.y > 100_000 ||
+    capturedScroll.width > 100_000 ||
+    capturedScroll.height > 100_000
+  ) {
+    return blocked("CaptureTooLarge", "scroll-extent-limit");
+  }
   const textRedactionActive = redactionRequest !== undefined;
   const blockingSecretPatternSources =
-    options.privateContentConsent === undefined
+    !privateContentConsentActive
       ? options.secretPatternSources
       : options.secretPatternSources.filter(
           (source) => !source.includes("@")
@@ -1312,6 +1373,76 @@ export async function extractSceneKernel(
     rectangleCache.set(element, rectangle);
     return rectangle;
   };
+  const parentElementOrHost = (element: Element): Element | null => {
+    if (element.parentElement) return element.parentElement;
+    const root = element.getRootNode();
+    return root instanceof ShadowRoot ? root.host : null;
+  };
+  const scrollableAxes = (
+    element: Element,
+    computed = computedFor(element)
+  ): { x: boolean; y: boolean } => {
+    const permitsScroll = (value: string): boolean =>
+      ["auto", "overlay", "scroll"].includes(value);
+    return {
+      x:
+        permitsScroll(computed.overflowX) &&
+        element.scrollWidth > element.clientWidth + 1,
+      y:
+        permitsScroll(computed.overflowY) &&
+        element.scrollHeight > element.clientHeight + 1
+    };
+  };
+  const insideCapturedScrollExtent = (
+    element: Element,
+    rectangle = rectangleFor(element)
+  ): boolean => {
+    if (!captureScrollableContent) {
+      return (
+        rectangle.bottom > 0 &&
+        rectangle.right > 0 &&
+        rectangle.top < window.innerHeight &&
+        rectangle.left < window.innerWidth
+      );
+    }
+    const documentLeft = rectangle.left + rawScrollX;
+    const documentTop = rectangle.top + rawScrollY;
+    if (
+      documentLeft + rectangle.width <= 0 ||
+      documentTop + rectangle.height <= 0 ||
+      documentLeft >= capturedScroll.width ||
+      documentTop >= capturedScroll.height
+    ) {
+      return false;
+    }
+    let ancestor = parentElementOrHost(element);
+    while (ancestor && ancestor !== pageDocument.documentElement) {
+      const axes = scrollableAxes(ancestor);
+      if (axes.x || axes.y) {
+        const ancestorRectangle = rectangleFor(ancestor);
+        const contentLeft =
+          rectangle.left -
+          (ancestorRectangle.left + ancestor.clientLeft) +
+          ancestor.scrollLeft;
+        const contentTop =
+          rectangle.top -
+          (ancestorRectangle.top + ancestor.clientTop) +
+          ancestor.scrollTop;
+        if (
+          (axes.x &&
+            (contentLeft + rectangle.width <= 0 ||
+              contentLeft >= ancestor.scrollLeft + ancestor.clientWidth)) ||
+          (axes.y &&
+            (contentTop + rectangle.height <= 0 ||
+              contentTop >= ancestor.scrollTop + ancestor.clientHeight))
+        ) {
+          return false;
+        }
+      }
+      ancestor = parentElementOrHost(ancestor);
+    }
+    return true;
+  };
   const renderedCanvasSource = (element: Element): string => {
     const rectangle = rectangleFor(element);
     const canvas = element as HTMLCanvasElement;
@@ -1353,6 +1484,7 @@ export async function extractSceneKernel(
   const unsupportedSurfaceTags = new Set([
     "audio",
     "canvas",
+    "dialog",
     "embed",
     "iframe",
     "object",
@@ -1928,10 +2060,18 @@ export async function extractSceneKernel(
       pseudo === "before"
         ? Number.parseFloat(computed.height || "0")
         : rectangle.height;
+    const elementBox = element as Element & {
+      offsetHeight?: number;
+      offsetWidth?: number;
+    };
     const elementBoxWidth =
-      element instanceof HTMLElement ? element.offsetWidth : renderedWidth;
+      typeof elementBox.offsetWidth === "number"
+        ? elementBox.offsetWidth
+        : renderedWidth;
     const elementBoxHeight =
-      element instanceof HTMLElement ? element.offsetHeight : renderedHeight;
+      typeof elementBox.offsetHeight === "number"
+        ? elementBox.offsetHeight
+        : renderedHeight;
     return (
       replacement.captureKind === "isolated-rendered-icon" &&
       replacement.match.pseudo === pseudo &&
@@ -2085,10 +2225,10 @@ export async function extractSceneKernel(
       return image.currentSrc || image.src;
     }
     if (
-      element instanceof HTMLInputElement &&
-      element.type.toLowerCase() === "image"
+      element.tagName.toLowerCase() === "input" &&
+      (element.getAttribute("type") ?? "text").toLowerCase() === "image"
     ) {
-      return element.src;
+      return (element as HTMLInputElement).src;
     }
     if (
       element.namespaceURI === "http://www.w3.org/2000/svg" &&
@@ -2433,6 +2573,7 @@ export async function extractSceneKernel(
     "section"
   ]);
   const styleProperties = [
+    "accent-color",
     "appearance",
     "align-content",
     "align-items",
@@ -2508,8 +2649,11 @@ export async function extractSceneKernel(
     "mask-repeat",
     "mask-size",
     "object-fit",
+    "object-position",
     "opacity",
     "order",
+    "outline",
+    "outline-offset",
     "overflow",
     "overflow-x",
     "overflow-y",
@@ -2529,6 +2673,7 @@ export async function extractSceneKernel(
     "text-decoration",
     "text-overflow",
     "text-rendering",
+    "text-shadow",
     "text-transform",
     "top",
     "transform",
@@ -2548,6 +2693,7 @@ export async function extractSceneKernel(
   let redactedTextNodeCount = 0;
   let redactedAttributeCount = 0;
   const inheritedStyleProperties = new Set([
+    "accent-color",
     "color",
     "direction",
     "fill",
@@ -2573,6 +2719,7 @@ export async function extractSceneKernel(
     "stroke-width",
     "text-align",
     "text-rendering",
+    "text-shadow",
     "text-transform",
     "unicode-bidi",
     "white-space",
@@ -2583,6 +2730,7 @@ export async function extractSceneKernel(
     "padding-"
   ];
   const exactDefaultStyles = new Map<string, string>([
+    ["accent-color", "auto"],
     ["appearance", "auto"],
     ["align-content", "normal"],
     ["align-items", "normal"],
@@ -2626,8 +2774,10 @@ export async function extractSceneKernel(
     ["max-height", "none"],
     ["max-width", "none"],
     ["object-fit", "fill"],
+    ["object-position", "50% 50%"],
     ["opacity", "1"],
     ["order", "0"],
+    ["outline-offset", "0px"],
     ["overflow", "visible"],
     ["overflow-x", "visible"],
     ["overflow-y", "visible"],
@@ -2636,6 +2786,7 @@ export async function extractSceneKernel(
     ["right", "auto"],
     ["text-decoration", "none"],
     ["text-overflow", "clip"],
+    ["text-shadow", "none"],
     ["top", "auto"],
     ["transform", "none"],
     ["vertical-align", "baseline"],
@@ -2798,6 +2949,12 @@ export async function extractSceneKernel(
     for (const property of styleProperties) {
       const value = computed.getPropertyValue(property).trim();
       if (value === "" || /@import|expression\s*\(/i.test(value)) continue;
+      if (
+        property === "outline" &&
+        computed.getPropertyValue("outline-style").trim() === "none"
+      ) {
+        continue;
+      }
       if (
         options.nodeMode !== "flat" &&
         options.nodeMode !== "json" &&
@@ -3268,17 +3425,15 @@ export async function extractSceneKernel(
         }
       }
       if (
-        source instanceof HTMLInputElement &&
         ["checkbox", "radio"].includes(inputType) &&
-        source.checked
+        (source as HTMLInputElement).checked
       ) {
         attributes.checked = "";
       }
       if (source.hasAttribute("readonly")) attributes.readonly = "";
       if (
         ["email", "search", "tel", "text", "url"].includes(inputType) &&
-        source instanceof HTMLInputElement &&
-        source.list &&
+        Boolean((source as HTMLInputElement).list) &&
         attributes.role === undefined
       ) {
         attributes.role = "combobox";
@@ -3303,17 +3458,16 @@ export async function extractSceneKernel(
     if (source.tagName === "SELECT" && source.hasAttribute("multiple")) {
       attributes.multiple = "";
     }
-    if (
-      source instanceof HTMLSelectElement &&
-      source.size > 1 &&
-      source.size <= 100
-    ) {
-      attributes.size = String(source.size);
+    if (source.tagName === "SELECT") {
+      const selectSize = (source as HTMLSelectElement).size;
+      if (selectSize > 1 && selectSize <= 100) {
+        attributes.size = String(selectSize);
+      }
     }
-    if (source instanceof HTMLOptionElement && source.selected) {
+    if (source.tagName === "OPTION" && (source as HTMLOptionElement).selected) {
       attributes.selected = "";
     }
-    if (source instanceof HTMLDetailsElement && source.open) {
+    if (source.tagName === "DETAILS" && (source as HTMLDetailsElement).open) {
       attributes.open = "";
     }
     if (source.tagName === "IMG") {
@@ -3618,6 +3772,25 @@ export async function extractSceneKernel(
         isInsideRedactionRegion(source.parentElement)
       );
       if (text !== originalText) redactedTextNodeCount += 1;
+      if (
+        captureScrollableContent &&
+        text.trim() !== "" &&
+        source.parentElement &&
+        !isInsideVisuallyClippedTextContainer(source.parentElement)
+      ) {
+        const parentRectangle = rectangleFor(source.parentElement);
+        if (
+          parentRectangle.width > 0 &&
+          parentRectangle.height > 0 &&
+          insideCapturedScrollExtent(source.parentElement, parentRectangle) &&
+          !registerVisibleTextFont(
+            originalText,
+            computedFor(source.parentElement)
+          )
+        ) {
+          return null;
+        }
+      }
       if (
         options.nodeMode === "json" &&
         text.trim() !== "" &&
@@ -4016,8 +4189,9 @@ export async function extractSceneKernel(
       renderedCanvasReplacementFor(sourceElement);
     const imageElement =
       sourceElement.tagName === "IMG" ||
-      (sourceElement instanceof HTMLInputElement &&
-        sourceElement.type.toLowerCase() === "image") ||
+      (sourceTag === "input" &&
+        (sourceElement.getAttribute("type") ?? "text").toLowerCase() ===
+          "image") ||
       (sourceElement.namespaceURI === "http://www.w3.org/2000/svg" &&
         sourceTag === "image");
     if (
@@ -4028,16 +4202,13 @@ export async function extractSceneKernel(
     }
     const viewportOnly = options.nodeMode === "json";
     const sourceRectangle = rectangleFor(sourceElement);
-    const outsideViewport =
+    const outsideCapturedExtent =
       sourceRectangle.width > 0 &&
       sourceRectangle.height > 0 &&
-      (sourceRectangle.bottom <= 0 ||
-        sourceRectangle.right <= 0 ||
-        sourceRectangle.top >= window.innerHeight ||
-        sourceRectangle.left >= window.innerWidth);
+      !insideCapturedScrollExtent(sourceElement, sourceRectangle);
     if (
       viewportOnly &&
-      outsideViewport &&
+      outsideCapturedExtent &&
       sourceElement !== targetElement &&
       (targetElement === null || !sourceElement.contains(targetElement))
     ) {
@@ -4087,10 +4258,7 @@ export async function extractSceneKernel(
       (elementVisible &&
         sourceRectangle.width > 0 &&
         sourceRectangle.height > 0 &&
-        sourceRectangle.bottom > 0 &&
-        sourceRectangle.right > 0 &&
-        sourceRectangle.top < window.innerHeight &&
-        sourceRectangle.left < window.innerWidth);
+        insideCapturedScrollExtent(sourceElement, sourceRectangle));
     const childTextVisible =
       !viewportOnly ||
       visualInViewport ||
@@ -4100,7 +4268,8 @@ export async function extractSceneKernel(
         value: string;
         style: CSSStyleDeclaration;
       }> = [];
-      if (sourceElement instanceof HTMLInputElement) {
+      if (sourceTag === "input") {
+        const input = sourceElement as HTMLInputElement;
         const inputType = (sourceElement.getAttribute("type") ?? "text").toLowerCase();
         if (["button", "reset", "submit"].includes(inputType)) {
           renderedAttributeTexts.push({
@@ -4120,21 +4289,21 @@ export async function extractSceneKernel(
             style: computed
           });
         }
-        if (sourceElement.value === "") {
+        if (input.value === "") {
           renderedAttributeTexts.push({
             value: sourceElement.getAttribute("placeholder") ?? "",
             style: window.getComputedStyle(sourceElement, "::placeholder")
           });
         }
       } else if (
-        sourceElement instanceof HTMLTextAreaElement &&
-        sourceElement.value === ""
+        sourceTag === "textarea" &&
+        (sourceElement as HTMLTextAreaElement).value === ""
       ) {
         renderedAttributeTexts.push({
           value: sourceElement.getAttribute("placeholder") ?? "",
           style: window.getComputedStyle(sourceElement, "::placeholder")
         });
-      } else if (sourceElement instanceof HTMLImageElement) {
+      } else if (sourceTag === "img") {
         renderedAttributeTexts.push({
           value: sourceElement.getAttribute("alt") ?? "",
           style: computed
@@ -4159,6 +4328,41 @@ export async function extractSceneKernel(
         ? "div"
         : "span";
     const attributes = readAttributes(sourceElement);
+    if (captureScrollableContent) {
+      const axes = scrollableAxes(sourceElement, computed);
+      if (
+        (axes.x && sourceElement.scrollLeft > 100_000) ||
+        (axes.y && sourceElement.scrollTop > 100_000)
+      ) {
+        serializationBlocker ??= {
+          code: "CaptureTooLarge",
+          category: "scroll-extent-limit"
+        };
+        return null;
+      }
+      if (axes.x) {
+        attributes["data-showkit-scroll-x"] = String(
+          Math.max(0, Math.round(sourceElement.scrollLeft))
+        );
+      }
+      if (axes.y) {
+        attributes["data-showkit-scroll-y"] = String(
+          Math.max(0, Math.round(sourceElement.scrollTop))
+        );
+      }
+      const position = computed.position;
+      const visibleInCurrentViewport =
+        sourceRectangle.bottom > 0 &&
+        sourceRectangle.right > 0 &&
+        sourceRectangle.top < window.innerHeight &&
+        sourceRectangle.left < window.innerWidth;
+      if (
+        visibleInCurrentViewport &&
+        (position === "fixed" || position === "sticky")
+      ) {
+        attributes["data-showkit-position-lock"] = position;
+      }
+    }
     if (renderedCanvasReplacement) {
       attributes.src = localAssetPath(
         renderedCanvasReplacement.payload
@@ -4278,9 +4482,10 @@ export async function extractSceneKernel(
     }
     const nodeStyles = readStyles(sourceElement);
     const visiblePlaceholder =
-      ((sourceElement instanceof HTMLInputElement && sourceElement.value === "") ||
-        (sourceElement instanceof HTMLTextAreaElement &&
-          sourceElement.value === "")) &&
+      ((sourceTag === "input" &&
+        (sourceElement as HTMLInputElement).value === "") ||
+        (sourceTag === "textarea" &&
+          (sourceElement as HTMLTextAreaElement).value === "")) &&
       normalizedText(sourceElement.getAttribute("placeholder") ?? "") !== "";
     if (visiblePlaceholder) {
       const placeholderStyle = window.getComputedStyle(
@@ -4328,8 +4533,14 @@ export async function extractSceneKernel(
         height: sourceRectangle.height
       });
       nodeContainingBlockOrigins.set(node, {
-        x: sourceRectangle.x + sourceElement.clientLeft,
-        y: sourceRectangle.y + sourceElement.clientTop
+        x:
+          sourceRectangle.x +
+          sourceElement.clientLeft -
+          (captureScrollableContent ? sourceElement.scrollLeft : 0),
+        y:
+          sourceRectangle.y +
+          sourceElement.clientTop -
+          (captureScrollableContent ? sourceElement.scrollTop : 0)
       });
     }
     if (sourceIsTarget) {
@@ -4350,8 +4561,8 @@ export async function extractSceneKernel(
     return blocked("UnsupportedSurface", "font-asset-required");
   }
   const rootStyles = readStyles(pageDocument.body);
-  rootStyles.width = `${window.innerWidth}px`;
-  rootStyles.height = `${window.innerHeight}px`;
+  rootStyles.width = `${capturedScroll.width}px`;
+  rootStyles.height = `${capturedScroll.height}px`;
   rootStyles.overflow = "hidden";
   const root: SanitizedElementNode = {
     type: "element",
@@ -4648,7 +4859,10 @@ export async function extractSceneKernel(
         position: "relative"
       },
       children: root.children.map((child) =>
-        positionNode(child, { x: 0, y: 0 })
+        positionNode(child, {
+          x: captureScrollableContent ? -capturedScroll.x : 0,
+          y: captureScrollableContent ? -capturedScroll.y : 0
+        })
       )
     };
   };
@@ -4677,11 +4891,17 @@ export async function extractSceneKernel(
       styles: {
         display: "block",
         height: `${targetInteractionRectangle.height}px`,
-        left: `${targetInteractionRectangle.x}px`,
+        left: `${
+          targetInteractionRectangle.x +
+          (captureScrollableContent ? capturedScroll.x : 0)
+        }px`,
         opacity: "0",
         overflow: "hidden",
         position: "absolute",
-        top: `${targetInteractionRectangle.y}px`,
+        top: `${
+          targetInteractionRectangle.y +
+          (captureScrollableContent ? capturedScroll.y : 0)
+        }px`,
         width: `${targetInteractionRectangle.width}px`
       },
       children: []
@@ -4975,8 +5195,9 @@ export async function extractSceneKernel(
       materializeTargetAccessibleName(targetAccessibleName);
     }
     if (
-      targetElement instanceof HTMLInputElement &&
-      targetElement.type.toLowerCase() === "file" &&
+      targetElement.tagName.toLowerCase() === "input" &&
+      (targetElement.getAttribute("type") ?? "text").toLowerCase() ===
+        "file" &&
       !sanitizedTarget.attributes["aria-label"]
     ) {
       materializeTargetAccessibleName(targetAccessibleName);
@@ -5066,6 +5287,7 @@ export async function extractSceneKernel(
     ok: true,
     scanOnly: false,
     viewport: { width: window.innerWidth, height: window.innerHeight },
+    scroll: capturedScroll,
     ...(targetElement && rectangle && sanitizedTarget
       ? {
           target: {

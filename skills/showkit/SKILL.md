@@ -26,6 +26,15 @@ in Chrome” are sufficient; do not make the person name a capture architecture.
   reproduced safely as interactive HTML.
 - Apply the same source-faithful visual fidelity contract to every supported
   site. Do not add site-specific capture rules or patch one generated demo.
+- Build and check the first complete demo with `welcome` omitted and
+  `player.camera: "fit"`. Do not pause initial authoring to ask about a cover or
+  zoom. The default first step must appear already settled, with no scene,
+  progress, or hotspot entrance animation. Only after the complete default
+  preview passes rendered QA, ask once in
+  the person's language: **Would you like to add an optional generated cover,
+  restrained focus zoom, both, or neither?** Rebuild and recheck only the
+  selected enhancement. Keep cover and focus as independent global options;
+  never author per-step camera coordinates or a site-specific zoom rule.
 - A local preview is not published.
 - Do not run `showkit publish` unless the person explicitly asks to publish and
   confirms the destination and visibility.
@@ -44,13 +53,13 @@ choice, or an external permission is actually required.
 - In Codex, use the selected Browser or Chrome host only after its installed
   isolation check passes.
 - Establish the CSS capture viewport before browser capture. For a new demo
-  when the person has not named an exact size, use **1280×720 — Standard
+  when the person has not named an exact size, use **1440×900 — High-detail
   desktop** and state that default without pausing for a choice. When replacing
   an existing demo, use its recorded viewport instead of silently changing its
   aspect ratio. Ask only when the person requests another size or the source
   cannot be represented at the required viewport.
 - Pass that contract to every optional Playwright command as
-  `--viewport 1280x720` for a new default-size demo, or as the exact requested
+  `--viewport 1440x900` for a new default-size demo, or as the exact requested
   or existing-demo size. The CLI must fail before persistence when
   `test.use({ viewport })` differs. Do not shrink or reshape the viewport, choose
   an unrelated scroll position, or omit a required visible region to evade an
@@ -267,6 +276,10 @@ without blocking the workflow.
    bounded `0.8` through `1.25` source-declared fallback metric fit with no more
    than `8` CSS pixels of translation; do not increase capture resolution or
    read the font body through another path.
+   When both renders can run in the same Playwright browser, also use the
+   browser-native, same-run, in-memory screenshot comparison defined in
+   `references/visual-fidelity.md`; do not save QA screenshots in the project
+   or demo.
 9. Apply the same constrained theme, player, completion-card, accessibility,
    and publish boundaries below.
 
@@ -333,20 +346,21 @@ without blocking the workflow.
 7. Read only the saved CaptureSource evidence needed to write the StorySpec. Do
    not inspect browser storage, headers, cookies, or raw product data.
 8. Keep tooltip claims within captured visible text and action outcomes.
-9. Default `player.chrome.mode` to `overlay` and fill the embed container.
-   Start with `welcome.backdrop: "heavy"`. Keep step count and progress in
-   `tooltip`, attach progress to the card's top edge, set
-   `player.navigation: "controls"`, and show Back and Next during the tour.
-   Show Restart demo only on the final card. Keep title and goal `hidden`. Use
-   `frame` only when the person asks for separate compact rows. A requested
+9. Default `player.chrome.mode` to `overlay`, set `player.camera: "fit"`, omit
+   `welcome`, and fill the embed container. Start on the first guided step.
+   Keep step count and progress in `tooltip`, attach progress to the card's top
+   edge, set `player.navigation: "controls"`, and show Back and Next during the
+   tour. Show Restart demo only on the final card. Keep title and goal `hidden`.
+   Use `frame` only when the person asks for separate compact rows. A requested
    optional control may move to a supported 3×3 slot or be `hidden`.
-10. Limit card backdrop values to `off`, `light`, `medium`, or `heavy`. Set the
-   welcome value in `welcome.backdrop` and each step value in
+10. Limit card backdrop values to `off`, `light`, `medium`, or `heavy`. Set each
+   step value in
    `steps[].tooltip.backdrop`. A step backdrop must use a target spotlight: keep
    the current semantic target and its focus indicator fully visible while the
-   rest of the HTML scene is dimmed. The welcome card has no target and may dim
-   the full scene. Use `player.navigation: "hotspots"` only when the person
-   wants Back and Next hidden.
+   rest of the HTML scene is dimmed. When the person later enables a welcome
+   cover, set `welcome.backdrop: "heavy"`; that card has no target and may dim
+   the full scene. Use `player.navigation: "hotspots"` only when the person wants
+   Back and Next hidden.
 11. Before the first StorySpec apply, show the exact theme defaults and ask whether to keep them
     or provide brand colors and local font stacks. The
     defaults are accent `#ff5a36`, ink `#17211b`, paper `#f3efe6`, and
@@ -369,10 +383,12 @@ without blocking the workflow.
     typography audit to be `checked` with every text failure count at `0` on
     every step and the completion scene. Do not patch a generated scene to make
     the comparison pass.
-17. Present the first local preview with its current backdrop, navigation,
-    theme, and completion-card settings. Ask whether the person wants to change
-    only those settings. Do not offer arbitrary radius, shadow, spacing,
-    animation, or layout controls.
+17. After the full no-cover, fitted-scene demo passes the capture-size and
+    resized-preview checks, ask whether to add an optional generated cover,
+    restrained focus zoom, both, or neither. Also present its current backdrop,
+    navigation, theme, and completion-card settings. Do not offer arbitrary
+    radius, shadow, spacing, animation, or layout controls. Rebuild and repeat
+    rendered QA when either optional enhancement is selected.
 18. Include the default centered completion lead card with title **Ready to create your demo?**,
     body **Email us to discuss an interactive HTML demo
     for your product.**, action **Email us for a demo**, and destination
@@ -476,8 +492,9 @@ without blocking the workflow.
 9. Run `showkit capture session <safe-envelope.json> --json`. The CLI deletes
    the temporary envelope on success or failure.
 10. Create evidence-grounded demo content. Default `player.chrome.mode` to
-   `overlay`, fill the embed container, start with a heavy welcome backdrop,
-   keep step count and progress in `tooltip`, set
+   `overlay`, set `player.camera: "fit"`, omit `welcome`, fill the embed
+   container, start on the first guided step, keep step count and progress in
+   `tooltip`, set
    `player.navigation: "controls"`, and keep title and goal `hidden` unless
    requested. Show Restart demo only on the final card.
 11. Run
@@ -519,10 +536,13 @@ without blocking the workflow.
     a material difference remains.
 14. State that the result was captured from a signed-in browser session, the
     preview is local, and it is not published.
-15. Present the same constrained first-preview review: backdrop strength,
-    controls or hotspots navigation, safe theme tokens, and an optional
-    1- or 2-link completion card. Ask for exact destinations before adding lead
-    actions.
+15. Only after the complete no-cover, fitted-scene preview passes rendered QA,
+    ask whether to add an optional generated cover, restrained focus zoom,
+    both, or neither. Present the same constrained first-preview review:
+    backdrop strength, controls or hotspots navigation, safe theme tokens, and
+    an optional 1- or 2-link completion card. Ask for exact destinations before
+    adding lead actions. Rebuild and repeat rendered QA when either optional
+    enhancement is selected.
 
 ## Hosted publish after explicit authorization
 
