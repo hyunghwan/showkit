@@ -2037,10 +2037,10 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
         __showkitCameraChurnTimer?: number;
       };
       const scrollLayer = document.querySelector("#scene-scroll");
-      const shell = document.querySelector("#scene-shell");
+      const viewport = document.querySelector("#scene-viewport");
       if (
         !(scrollLayer instanceof HTMLElement) ||
-        !(shell instanceof HTMLElement)
+        !(viewport instanceof HTMLElement)
       ) {
         throw new Error("Scene camera layers are unavailable.");
       }
@@ -2048,10 +2048,8 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
         window.requestAnimationFrame;
       window.requestAnimationFrame = () => 0;
       scrollLayer.dispatchEvent(new Event("scroll"));
-      let narrow = false;
       testWindow.__showkitCameraChurnTimer = window.setInterval(() => {
-        narrow = !narrow;
-        shell.style.width = narrow ? "calc(100% - 1px)" : "100%";
+        viewport.style.transform += " translateZ(0)";
         window.dispatchEvent(new Event("resize"));
       }, 80);
     });
@@ -2078,10 +2076,6 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       if (testWindow.__showkitCameraChurnTimer !== undefined) {
         window.clearInterval(testWindow.__showkitCameraChurnTimer);
         delete testWindow.__showkitCameraChurnTimer;
-      }
-      const shell = document.querySelector("#scene-shell");
-      if (shell instanceof HTMLElement) {
-        shell.style.removeProperty("width");
       }
       if (testWindow.__showkitOriginalRequestAnimationFrame) {
         window.requestAnimationFrame =
