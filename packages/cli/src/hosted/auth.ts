@@ -35,7 +35,7 @@ export class MemoryHostedTokenStore implements HostedTokenStore {
 
 type DeviceAuthOptions = {
   apiBaseUrl: string;
-  firebaseApiKey: string;
+  firebaseApiKey: string | (() => Promise<string>);
   tokens: HostedTokenStore;
   fetch?: typeof fetch;
   openExternal?: (url: string) => Promise<void>;
@@ -146,7 +146,7 @@ function firebaseTokenResponse(value: unknown, refreshed: boolean): {
 
 export class FirebaseDeviceAuthTokenProvider implements HostedIdTokenProvider {
   readonly #apiBaseUrl: URL;
-  readonly #firebaseApiKey: string;
+  readonly #firebaseApiKeySource: string | (() => Promise<string>);
   readonly #tokens: HostedTokenStore;
   readonly #fetch: typeof fetch;
   readonly #openExternal: ((url: string) => Promise<void>) | undefined;
@@ -155,12 +155,13 @@ export class FirebaseDeviceAuthTokenProvider implements HostedIdTokenProvider {
   readonly #now: () => number;
   readonly #identityToolkitBaseUrl: URL;
   readonly #secureTokenBaseUrl: URL;
+  #resolvedFirebaseApiKey: string | null = null;
   #session: FirebaseTokenSet | null = null;
   #inFlight: Promise<string> | null = null;
 
   constructor(options: DeviceAuthOptions) {
     this.#apiBaseUrl = safeBaseUrl(options.apiBaseUrl);
-    this.#firebaseApiKey = options.firebaseApiKey;
+    this.#firebaseApiKeySource = options.firebaseApiKey;
     this.#tokens = options.tokens;
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#openExternal = options.openExternal;
@@ -173,6 +174,19 @@ export class FirebaseDeviceAuthTokenProvider implements HostedIdTokenProvider {
     this.#secureTokenBaseUrl = safeBaseUrl(
       options.secureTokenBaseUrl ?? "https://securetoken.googleapis.com/v1"
     );
+  }
+
+  async #firebaseApiKey(): Promise<string> {
+    if (this.#resolvedFirebaseApiKey) return this.#resolvedFirebaseApiKey;
+    const value =
+      typeof this.#firebaseApiKeySource === "string"
+        ? this.#firebaseApiKeySource
+        : await this.#firebaseApiKeySource();
+    if (!/^[^\s]{1,256}$/.test(value)) {
+      throw new Error("Invalid Firebase API key configuration");
+    }
+    this.#resolvedFirebaseApiKey = value;
+    return value;
   }
 
   async #load(): Promise<FirebaseTokenSet | null> {
@@ -214,7 +228,7 @@ export class FirebaseDeviceAuthTokenProvider implements HostedIdTokenProvider {
 
   async #exchange(customToken: string): Promise<FirebaseTokenSet> {
     const url = new URL(`${this.#identityToolkitBaseUrl.pathname}/accounts:signInWithCustomToken`, this.#identityToolkitBaseUrl.origin);
-    url.searchParams.set("key", this.#firebaseApiKey);
+    url.searchParams.set("key", await this.#firebaseApiKey());
     const parsed = firebaseTokenResponse(
       await this.#firebaseRequest(
         url,
@@ -232,7 +246,7 @@ export class FirebaseDeviceAuthTokenProvider implements HostedIdTokenProvider {
 
   async #refresh(refreshToken: string): Promise<FirebaseTokenSet> {
     const url = new URL(`${this.#secureTokenBaseUrl.pathname}/token`, this.#secureTokenBaseUrl.origin);
-    url.searchParams.set("key", this.#firebaseApiKey);
+    url.searchParams.set("key", await this.#firebaseApiKey());
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken

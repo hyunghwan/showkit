@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "pnpm --filter @showkit/cli build",
-    "check": "pnpm --filter @showkit/cli check",
+    "check": "pnpm security:scan && pnpm --filter @showkit/cli check",
+    "security:scan": "node scripts/check-credentials.mjs",
     "docs:check": "node scripts/check-docs.mjs",
     "pages:build": "node scripts/assemble-pages.mjs output/pages",
     "test": "pnpm run build && pnpm run test:unit && pnpm run test:e2e",

@@ -17,6 +17,7 @@ import {
   commitPublicationReceipt,
   pendingIdempotencyKey
 } from "./receipt.js";
+import { loadProductionFirebaseApiKey } from "./production.js";
 import { createHostedPublishRequest } from "./request.js";
 import { FetchHostedPublishTransport } from "./transport.js";
 
@@ -286,9 +287,10 @@ describe("device authorization client", () => {
     });
     const opened: string[] = [];
     const store = new MemoryHostedTokenStore();
+    const firebaseApiKey = vi.fn(async () => "emulator-api-key");
     const provider = new FirebaseDeviceAuthTokenProvider({
       apiBaseUrl: "http://127.0.0.1:5000/api",
-      firebaseApiKey: "emulator-api-key",
+      firebaseApiKey,
       tokens: store,
       fetch: fetchMock,
       openExternal: async (url) => { opened.push(url); },
@@ -302,6 +304,43 @@ describe("device authorization client", () => {
     expect(JSON.stringify(await store.load())).not.toContain(customToken);
     await expect(provider.getIdToken()).resolves.toBe(idToken);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(firebaseApiKey).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("production Firebase configuration", () => {
+  it("loads the production web API key from the bound Firebase Hosting config", async () => {
+    const apiKey = ["AIza", "E".repeat(35)].join("");
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toBe(
+        "https://app.showkit.sqncs.com/__/firebase/init.json"
+      );
+      expect(init?.redirect).toBe("error");
+      return Response.json({
+        apiKey,
+        projectId: "showkit-hosted-sqncs",
+        appId: "1:840403654519:web:fa83fc443bf24d562a7372"
+      });
+    });
+
+    await expect(loadProductionFirebaseApiKey(fetchMock)).resolves.toBe(apiKey);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the Hosting config points to another Firebase project", async () => {
+    const apiKey = ["AIza", "E".repeat(35)].join("");
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        apiKey,
+        projectId: "other-project",
+        appId: "1:840403654519:web:fa83fc443bf24d562a7372"
+      })
+    );
+
+    await expect(loadProductionFirebaseApiKey(fetchMock)).rejects.toMatchObject({
+      code: "HostedUnavailable",
+      exitCode: 4
+    });
   });
 });
 

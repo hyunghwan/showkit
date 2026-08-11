@@ -8,6 +8,9 @@ release/
 .showkit/
 .playwright-cli/
 .gstack/
+.env
+.env.*
+!.env.example
 *.tgz
 *.tsbuildinfo
 .DS_Store

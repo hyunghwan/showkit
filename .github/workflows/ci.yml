@@ -37,6 +37,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm security:scan
       - run: pnpm check
       - run: pnpm build
       - run: pnpm test:unit
@@ -53,6 +54,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm security:scan
       - run: pnpm docs:check
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm check
@@ -79,6 +81,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm security:scan
       - run: pnpm audit:prod
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm build
