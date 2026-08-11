@@ -2035,6 +2035,7 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera",
       "focus"
     );
+    await page.setViewportSize({ width: 1260, height: 700 });
     await expect.poll(() =>
       page.evaluate(() => {
         const hotspot = document.querySelector("#hotspot");
@@ -2057,12 +2058,13 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       tooltipOpacity: 1,
       tooltipPointerEvents: "auto"
     });
-    await expect.poll(() =>
+    const cameraScale = () =>
       page.locator("#scene-viewport").evaluate((element) => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
         return matrix.a;
-      })
-    ).toBeGreaterThan(1.15);
+      });
+    await expect.poll(cameraScale).toBeGreaterThan(1.05);
+    const focusedScale = await cameraScale();
     await expect.poll(() =>
       page.evaluate(() => {
         const anchor = document.querySelector("[data-showkit-anchor]");
@@ -2112,12 +2114,9 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera",
       "fit"
     );
-    await expect.poll(() =>
-      page.locator("#scene-viewport").evaluate((element) => {
-        const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
-        return matrix.a;
-      })
-    ).toBeLessThanOrEqual(1.01);
+    await expect.poll(cameraScale).toBeLessThanOrEqual(1.01);
+    const fittedScale = await cameraScale();
+    expect(focusedScale / fittedScale).toBeGreaterThan(1.15);
   });
 
   test("keeps the completion card clear of a prominent captured dialog", async ({

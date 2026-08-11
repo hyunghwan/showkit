@@ -1619,8 +1619,6 @@ const PLAYER_JS = `(() => {
   let overlayTrackUntil = 0;
   let overlayRevealAt = 0;
   let overlayRevealTimer = 0;
-  let renderRevision = 0;
-  let animatedCameraRevision = -1;
   let completionSplitLayout = false;
   const defaultChrome = {
     mode: "overlay",
@@ -3288,23 +3286,6 @@ const PLAYER_JS = `(() => {
     clearCameraTransition();
   }
 
-  function finishViewportCameraTransition(event) {
-    if (
-      event.target !== elements.viewport ||
-      !["left", "top", "transform"].includes(event.propertyName) ||
-      elements.shell.dataset.cameraTransitioning !== "true"
-    ) return;
-    clearCameraTransition();
-  }
-
-  elements.viewport.addEventListener(
-    "transitionend",
-    finishViewportCameraTransition
-  );
-  elements.viewport.addEventListener(
-    "transitioncancel",
-    finishViewportCameraTransition
-  );
   function finishOverlayReveal(event) {
     if (
       event.animationName !== "showkit-camera-overlay-reveal" ||
@@ -3314,7 +3295,6 @@ const PLAYER_JS = `(() => {
   }
 
   elements.shell.addEventListener("animationend", finishOverlayReveal);
-  elements.shell.addEventListener("animationcancel", finishOverlayReveal);
 
   function scheduleOverlayPosition(duration = 180) {
     window.cancelAnimationFrame(overlayFrame);
@@ -3452,14 +3432,14 @@ const PLAYER_JS = `(() => {
       sceneMoves &&
       current >= 0 &&
       camera === "focus" &&
-      animatedCameraRevision !== renderRevision &&
       !document.body.hasAttribute("data-initial-render") &&
       !window.matchMedia("(prefers-reduced-motion: reduce)").matches
     ) {
-      animatedCameraRevision = renderRevision;
       overlayRevealAt = performance.now() + 650;
-      elements.shell.dataset.cameraTransitioning = "true";
       window.clearTimeout(overlayRevealTimer);
+      delete elements.shell.dataset.cameraTransitioning;
+      void elements.shell.offsetWidth;
+      elements.shell.dataset.cameraTransitioning = "true";
       overlayRevealTimer = window.setTimeout(
         finishCameraTransition,
         Math.max(0, overlayRevealAt - performance.now()) + 24
@@ -3494,7 +3474,6 @@ const PLAYER_JS = `(() => {
 
   function render() {
     clearCameraTransition(false);
-    renderRevision += 1;
     const welcome = hasWelcome && current < 0;
     const complete = current >= demo.steps.length;
     const step = welcome
