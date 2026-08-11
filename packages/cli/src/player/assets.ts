@@ -1598,6 +1598,7 @@ const PLAYER_JS = `(() => {
   let overlayTimer = 0;
   let overlayTrackUntil = 0;
   let overlayRevealAt = 0;
+  let overlayRevealTimer = 0;
   let completionSplitLayout = false;
   const defaultChrome = {
     mode: "overlay",
@@ -2901,6 +2902,8 @@ const PLAYER_JS = `(() => {
     const shellRect = elements.shell.getBoundingClientRect();
     if (overlayRevealAt > 0 && performance.now() >= overlayRevealAt) {
       overlayRevealAt = 0;
+      window.clearTimeout(overlayRevealTimer);
+      overlayRevealTimer = 0;
       delete elements.shell.dataset.cameraTransitioning;
     }
     if (current < 0) {
@@ -3242,6 +3245,21 @@ const PLAYER_JS = `(() => {
     elements.tooltip.style.visibility = "visible";
   }
 
+  function finishCameraTransition() {
+    overlayRevealTimer = 0;
+    const remaining = overlayRevealAt - performance.now();
+    if (remaining > 0) {
+      overlayRevealTimer = window.setTimeout(
+        finishCameraTransition,
+        remaining + 24
+      );
+      return;
+    }
+    overlayRevealAt = 0;
+    delete elements.shell.dataset.cameraTransitioning;
+    positionOverlay();
+  }
+
   function scheduleOverlayPosition(duration = 180) {
     window.cancelAnimationFrame(overlayFrame);
     window.clearTimeout(overlayTimer);
@@ -3383,6 +3401,11 @@ const PLAYER_JS = `(() => {
     ) {
       overlayRevealAt = Math.max(overlayRevealAt, performance.now() + 650);
       elements.shell.dataset.cameraTransitioning = "true";
+      window.clearTimeout(overlayRevealTimer);
+      overlayRevealTimer = window.setTimeout(
+        finishCameraTransition,
+        Math.max(0, overlayRevealAt - performance.now()) + 24
+      );
     }
     updatePositionLocks();
     positionOverlay();

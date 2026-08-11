@@ -2031,6 +2031,19 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       ];
     });
     await page.getByRole("button", { name: "Explore demo" }).click();
+    await page.evaluate(() => {
+      const testWindow = window as Window & {
+        __showkitOriginalRequestAnimationFrame?: typeof window.requestAnimationFrame;
+      };
+      const scrollLayer = document.querySelector("#scene-scroll");
+      if (!(scrollLayer instanceof HTMLElement)) {
+        throw new Error("Scene scroll layer is unavailable.");
+      }
+      testWindow.__showkitOriginalRequestAnimationFrame =
+        window.requestAnimationFrame;
+      window.requestAnimationFrame = () => 0;
+      scrollLayer.dispatchEvent(new Event("scroll"));
+    });
 
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
       "data-camera",
@@ -2046,6 +2059,16 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera-transitioning",
       "true"
     );
+    await page.evaluate(() => {
+      const testWindow = window as Window & {
+        __showkitOriginalRequestAnimationFrame?: typeof window.requestAnimationFrame;
+      };
+      if (testWindow.__showkitOriginalRequestAnimationFrame) {
+        window.requestAnimationFrame =
+          testWindow.__showkitOriginalRequestAnimationFrame;
+        delete testWindow.__showkitOriginalRequestAnimationFrame;
+      }
+    });
     await expect(page.locator("#hotspot")).toBeFocused();
     const focused = await page.evaluate(() => {
       const shell = document.querySelector("#scene-shell");
