@@ -112,8 +112,14 @@
   addresses and HTTPS downgrade redirects, and apply bounded redirects,
   timeout, decompression, signature, and size checks. Required loaded WOFF2
   files use the same boundary. Reuse authorization only within that capture
-  run. Do not save or print the source URL. If the exact bytes are unavailable,
-  keep failing closed.
+  run. Do not save or print the source URL. For a confirmed visible session,
+  a loaded text font whose exact bytes remain unavailable may use ShowKit's
+  fixed system font stack when fixed non-page Latin, Korean, and CJK metric
+  samples stay within `0.8` through `1.25` on both axes. Record
+  `bounded-font-metric-fallback`, keep the text selectable, and require the
+  generated HTML typography audit to report zero drift, unsafe wrapping, and
+  collisions. Do not use this exception for an icon font or when the bounded
+  system fallback check fails. Keep every other unavailable font fail-closed.
 - Treat a remote CSS image inside a visible interactive control as critical.
   When original bytes are unavailable or a safe SVG cannot retain exact text,
   requested public-page or confirmed visible-session consent may preserve the

@@ -128,15 +128,535 @@ export type DemoStepOptions = {
   id: string;
   title: string;
   target: Locator;
-  captureTarget: SemanticCaptureTarget;
+  captureTarget: OptionalTargetName<SemanticCaptureTarget>;
   pageAssetConsent?: PageAssetConsent;
   remoteAssetPolicy?: "strict" | "decorative-remove";
   action: () => Promise<unknown>;
 };
 
+type OptionalTargetName<T> = T extends { name: string }
+  ? Omit<T, "name"> & { name?: string }
+  : T;
+
 export type DemoController = {
   step(options: DemoStepOptions): Promise<void>;
 };
+
+export function parseCaptureTarget(value: unknown): SemanticCaptureTarget {
+  const parsed =
+    DemoFixtureSchema.shape.steps.element.shape.target.safeParse(value);
+  if (parsed.success) return parsed.data;
+
+  const missingName = parsed.error.issues.some(
+    (issue) => issue.path.at(-1) === "name"
+  );
+  const category = missingName
+    ? "capture-target-name-required"
+    : "capture-target-invalid";
+  throw new ShowKitError({
+    code: "DemoFixtureSetupFailed",
+    message: missingName
+      ? "[SHOWKIT:DemoFixtureSetupFailed] Each `captureTarget` needs an accessible name from 1 through 180 characters. No captured page was saved. [SHOWKIT-CATEGORY:capture-target-name-required]"
+      : "[SHOWKIT:DemoFixtureSetupFailed] The `captureTarget` does not match a supported target strategy. No captured page was saved. [SHOWKIT-CATEGORY:capture-target-invalid]",
+    exitCode: EXIT_CODES.validation,
+    recovery: missingName
+      ? "Add the target's exact 1-to-180-character accessible name to `captureTarget.name`, then capture again."
+      : "Use a supported `captureTarget` strategy with all required fields, then capture again.",
+    details: { category }
+  });
+}
+
+function boundedAccessibleName(value: string | null | undefined): string {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  return normalized.length >= 1 && normalized.length <= 180 ? normalized : "";
+}
+
+async function inferLocatorAccessibleName(
+  target: Locator,
+  expectedRole?: string,
+  strategy?: SemanticCaptureTarget["strategy"]
+): Promise<string> {
+  const deadline = performance.now() + 5_000;
+  const remainingTimeout = (): number =>
+    Math.max(1, Math.ceil(deadline - performance.now()));
+  const boundedTargetAttribute = async (
+    name: string,
+    maxLength = 180
+  ): Promise<string | null> =>
+    target
+      .evaluate(
+        (element, options) => {
+          const value = element.getAttribute(options.name);
+          return value !== null && value.length <= options.maxLength
+            ? value
+            : null;
+        },
+        { name, maxLength },
+        { timeout: remainingTimeout() }
+      )
+      .catch(() => null);
+  const hasOversizedNameSource = await target
+    .evaluate(
+      (root) => {
+        const limits: Array<[string, number]> = [
+          ["alt", 180],
+          ["aria-label", 180],
+          ["aria-labelledby", 512],
+          ["id", 256],
+          ["title", 180],
+          ["value", 180]
+        ];
+        const pending: Element[] = [root];
+        let visited = 0;
+        while (pending.length > 0 && visited < 512) {
+          const element = pending.shift()!;
+          visited += 1;
+          if (
+            limits.some(([name, limit]) => {
+              const value = element.getAttribute(name);
+              return value !== null && value.length > limit;
+            })
+          ) {
+            return true;
+          }
+          for (const child of element.children) {
+            if (pending.length + visited >= 512) break;
+            pending.push(child);
+          }
+        }
+        return false;
+      },
+      undefined,
+      { timeout: remainingTimeout() }
+    )
+    .catch(() => true);
+  if (hasOversizedNameSource) return "";
+  const exactAccessibleName = async (
+    value: string | null | undefined
+  ): Promise<string> => {
+    const name = boundedAccessibleName(value);
+    if (!name || !expectedRole) return name;
+    try {
+      return (await target
+        .page()
+        .getByRole(expectedRole as Parameters<Page["getByRole"]>[0], {
+          name,
+          exact: true
+        })
+        .and(target)
+        .count()) === 1
+        ? name
+        : "";
+    } catch {
+      return "";
+    }
+  };
+  const visibleLocatorText = async (locator: Locator): Promise<string> => {
+    if ((await locator.count().catch(() => 0)) === 0) return "";
+    return locator
+      .first()
+      .evaluate(
+        (root) => {
+          const visited = new Set<Element>();
+          let visitedNodes = 0;
+          let capturedCharacters = 0;
+          const parts: string[] = [];
+          const append = (value: string | null): void => {
+            if (!value || capturedCharacters > 180) return;
+            const remaining = 181 - capturedCharacters;
+            parts.push(value.slice(0, remaining));
+            capturedCharacters += Math.min(value.length, remaining);
+          };
+          const visit = (
+            node: Node,
+            allowHiddenRoot = false,
+            allowLabelledBy = true
+          ): void => {
+            if (visitedNodes >= 512 || capturedCharacters > 180) return;
+            visitedNodes += 1;
+            if (node.nodeType === Node.TEXT_NODE) {
+              append(node.textContent);
+              return;
+            }
+            if (!(node instanceof Element) || visited.has(node)) return;
+            visited.add(node);
+            const tag = node.tagName.toLowerCase();
+            if (["script", "style", "template", "noscript"].includes(tag)) {
+              return;
+            }
+            const style = getComputedStyle(node);
+            if (
+              !allowHiddenRoot &&
+              (node.getAttribute("aria-hidden") === "true" ||
+                style.display === "none" ||
+                style.visibility === "hidden" ||
+                style.visibility === "collapse" ||
+                Number.parseFloat(style.opacity || "1") === 0)
+            ) {
+              return;
+            }
+            if (allowLabelledBy) {
+              const labelledBy = node.getAttribute("aria-labelledby");
+              if (labelledBy) {
+                for (const id of labelledBy.split(/\s+/).filter(Boolean).slice(0, 8)) {
+                  const label = document.getElementById(id);
+                  if (label) visit(label, true, false);
+                }
+                return;
+              }
+            }
+            const ariaLabel = node.getAttribute("aria-label");
+            if (ariaLabel) {
+              append(ariaLabel);
+              return;
+            }
+            if (tag === "img") {
+              append(node.getAttribute("alt") || node.getAttribute("title"));
+              return;
+            }
+            if (["input", "select", "textarea"].includes(tag)) return;
+            for (const child of Array.from(node.childNodes)) visit(child);
+          };
+          visit(root);
+          return parts.join(" ").replace(/\s+/g, " ").trim().slice(0, 181);
+        },
+        undefined,
+        { timeout: remainingTimeout() }
+      )
+      .catch(() => "");
+  };
+  const matchesSelector = async (selector: string): Promise<boolean> =>
+    (await target
+      .page()
+      .locator(selector)
+      .and(target)
+      .count()
+      .catch(() => 0)) === 1;
+  const safeContentNames = async (): Promise<string[]> =>
+    target
+      .evaluate(
+        (root) => {
+          const parts: string[] = [];
+          let visitedNodes = 0;
+          let capturedCharacters = 0;
+          const append = (value: string | null): void => {
+            if (!value || capturedCharacters > 180) return;
+            const remaining = 181 - capturedCharacters;
+            parts.push(value.slice(0, remaining));
+            capturedCharacters += Math.min(value.length, remaining);
+          };
+          const visit = (node: Node): void => {
+            if (visitedNodes >= 512 || capturedCharacters > 180) return;
+            visitedNodes += 1;
+            if (node.nodeType === Node.TEXT_NODE) {
+              append(node.textContent);
+              return;
+            }
+            if (!(node instanceof Element)) return;
+            const tag = node.tagName.toLowerCase();
+            if (["script", "style", "template", "noscript"].includes(tag)) {
+              return;
+            }
+            const style = getComputedStyle(node);
+            if (
+              node.getAttribute("aria-hidden") === "true" ||
+              style.display === "none" ||
+              style.visibility === "hidden" ||
+              style.visibility === "collapse" ||
+              Number.parseFloat(style.opacity || "1") === 0
+            ) {
+              return;
+            }
+            if (tag === "img") {
+              const labelledBy = node.getAttribute("aria-labelledby");
+              let appendedReferencedName = false;
+              if (labelledBy) {
+                for (const id of labelledBy.split(/\s+/).filter(Boolean).slice(0, 8)) {
+                  const label = document.getElementById(id);
+                  const value = label?.getAttribute("aria-label") || label?.textContent;
+                  if (value) {
+                    append(value);
+                    appendedReferencedName = true;
+                  }
+                }
+              }
+              if (appendedReferencedName) return;
+              append(
+                node.getAttribute("aria-label") ||
+                  node.getAttribute("alt") ||
+                  node.getAttribute("title")
+              );
+              return;
+            }
+            if (["input", "select", "textarea"].includes(tag)) {
+              return;
+            }
+            const ariaLabel = node.getAttribute("aria-label");
+            if (ariaLabel) {
+              append(ariaLabel);
+              return;
+            }
+            for (const child of Array.from(node.childNodes)) visit(child);
+          };
+          for (const child of Array.from(root.childNodes)) visit(child);
+          return [...new Set([
+            parts.join("").replace(/\s+/g, " ").trim(),
+            parts.join(" ").replace(/\s+/g, " ").trim()
+          ])].filter(Boolean);
+        },
+        undefined,
+        { timeout: remainingTimeout() }
+      )
+      .catch(() => []);
+  const visibleTextName = async (): Promise<string> =>
+    target
+      .evaluate(
+        (root) => {
+          let visitedNodes = 0;
+          let value = "";
+          const visit = (node: Node): void => {
+            if (visitedNodes >= 512 || value.length > 180) return;
+            visitedNodes += 1;
+            if (node.nodeType === Node.TEXT_NODE) {
+              value += node.textContent ?? "";
+              return;
+            }
+            if (!(node instanceof Element)) return;
+            const style = getComputedStyle(node);
+            if (
+              style.display === "none" ||
+              style.visibility === "hidden" ||
+              style.visibility === "collapse" ||
+              Number.parseFloat(style.opacity || "1") === 0
+            ) {
+              return;
+            }
+            for (const child of Array.from(node.childNodes)) visit(child);
+          };
+          for (const child of Array.from(root.childNodes)) visit(child);
+          return value.slice(0, 181);
+        },
+        undefined,
+        { timeout: remainingTimeout() }
+      )
+      .catch(() => "");
+  if (strategy === "title") {
+    return boundedAccessibleName(
+      await boundedTargetAttribute("title")
+    );
+  }
+  if (strategy === "visible-text") {
+    return boundedAccessibleName(await visibleTextName());
+  }
+  const labelledBy = await boundedTargetAttribute("aria-labelledby", 512);
+  if (labelledBy) {
+    const parts: string[] = [];
+    for (const id of labelledBy.split(/\s+/).filter(Boolean).slice(0, 8)) {
+      const text = await visibleLocatorText(
+        target.page().locator(`[id=${JSON.stringify(id)}]`)
+      );
+      if (text) parts.push(text);
+    }
+    const labelledName = await exactAccessibleName(parts.join(" "));
+    if (labelledName) return labelledName;
+  }
+
+  const ariaLabel = await exactAccessibleName(
+    await boundedTargetAttribute("aria-label")
+  );
+  if (ariaLabel) return ariaLabel;
+
+  if (await matchesSelector("table")) {
+    const caption = await exactAccessibleName(
+      await visibleLocatorText(target.locator(":scope > caption"))
+    );
+    if (caption) return caption;
+  }
+
+  const id = await boundedTargetAttribute("id", 256);
+  if (id) {
+    const associatedLabel = await exactAccessibleName(
+      await visibleLocatorText(
+        target.page().locator(`label[for=${JSON.stringify(id)}]`)
+      )
+    );
+    if (associatedLabel) return associatedLabel;
+  }
+
+  const ancestorLabel = await exactAccessibleName(
+    await visibleLocatorText(target.locator("xpath=ancestor::label[1]"))
+  );
+  if (ancestorLabel) return ancestorLabel;
+  if (strategy === "label") return "";
+
+  const inputImage = await matchesSelector('input[type="image" i]');
+  if (inputImage) {
+    const alt = await exactAccessibleName(
+      await boundedTargetAttribute("alt")
+    );
+    if (alt) return alt;
+  }
+  if (
+    await matchesSelector(
+      'input[type="button" i], input[type="reset" i], input[type="submit" i]'
+    )
+  ) {
+    const value = await exactAccessibleName(
+      await boundedTargetAttribute("value")
+    );
+    if (value) return value;
+    if (await matchesSelector('input[type="submit" i]')) {
+      const defaultName = await exactAccessibleName("Submit");
+      if (defaultName) return defaultName;
+    }
+    if (await matchesSelector('input[type="reset" i]')) {
+      const defaultName = await exactAccessibleName("Reset");
+      if (defaultName) return defaultName;
+    }
+  }
+  if (await matchesSelector("img")) {
+    const alt = await exactAccessibleName(
+      await boundedTargetAttribute("alt")
+    );
+    if (alt) return alt;
+  }
+  for (const candidate of await safeContentNames()) {
+    const contentName = await exactAccessibleName(candidate);
+    if (contentName) return contentName;
+  }
+  const title = await exactAccessibleName(
+    await boundedTargetAttribute("title")
+  );
+  if (title) return title;
+  if (inputImage) {
+    const defaultName = await exactAccessibleName("Submit");
+    if (defaultName) return defaultName;
+  }
+  const emptyFileInput =
+    (await matchesSelector('input[type="file" i]')) &&
+    (await target
+      .evaluate(
+        (element) =>
+          element instanceof HTMLInputElement &&
+          element.type.toLowerCase() === "file" &&
+          (element.files?.length ?? 0) === 0,
+        undefined,
+        { timeout: remainingTimeout() }
+      )
+      .catch(() => false));
+  const unsafeRoot =
+    (await matchesSelector(
+      "textarea,select,[contenteditable]:not([contenteditable='false']),input:not([type='button' i]):not([type='checkbox' i]):not([type='file' i]):not([type='image' i]):not([type='radio' i]):not([type='reset' i]):not([type='submit' i]),a[href],area[href]"
+    )) ||
+    ((await matchesSelector('input[type="file" i]')) && !emptyFileInput);
+  const unsafeDescendantCount = await target
+    .locator(
+      "input,select,textarea,[contenteditable]:not([contenteditable='false']),a[href],area[href]"
+    )
+    .count()
+    .catch(() => 0);
+  const descendantCount = await target.locator("*").count().catch(() => 513);
+  const snapshotSourcesBounded = await target
+    .evaluate(
+      (root) => {
+        let sourceCharacters = 0;
+        let visitedNodes = 0;
+        const visit = (node: Node): boolean => {
+          visitedNodes += 1;
+          if (visitedNodes > 512) return false;
+          if (node.nodeType === Node.TEXT_NODE) {
+            sourceCharacters += node.textContent?.length ?? 0;
+            return sourceCharacters <= 4_096;
+          }
+          if (!(node instanceof Element)) return true;
+          for (const name of [
+            "alt",
+            "aria-label",
+            "aria-labelledby",
+            "title"
+          ]) {
+            const value = node.getAttribute(name);
+            if (value && value.length > 512) return false;
+            sourceCharacters += value?.length ?? 0;
+            if (sourceCharacters > 4_096) return false;
+          }
+          for (const pseudo of ["::before", "::after"] as const) {
+            const content = getComputedStyle(node, pseudo).content;
+            if (content.length > 512) return false;
+            sourceCharacters += content.length;
+            if (sourceCharacters > 4_096) return false;
+          }
+          return Array.from(node.childNodes).every(visit);
+        };
+        return visit(root);
+      },
+      undefined,
+      { timeout: remainingTimeout() }
+    )
+    .catch(() => false);
+  if (
+    !unsafeRoot &&
+    unsafeDescendantCount === 0 &&
+    descendantCount <= 128 &&
+    snapshotSourcesBounded
+  ) {
+    const snapshot = await target
+      .ariaSnapshot({ timeout: remainingTimeout() })
+      .then((value) => (value.length <= 2_048 ? value : ""))
+      .catch(() => "");
+    const rootLine = snapshot.split("\n", 1)[0]?.trim() ?? "";
+    const quotedName = /^-\s+[^\s:]+\s+"((?:\\.|[^"\\])*)"/.exec(
+      rootLine
+    )?.[1];
+    if (quotedName !== undefined) {
+      try {
+        const snapshotName = await exactAccessibleName(
+          JSON.parse(`"${quotedName}"`) as string
+        );
+        if (snapshotName) return snapshotName;
+      } catch {
+        // Invalid snapshot quoting is treated as a missing inferred name.
+      }
+    }
+  }
+  return "";
+}
+
+export async function resolveCaptureTarget(
+  value: unknown,
+  target: Locator
+): Promise<SemanticCaptureTarget> {
+  const parsed =
+    DemoFixtureSchema.shape.steps.element.shape.target.safeParse(value);
+  if (parsed.success) return parsed.data;
+  const missingName = parsed.error.issues.some(
+    (issue) => issue.path.at(-1) === "name"
+  );
+  let candidate = value;
+  if (missingName && value && typeof value === "object" && !Array.isArray(value)) {
+    const strategy = (value as Record<string, unknown>).strategy;
+    const expectedRole =
+      typeof (value as Record<string, unknown>).role === "string"
+        ? ((value as Record<string, unknown>).role as string)
+        : strategy === "href"
+          ? "link"
+          : undefined;
+    const name = await inferLocatorAccessibleName(
+      target,
+      expectedRole,
+      typeof strategy === "string"
+        ? (strategy as SemanticCaptureTarget["strategy"])
+        : undefined
+    );
+    if (name) {
+      candidate = { ...(value as Record<string, unknown>), name };
+      const recovered =
+        DemoFixtureSchema.shape.steps.element.shape.target.safeParse(candidate);
+      if (recovered.success) return recovered.data;
+    }
+  }
+  return parseCaptureTarget(candidate);
+}
 
 export class CaptureSession implements DemoController {
   readonly #page: Page;
@@ -418,6 +938,10 @@ export class CaptureSession implements DemoController {
     options: DemoStepOptions,
     setPhase: (phase: Exclude<CaptureStepPhase, "setup">) => void
   ): Promise<void> {
+    const captureTarget = await resolveCaptureTarget(
+      options.captureTarget,
+      options.target
+    );
     const viewport = assertCaptureViewport(this.#page);
     if (!this.#fixtureSeed) {
       const currentUrl = new URL(this.#page.url());
@@ -478,10 +1002,6 @@ export class CaptureSession implements DemoController {
         }
       };
     }
-    const captureTarget =
-      DemoFixtureSchema.shape.steps.element.shape.target.parse(
-        options.captureTarget
-      );
     if (
       options.pageAssetConsent &&
       this.#pageAssetConsent &&

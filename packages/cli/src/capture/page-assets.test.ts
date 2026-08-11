@@ -3,7 +3,7 @@ import {
   deflateSync,
   gzipSync
 } from "node:zlib";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   decodePublicAssetBytes,
   fontMetricSignaturesMatch,
@@ -12,6 +12,7 @@ import {
   importedStyleSheetsFromCss,
   isPublicAssetAddress,
   isRasterizableStaticSvg,
+  settleWithinDeadline,
   type VisiblePageAssetInventory
 } from "./page-assets.js";
 
@@ -99,6 +100,31 @@ describe("public page asset response decoding", () => {
         "gzip"
       )
     ).toBeUndefined();
+  });
+});
+
+describe("public page asset deadlines", () => {
+  test("settles context and metric work against one absolute deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      await expect(
+        settleWithinDeadline(Promise.resolve("ready"), Date.now() + 25)
+      ).resolves.toEqual({ status: "completed", value: "ready" });
+      await expect(
+        settleWithinDeadline(Promise.reject(new Error("failed")), Date.now() + 25)
+      ).resolves.toEqual({ status: "failed" });
+
+      const delayed = settleWithinDeadline(
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve("late"), 1_000);
+        }),
+        Date.now() + 25
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      await expect(delayed).resolves.toEqual({ status: "timed-out" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

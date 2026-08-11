@@ -1,11 +1,21 @@
 import { expect, test } from "@playwright/test";
 import {
   DEFAULT_SECRET_PATTERN_SOURCES,
+  SCHEMA_VERSION,
   extractSceneKernel,
   readFrozenSceneTransferKernel
 } from "@showkit/cli";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { captureScene } from "../packages/cli/src/capture/browser.js";
+import { createPlayerFiles } from "../packages/cli/src/player/assets.js";
+import {
+  parseCaptureTarget,
+  resolveCaptureTarget
+} from "../packages/cli/src/capture/session.js";
+import { captureFailure } from "../packages/cli/src/commands.js";
 import {
   collectVisiblePageAssetInventory,
   preparePlaywrightPageAssets
@@ -693,6 +703,801 @@ test("resolves the viewport target when an offscreen duplicate has the same role
   expect(result.target?.bounds.y).toBeLessThan(0.2);
 });
 
+test("matches Playwright's native table roles and accessible names", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <table>
+        <caption>Expense queue</caption>
+        <thead>
+          <tr><th>Merchant</th><th>Amount</th></tr>
+        </thead>
+        <tbody>
+          <tr><th>App review</th><td>$42</td></tr>
+        </tbody>
+      </table>
+      <table role="grid" aria-label="Review grid">
+        <tbody><tr><td>Grid amount</td></tr></tbody>
+      </table>
+      <table>
+        <tbody><tr><th>Quarter</th><th>Region</th><td>Total</td></tr></tbody>
+      </table>
+      <table role="future-role presentation">
+        <tbody><tr><td>Decorative value</td></tr></tbody>
+      </table>
+      <table role="presentation" aria-label="Recovered table">
+        <tbody><tr><td>ARIA conflict cell</td></tr></tbody>
+      </table>
+      <table role="presentation" tabindex="0">
+        <tbody><tr><td>Focusable row</td></tr></tbody>
+      </table>
+      <span id="table-description">Table description</span>
+      <table role="presentation" aria-describedby="table-description">
+        <tbody><tr><td>Described row</td></tr></tbody>
+      </table>
+      <table>
+        <tbody role="presentation"><tr><td>Decorative section</td></tr></tbody>
+        <tbody><tr role="presentation"><td>Decorative row cell</td></tr></tbody>
+      </table>
+      <label for="receipt">Upload receipt</label>
+      <input id="receipt" type="file">
+      <datalist id="people"><option value="Ada"></option></datalist>
+      <input list="people" aria-label="People">
+      <select size="2" aria-label="Choices">
+        <option>One</option><option>Two</option>
+      </select>
+    </main>
+  `);
+  const targets = [
+    { role: "table", name: "Expense queue" },
+    { role: "row", name: "App review $42" },
+    { role: "columnheader", name: "Merchant" },
+    { role: "rowheader", name: "App review" },
+    { role: "columnheader", name: "Quarter" },
+    { role: "rowheader", name: "Region" },
+    { role: "cell", name: "$42" },
+    { role: "grid", name: "Review grid" },
+    { role: "gridcell", name: "Grid amount" },
+    { role: "table", name: "Recovered table" },
+    { role: "row", name: "Focusable row" },
+    { role: "row", name: "Described row" },
+    { role: "button", name: "Upload receipt" },
+    { role: "combobox", name: "People" },
+    { role: "listbox", name: "Choices" }
+  ];
+
+  for (const [index, target] of targets.entries()) {
+    await expect(
+      page.getByRole(target.role as never, {
+        name: target.name,
+        exact: true
+      })
+    ).toHaveCount(1);
+    const result = await page.evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: `sk-table-${index + 1}`,
+      scopeTarget: {
+        strategy: "role" as const,
+        role: target.role,
+        name: target.name
+      }
+    });
+    expect(
+      result.ok,
+      `${target.role} ${target.name}: ${JSON.stringify(result)}`
+    ).toBe(true);
+    if (!result.ok || result.scanOnly) continue;
+    expect(result.target).toEqual(
+      expect.objectContaining({
+        role: target.role,
+        name: target.name
+      })
+    );
+  }
+
+  const recoveredTable = page.getByRole("table", {
+    name: "Recovered table",
+    exact: true
+  });
+  const capturedTable = await captureScene(page, {
+    target: recoveredTable,
+    captureTarget: {
+      strategy: "role",
+      role: "table",
+      name: "Recovered table"
+    },
+    anchorId: "sk-recovered-table"
+  });
+  expect(capturedTable.scene.target).toEqual(
+    expect.objectContaining({ role: "table", name: "Recovered table" })
+  );
+  const fileTarget = page.getByRole("button", {
+    name: "Upload receipt",
+    exact: true
+  });
+  const capturedFile = await captureScene(page, {
+    target: fileTarget,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Upload receipt"
+    },
+    anchorId: "sk-upload-receipt"
+  });
+  expect(capturedFile.scene.target).toEqual(
+    expect.objectContaining({ role: "button", name: "Upload receipt" })
+  );
+  const replay = await page.context().newPage();
+  try {
+    await replay.setContent(capturedTable.scene.html);
+    await expect(
+      replay.getByRole("button", { name: "Upload receipt", exact: true })
+    ).toHaveCount(1);
+    await expect(
+      replay.getByRole("combobox", { name: "People", exact: true })
+    ).toHaveCount(1);
+    await expect(
+      replay.getByRole("listbox", { name: "Choices", exact: true })
+    ).toHaveCount(1);
+  } finally {
+    await replay.close();
+  }
+
+  for (const [index, target] of [
+    { role: "row", name: "Decorative value" },
+    { role: "row", name: "Decorative section" },
+    { role: "cell", name: "Decorative row cell" }
+  ].entries()) {
+    const presentationalTarget = await page.evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: `sk-presentational-${index + 1}`,
+      scopeTarget: {
+        strategy: "role" as const,
+        ...target
+      }
+    });
+    expect(presentationalTarget).toEqual(
+      expect.objectContaining({
+        ok: false,
+        blocker: expect.objectContaining({ category: "target-missing" })
+      })
+    );
+  }
+});
+
+test("preserves safe live control state through capture and the final player", async ({
+  browser,
+  page
+}) => {
+  await page.setContent(`
+    <main>
+      <details open>
+        <summary>More options</summary>
+        <input type="button" value="Approve" style="height:36px;width:100px">
+        <label><input id="keep-open" type="checkbox"> Keep open</label>
+        <select aria-label="Choices" size="2">
+          <option value="one">One</option>
+          <option value="two">Two</option>
+        </select>
+        <label for="receipt-state">Upload receipt</label>
+        <input id="receipt-state" type="file">
+      </details>
+    </main>
+  `);
+  await page.getByRole("checkbox", { name: "Keep open", exact: true }).check();
+  await page.getByRole("listbox", { name: "Choices", exact: true }).selectOption("two");
+  const target = page.getByRole("button", { name: "Approve", exact: true });
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Approve"
+    },
+    anchorId: "sk-state-approve"
+  });
+
+  const replay = await page.context().newPage();
+  try {
+    await replay.setContent(captured.scene.html);
+    await expect(replay.locator("details")).toHaveAttribute("open", "");
+    await expect(
+      replay.getByRole("checkbox", { name: "Keep open", exact: true })
+    ).toBeChecked();
+    const replaySelectedOption = replay
+      .getByRole("listbox", { name: "Choices", exact: true })
+      .locator("option:checked");
+    await expect(replaySelectedOption).toHaveText("Two");
+    await expect(replaySelectedOption).toHaveAttribute("selected", "");
+    await expect(
+      replay.getByRole("button", { name: "Upload receipt", exact: true })
+    ).toHaveCount(1);
+  } finally {
+    await replay.close();
+  }
+
+  const playerNodes = structuredClone(captured.scene.nodes);
+  const playerRoot = playerNodes[0];
+  if (playerRoot?.type !== "element") throw new Error("Expected scene root.");
+  playerRoot.children.push({
+    type: "element",
+    tag: "input",
+    attributes: {
+      type: "password",
+      value: "SHOWKIT_PLAYER_PASSWORD_VALUE_CANARY"
+    },
+    styles: {},
+    children: []
+  });
+  let deepPlayerNode: (typeof playerRoot.children)[number] = {
+    type: "element",
+    tag: "span",
+    attributes: { title: "deep-player-end" },
+    styles: {},
+    children: []
+  };
+  for (let depth = 0; depth < 300; depth += 1) {
+    deepPlayerNode = {
+      type: "element",
+      tag: "span",
+      attributes: {},
+      styles: {},
+      children: [deepPlayerNode]
+    };
+  }
+  playerRoot.children.push(deepPlayerNode);
+  const playerScene = { ...captured.scene, nodes: playerNodes };
+  const files = createPlayerFiles(
+    {
+      steps: [{ id: "state", scene: playerScene }],
+      terminalScene: playerScene,
+      redaction: { policyChecksPassed: true, fullSceneRasterCount: 0 }
+    } as never,
+    {
+      title: "State fidelity",
+      goal: "Verify safe state replay.",
+      locale: "en-US",
+      welcome: {
+        title: "State fidelity",
+        body: "Verify safe state replay.",
+        actionLabel: "Explore state",
+        backdrop: "heavy"
+      },
+      theme: {
+        accent: "#ff5a36",
+        ink: "#17211b",
+        paper: "#f3efe6",
+        fonts: {
+          heading: '"Avenir Next", Avenir, "Gill Sans", sans-serif',
+          body: '"Avenir Next", Avenir, "Gill Sans", sans-serif'
+        }
+      },
+      player: {
+        chrome: {
+          mode: "overlay",
+          placements: {
+            title: "hidden",
+            goal: "hidden",
+            stepCount: "tooltip",
+            progress: "tooltip",
+            back: "tooltip",
+            restart: "tooltip",
+            cta: "tooltip"
+          }
+        },
+        navigation: "controls"
+      },
+      steps: [
+        {
+          id: "state",
+          captureStepId: "state",
+          anchorId: "sk-state-approve",
+          tooltip: {
+            title: "Approve",
+            body: "Review the captured state.",
+            placement: "auto",
+            backdrop: "off"
+          },
+          advance: "hotspot"
+        }
+      ],
+      cta: null,
+      completion: null
+    } as never
+  );
+  const playerContext = await browser.newContext({ bypassCSP: true });
+  const player = await playerContext.newPage();
+  try {
+    const playerErrors: string[] = [];
+    player.on("pageerror", (error) => playerErrors.push(error.message));
+    await player.setContent(files["index.html"]);
+    await player.addStyleTag({ content: files["styles.css"] });
+    await player.addScriptTag({ content: files["story.js"] });
+    await player.addScriptTag({ content: files["player.js"] });
+    expect(playerErrors).toEqual([]);
+    await player.getByRole("button", { name: "Explore state" }).click();
+    const viewport = player.locator("#scene-viewport");
+    await expect(viewport.locator('input[type="button"]')).toHaveAttribute(
+      "value",
+      "Approve"
+    );
+    await expect(viewport.locator("details")).toHaveAttribute("open", "");
+    await expect(viewport.locator('input[type="checkbox"]')).toBeChecked();
+    const playerSelectedOption = viewport
+      .getByRole("listbox", { name: "Choices", exact: true })
+      .locator("option:checked");
+    await expect(playerSelectedOption).toHaveText("Two");
+    await expect(playerSelectedOption).toHaveAttribute("selected", "");
+    await expect(
+      viewport.getByRole("button", { name: "Upload receipt", exact: true })
+    ).toHaveCount(1);
+    await expect(viewport.locator('input[type="password"]')).not.toHaveAttribute(
+      "value",
+      /.+/
+    );
+    await expect(viewport.locator('input[type="password"]')).toHaveValue("");
+    await expect(viewport.locator('[title="deep-player-end"]')).toHaveCount(0);
+  } finally {
+    await playerContext.close();
+  }
+});
+
+test("classifies an invalid captureTarget before browser capture", async ({
+  page
+}) => {
+  let thrown: unknown;
+  try {
+    parseCaptureTarget({ strategy: "role", role: "row" });
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toMatchObject({
+    code: "DemoFixtureSetupFailed",
+    exitCode: 2,
+    details: { category: "capture-target-name-required" }
+  });
+
+  const directory = await mkdtemp(join(tmpdir(), "showkit-capture-target-"));
+  const diagnosticPath = join(directory, "diagnostic.json");
+  try {
+    await writeFile(
+      diagnosticPath,
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        code: "DemoFixtureSetupFailed",
+        exitCode: 2,
+        phase: "setup",
+        category: "capture-target-name-required",
+        stepProgress: []
+      }),
+      "utf8"
+    );
+    const mapped = await captureFailure("", diagnosticPath);
+    expect(mapped).toMatchObject({
+      code: "DemoFixtureSetupFailed",
+      exitCode: 2,
+      recovery: expect.stringContaining("captureTarget.name")
+    });
+    expect(mapped.message).toContain("accessible name");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+
+  await page.setContent(`<button type="button">Continue</button>`);
+  let invalidThrown: unknown;
+  try {
+    await resolveCaptureTarget(
+      { strategy: "role", role: "" },
+      page.getByRole("button", { name: "Continue", exact: true })
+    );
+  } catch (error) {
+    invalidThrown = error;
+  }
+  expect(invalidThrown).toMatchObject({
+    code: "DemoFixtureSetupFailed",
+    details: { category: "capture-target-invalid" }
+  });
+});
+
+test("infers a missing captureTarget name from Playwright semantics", async ({
+  page
+}) => {
+  await page.setContent(`
+    <table aria-label="Expense queue">
+      <tbody><tr><th scope="row">App review</th><td>$42</td></tr></tbody>
+    </table>
+  `);
+  const target = page.getByRole("row", {
+    name: "App review $42",
+    exact: true
+  });
+  await expect(target).toHaveCount(1);
+  await expect(
+    resolveCaptureTarget({ strategy: "role", role: "row" }, target)
+  ).resolves.toEqual({
+    strategy: "role",
+    role: "row",
+    name: "App review $42"
+  });
+});
+
+test("prefers aria-labelledby without reading descendant form values", async ({
+  page
+}) => {
+  await page.setContent(`
+    <span id="actual-name">Actual name</span>
+    <div role="row" aria-labelledby="actual-name" aria-label="Wrong fallback">
+      <input type="password" value="do-not-read-this-value" aria-label="Password">
+      <span>Fallback text</span>
+    </div>
+  `);
+  const target = page.getByRole("row", {
+    name: "Actual name",
+    exact: true
+  });
+  await expect(target).toHaveCount(1);
+  await expect(
+    resolveCaptureTarget({ strategy: "role", role: "row" }, target)
+  ).resolves.toEqual({
+    strategy: "role",
+    role: "row",
+    name: "Actual name"
+  });
+});
+
+test("infers bounded native accessible-name sources", async ({ page }) => {
+  await page.setContent(`
+    <table>
+      <caption>Expense queue</caption>
+      <tbody><tr><td>One</td></tr></tbody>
+    </table>
+    <input type="submit" value="Approve">
+    <input type="submit" value="">
+    <input type="reset" value=" ">
+    <button type="button" title="Save draft"></button>
+    <button type="button" title="Wrong fallback">Store changes</button>
+    <button type="button"><img alt="Approve report" style="width:20px;height:20px"></button>
+    <button type="button"><img alt="Save" style="width:20px;height:20px">changes</button>
+    <button type="button"><img alt="" aria-label="Archive report" style="width:20px;height:20px"></button>
+    <button type="button"><img title="Print report" style="width:20px;height:20px"></button>
+    <span id="image-reference">Save report</span>
+    <button type="button"><img aria-labelledby="image-reference" style="width:20px;height:20px"></button>
+    <img alt="Receipt image" style="display:block;width:40px;height:40px">
+    <img title="Titled image" style="display:block;width:40px;height:40px">
+    <img alt="" aria-label="ARIA image" style="display:block;width:40px;height:40px">
+    <input type="image" title="Image submit" style="width:40px;height:40px">
+    <input type="image" alt="Approve image" style="width:40px;height:40px">
+  `);
+  const cases = [
+    {
+      locator: page.getByRole("table", { name: "Expense queue", exact: true }),
+      target: { strategy: "role" as const, role: "table" },
+      name: "Expense queue"
+    },
+    {
+      locator: page.getByRole("button", { name: "Approve", exact: true }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Approve"
+    },
+    {
+      locator: page.locator('input[type="submit"][value=""]'),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Submit"
+    },
+    {
+      locator: page.locator('input[type="reset"]'),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Reset"
+    },
+    {
+      locator: page.getByRole("button", { name: "Save draft", exact: true }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Save draft"
+    },
+    {
+      locator: page.getByRole("button", {
+        name: "Store changes",
+        exact: true
+      }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Store changes"
+    },
+    {
+      locator: page.getByRole("button", {
+        name: "Approve report",
+        exact: true
+      }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Approve report"
+    },
+    {
+      locator: page.getByRole("button", {
+        name: "Savechanges",
+        exact: true
+      }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Savechanges"
+    },
+    {
+      locator: page.getByRole("button", {
+        name: "Archive report",
+        exact: true
+      }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Archive report"
+    },
+    {
+      locator: page.getByRole("button", {
+        name: "Print report",
+        exact: true
+      }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Print report"
+    },
+    {
+      locator: page.getByRole("button", {
+        name: "Save report",
+        exact: true
+      }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Save report"
+    },
+    {
+      locator: page.getByRole("img", { name: "Receipt image", exact: true }),
+      target: { strategy: "role" as const, role: "img" },
+      name: "Receipt image"
+    },
+    {
+      locator: page.getByRole("img", { name: "Titled image", exact: true }),
+      target: { strategy: "role" as const, role: "img" },
+      name: "Titled image"
+    },
+    {
+      locator: page.getByRole("img", { name: "ARIA image", exact: true }),
+      target: { strategy: "role" as const, role: "img" },
+      name: "ARIA image"
+    },
+    {
+      locator: page.getByRole("button", { name: "Image submit", exact: true }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Image submit"
+    },
+    {
+      locator: page.getByRole("button", { name: "Approve image", exact: true }),
+      target: { strategy: "role" as const, role: "button" },
+      name: "Approve image"
+    }
+  ];
+
+  for (const [index, { locator, target, name }] of cases.entries()) {
+    await expect(locator).toHaveCount(1);
+    await expect(resolveCaptureTarget(target, locator)).resolves.toEqual({
+      ...target,
+      name
+    });
+    const captured = await captureScene(page, {
+      target: locator,
+      captureTarget: { ...target, name },
+      anchorId: `sk-native-name-${index + 1}`
+    });
+    expect(captured.scene.target).toEqual(
+      expect.objectContaining({ role: target.role, name })
+    );
+  }
+});
+
+test("uses native defaults for empty submit-control labels", async ({ page }) => {
+  const cases = [
+    { markup: '<input type="submit" value="">', selector: 'input[type="submit"]', name: "Submit" },
+    { markup: '<input type="reset" value=" ">', selector: 'input[type="reset"]', name: "Reset" },
+    { markup: '<input type="image" alt=" " style="width:40px;height:40px">', selector: 'input[type="image"]', name: "Submit" },
+    { markup: '<input type="file">', selector: 'input[type="file"]', name: "Choose File" }
+  ];
+  for (const [index, item] of cases.entries()) {
+    await page.setContent(item.markup);
+    const locator = page.locator(item.selector);
+    await expect(
+      page.getByRole("button", { name: item.name, exact: true })
+    ).toHaveCount(1);
+    const captureTarget = await resolveCaptureTarget(
+      { strategy: "role", role: "button" },
+      locator
+    );
+    expect(captureTarget.name).toBe(item.name);
+    const captured = await captureScene(page, {
+      target: locator,
+      captureTarget,
+      anchorId: `sk-default-input-${index + 1}`
+    });
+    expect(captured.scene.target?.name).toBe(item.name);
+  }
+});
+
+test("infers the selector value for each capture target strategy", async ({
+  page
+}) => {
+  await page.setContent(`
+    <button type="button" title="Draft tooltip"><span>Store changes</span></button>
+    <label for="search">Search catalog</label>
+    <input id="search" style="width:160px;height:32px">
+    <a href="/reports">Reports</a>
+    <button type="button" data-testid="queue">Queue</button>
+    <details><summary>More options</summary><p>Details content</p></details>
+  `);
+  const cases = [
+    {
+      locator: page.getByRole("button", { name: "Store changes", exact: true }),
+      target: { strategy: "title" as const },
+      inferredName: "Draft tooltip",
+      accessibleName: "Store changes"
+    },
+    {
+      locator: page.getByRole("button", { name: "Store changes", exact: true }),
+      target: { strategy: "visible-text" as const },
+      inferredName: "Store changes",
+      accessibleName: "Store changes"
+    },
+    {
+      locator: page.getByRole("textbox", {
+        name: "Search catalog",
+        exact: true
+      }),
+      target: { strategy: "label" as const },
+      inferredName: "Search catalog",
+      accessibleName: "Search catalog"
+    },
+    {
+      locator: page.getByRole("link", { name: "Reports", exact: true }),
+      target: { strategy: "href" as const, path: "/reports" },
+      inferredName: "Reports",
+      accessibleName: "Reports"
+    },
+    {
+      locator: page.getByTestId("queue"),
+      target: { strategy: "test-id" as const, testId: "queue" },
+      inferredName: "Queue",
+      accessibleName: "Queue"
+    },
+    {
+      locator: page.getByText("More options", { exact: true }),
+      target: { strategy: "visible-text" as const },
+      inferredName: "More options",
+      accessibleName: "More options"
+    }
+  ];
+
+  for (const [index, item] of cases.entries()) {
+    const resolved = await resolveCaptureTarget(item.target, item.locator);
+    expect(resolved).toEqual({ ...item.target, name: item.inferredName });
+    const captured = await captureScene(page, {
+      target: item.locator,
+      captureTarget: resolved,
+      anchorId: `sk-strategy-${index + 1}`
+    });
+    expect(captured.scene.target?.name).toBe(item.accessibleName);
+  }
+});
+
+test("recovers bounded generated and referenced accessible names", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>#generated-name::before { content: "Continue"; }</style>
+    <span id="referenced-name" aria-label="Referenced action">Fallback text</span>
+    <button type="button" aria-labelledby="referenced-name"></button>
+    <label for="terms"><img alt="Accept terms"></label>
+    <input id="terms" type="checkbox">
+    <button id="generated-name" type="button"></button>
+    <span id="image-button-name">Save report</span>
+    <button type="button"><img alt="" aria-label="Archive report"></button>
+    <button type="button"><img aria-labelledby="image-button-name"></button>
+  `);
+  const cases = [
+    {
+      locator: page.getByRole("button", {
+        name: "Referenced action",
+        exact: true
+      }),
+      role: "button",
+      name: "Referenced action"
+    },
+    {
+      locator: page.getByRole("checkbox", {
+        name: "Accept terms",
+        exact: true
+      }),
+      role: "checkbox",
+      name: "Accept terms"
+    },
+    {
+      locator: page.getByRole("button", { name: "Continue", exact: true }),
+      role: "button",
+      name: "Continue"
+    },
+    {
+      locator: page.getByRole("button", {
+        name: "Archive report",
+        exact: true
+      }),
+      role: "button",
+      name: "Archive report"
+    },
+    {
+      locator: page.getByRole("button", {
+        name: "Save report",
+        exact: true
+      }),
+      role: "button",
+      name: "Save report"
+    }
+  ];
+
+  for (const [index, item] of cases.entries()) {
+    const captureTarget = await resolveCaptureTarget(
+      { strategy: "role", role: item.role },
+      item.locator
+    );
+    expect(captureTarget.name).toBe(item.name);
+    const captured = await captureScene(page, {
+      target: item.locator,
+      captureTarget,
+      anchorId: `sk-derived-name-${index + 1}`
+    });
+    expect(captured.scene.target?.name).toBe(item.name);
+    const replay = await page.context().newPage();
+    try {
+      await replay.setContent(captured.scene.html);
+      await expect(
+        replay.getByRole(item.role as never, {
+          name: item.name,
+          exact: true
+        })
+      ).toHaveCount(1);
+    } finally {
+      await replay.close();
+    }
+  }
+});
+
+test("does not infer a link name through an accessibility snapshot", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>#private-link::before { content: "Open report"; }</style>
+    <a id="private-link" href="/reports?token=do-not-read-url"></a>
+  `);
+  const target = page.getByRole("link", { name: "Open report", exact: true });
+  await expect(target).toHaveCount(1);
+  await expect(
+    resolveCaptureTarget({ strategy: "role", role: "link" }, target)
+  ).rejects.toMatchObject({
+    code: "DemoFixtureSetupFailed",
+    details: { category: "capture-target-name-required" }
+  });
+
+  const oversizedName = "A".repeat(600);
+  await page.setContent(
+    `<button type="button" aria-label="${oversizedName}">Fallback</button>`
+  );
+  const oversizedTarget = page.getByRole("button", {
+    name: oversizedName,
+    exact: true
+  });
+  await expect(oversizedTarget).toHaveCount(1);
+  const oversizedStartedAt = performance.now();
+  await expect(
+    resolveCaptureTarget(
+      { strategy: "role", role: "button" },
+      oversizedTarget
+    )
+  ).rejects.toMatchObject({
+    code: "DemoFixtureSetupFailed",
+    details: { category: "capture-target-name-required" }
+  });
+  expect(performance.now() - oversizedStartedAt).toBeLessThan(2_000);
+});
+
 test("detects a portal state appended after a large application tree", async ({
   page
 }) => {
@@ -754,6 +1559,31 @@ test("detects a portal state appended after a large application tree", async ({
   await expect(
     page.getByRole("checkbox", { name: "Keep composer open" })
   ).toBeChecked();
+});
+
+test("fails closed before recursively serializing an excessively deep scene", async ({
+  page
+}) => {
+  const nested = Array.from({ length: 300 }, () => '<span style="display:contents">')
+    .join("");
+  await page.setContent(
+    `<main>${nested}<button type="button">Continue</button>${"</span>".repeat(300)}</main>`
+  );
+  const target = page.getByRole("button", { name: "Continue", exact: true });
+  await expect(
+    captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Continue"
+      },
+      anchorId: "sk-deep-scene"
+    })
+  ).rejects.toMatchObject({
+    code: "CaptureTooLarge",
+    details: expect.objectContaining({ category: "serialized-node-limit" })
+  });
 });
 
 test("preserves zero-height flex spacers that affect sibling geometry", async ({
@@ -1078,23 +1908,27 @@ test("promotes a compact disclosure button to its visible sibling label", async 
       </div>
     </main>
   `);
-  const result = await page
-    .getByRole("button", { name: "Reports menu", exact: true })
-    .evaluate(extractSceneKernel, {
-      ...baseOptions,
-      anchorId: "sk-reports-menu",
-      nodeMode: "json"
-    });
-  expect(result.ok).toBe(true);
-  if (!result.ok || result.scanOnly) return;
-  expect(result.target?.bounds).toEqual(
+  const target = page.getByRole("button", {
+    name: "Reports menu",
+    exact: true
+  });
+  const result = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Reports menu"
+    },
+    anchorId: "sk-reports-menu"
+  });
+  expect(result.scene.target?.bounds).toEqual(
     expect.objectContaining({
       x: 0,
       width: expect.closeTo(72 / 1280, 5),
       height: expect.closeTo(44 / 720, 5)
     })
   );
-  expect(result.html).toContain(
+  expect(result.scene.html).toContain(
     'data-showkit-interaction-box="sk-reports-menu"'
   );
 });
@@ -1128,26 +1962,27 @@ test("promotes a wide accordion disclosure button to its full labeled row", asyn
       </div>
     </main>
   `);
-  const result = await page
-    .getByRole("button", {
-      name: "Personal Data Apple Collects from You",
-      exact: true
-    })
-    .evaluate(extractSceneKernel, {
-      ...baseOptions,
-      anchorId: "sk-wide-accordion",
-      nodeMode: "json"
-    });
-  expect(result.ok).toBe(true);
-  if (!result.ok || result.scanOnly) return;
-  expect(result.target?.bounds).toEqual(
+  const target = page.getByRole("button", {
+    name: "Personal Data Apple Collects from You",
+    exact: true
+  });
+  const result = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Personal Data Apple Collects from You"
+    },
+    anchorId: "sk-wide-accordion"
+  });
+  expect(result.scene.target?.bounds).toEqual(
     expect.objectContaining({
       x: expect.closeTo(150 / 1280, 5),
       width: expect.closeTo(980 / 1280, 5),
       height: expect.closeTo(102 / 720, 5)
     })
   );
-  expect(result.html).toContain(
+  expect(result.scene.html).toContain(
     'data-showkit-interaction-box="sk-wide-accordion"'
   );
 });
@@ -2600,7 +3435,7 @@ test("keeps a declared font stack when no matching font face loaded", async ({
   );
 });
 
-test("fails closed when visible text uses an unbundled loaded font face", async ({
+test("uses a bounded system fallback for a consented unbundled text font", async ({
   page
 }) => {
   await page.setContent(`
@@ -2638,6 +3473,314 @@ test("fails closed when visible text uses an unbundled loaded font face", async 
       })
     })
   );
+
+  const publicPage = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "public-page",
+      consent: "requested"
+    }
+  });
+  expect(publicPage).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "font-asset-required"
+      })
+    })
+  );
+
+  const recovered = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(recovered.ok).toBe(true);
+  if (!recovered.ok || recovered.scanOnly) return;
+  expect(recovered.excludedSurfaces).toContain(
+    "bounded-font-metric-fallback"
+  );
+  expect(recovered.nodesJson).toContain(
+    'system-ui, -apple-system, BlinkMacSystemFont, \\"Segoe UI\\", sans-serif'
+  );
+  expect(recovered.nodesJson).not.toContain("Demo Face");
+
+  await page.evaluate(() => {
+    Object.defineProperty(globalThis, "OffscreenCanvas", {
+      configurable: true,
+      value: undefined
+    });
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value: () => {
+        let font = "";
+        return {
+          get font() {
+            return font;
+          },
+          set font(value: string) {
+            font = value;
+          },
+          measureText(value: string) {
+            const scale = font.includes("Demo Face") ? 4 : 1;
+            return {
+              width: value.length * 8 * scale,
+              actualBoundingBoxAscent: 12 * scale,
+              actualBoundingBoxDescent: 4 * scale
+            } as TextMetrics;
+          }
+        } as CanvasRenderingContext2D;
+      }
+    });
+  });
+  const outOfBounds = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(outOfBounds).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "font-asset-required"
+      })
+    })
+  );
+
+  await page.setContent(`
+    <main style="font-family:'Demo Face', sans-serif">
+      <span>\uF309</span>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const iconFont = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(iconFont).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "icon-font"
+      })
+    })
+  );
+
+  await page.setContent(`
+    <style>
+      .mixed-icon::before {
+        content: "\uF309 x";
+        font-family: "Demo Face";
+      }
+    </style>
+    <main>
+      <span class="mixed-icon"></span>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const mixedPseudoIcon = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(mixedPseudoIcon).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({ category: "icon-font" })
+    })
+  );
+
+  await page.setContent(`
+    <main style="font-family:'Unavailable Icon', sans-serif">
+      <span>\uF309</span>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: []
+    });
+  });
+  const unloadedIconFont = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(unloadedIconFont).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({ category: "icon-font" })
+    })
+  );
+
+  await page.setContent(`
+    <main>
+      <input type="button" value="\uF309" style="font-family:'Demo Face', sans-serif">
+      <button type="button">Continue</button>
+    </main>
+  `);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: [{ family: "Demo Face", status: "loaded" }]
+    });
+  });
+  const loadedInputIcon = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(loadedInputIcon).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({ category: "icon-font" })
+    })
+  );
+
+  await page.setContent(`
+    <main>
+      <input type="button" value="\uF309" style="font-family:'Unavailable Icon', sans-serif">
+      <button type="button">Continue</button>
+    </main>
+  `);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: []
+    });
+  });
+  const unloadedInputIcon = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(unloadedInputIcon).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({ category: "icon-font" })
+    })
+  );
+
+  await page.setContent(`
+    <main>
+      <input placeholder="\uF309" style="font-family:'Unavailable Icon', sans-serif">
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const placeholderIcon = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(placeholderIcon).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({ category: "icon-font" })
+    })
+  );
+
+  await page.setContent(`
+    <style>
+      input { font-family: "Safe Text", sans-serif; }
+      input::placeholder { font-family: "Unavailable Icon", sans-serif; }
+    </style>
+    <main>
+      <input placeholder="">
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const pseudoPlaceholderIcon = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(pseudoPlaceholderIcon).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({ category: "icon-font" })
+    })
+  );
+
+  await page.setContent(`
+    <main>
+      <input type="button" value="${"A".repeat(50_000)}\uF309" style="font-family:'Unavailable Icon', sans-serif">
+      <button type="button">Continue</button>
+    </main>
+  `);
+  const oversizedTextAttribute = await target.evaluate(extractSceneKernel, {
+    ...baseOptions,
+    anchorId: "sk-continue",
+    nodeMode: "json",
+    pageAssetConsent: {
+      mode: "visible-session",
+      consent: "confirmed"
+    }
+  });
+  expect(oversizedTextAttribute).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "text-attribute-limit"
+      })
+    })
+  );
+
+  await page.setContent(`
+    <main style="font-family:'Demo Face', sans-serif">
+      <p>Visible product text</p>
+      <button type="button">Continue</button>
+    </main>
+  `);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: [{ family: "Demo Face", status: "loaded" }]
+    });
+  });
 
   const bundled = await target.evaluate(extractSceneKernel, {
     ...baseOptions,

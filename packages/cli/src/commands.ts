@@ -608,7 +608,7 @@ export async function initCommand(): Promise<CommandResult> {
   return result;
 }
 
-async function captureFailure(
+export async function captureFailure(
   output: string,
   diagnosticPath?: string
 ): Promise<ShowKitError> {
@@ -692,6 +692,22 @@ async function captureFailure(
               "More than one Playwright test or project tried to produce this flow. No captured page was saved.",
             recovery:
               "Keep one test in the source file and pass `--project <name>` when the Playwright config defines multiple projects."
+          }
+        : code === "DemoFixtureSetupFailed" &&
+            diagnostic.category === "capture-target-name-required"
+        ? {
+            message:
+              "The hotspot target setup is missing a valid accessible name. No captured page was saved.",
+            recovery:
+              "Add the target's exact accessible name to `captureTarget.name`, then capture again."
+          }
+        : code === "DemoFixtureSetupFailed" &&
+            diagnostic.category === "capture-target-invalid"
+        ? {
+            message:
+              "The hotspot target setup is invalid. No captured page was saved.",
+            recovery:
+              "Use a supported `captureTarget` strategy with all required fields, then capture again."
           }
         : code === "DemoFixtureSetupFailed" &&
             diagnostic.phase === "action"

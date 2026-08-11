@@ -705,11 +705,42 @@ export function decodePublicAssetBytes(
   }
 }
 
+export async function settleWithinDeadline<T>(
+  operation: Promise<T>,
+  deadline: number
+): Promise<
+  | { status: "completed"; value: T }
+  | { status: "failed" }
+  | { status: "timed-out" }
+> {
+  const settled = operation.then(
+    (value) => ({ status: "completed" as const, value }),
+    () => ({ status: "failed" as const })
+  );
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    void settled;
+    return { status: "timed-out" };
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      settled,
+      new Promise<{ status: "timed-out" }>((resolve) => {
+        timer = setTimeout(() => resolve({ status: "timed-out" }), remaining);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function downloadPublicAsset(
   rawUrl: string,
   redirectsRemaining = 3,
   previousProtocol?: string,
-  maxBytes = 1_048_576
+  maxBytes = 1_048_576,
+  deadline = Date.now() + 10_000
 ): Promise<DownloadedAsset | undefined> {
   const url = safeAssetUrl(rawUrl);
   if (
@@ -718,10 +749,34 @@ async function downloadPublicAsset(
   ) {
     return undefined;
   }
-  const resolved = await resolvedPublicAddress(url.hostname);
+  const dnsTimeRemaining = deadline - Date.now();
+  if (dnsTimeRemaining <= 0) return undefined;
+  const resolved = await new Promise<
+    { address: string; family: 4 | 6 } | undefined
+  >((resolve) => {
+    let settled = false;
+    const finish = (value: { address: string; family: 4 | 6 } | undefined) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(undefined), dnsTimeRemaining);
+    void resolvedPublicAddress(url.hostname).then(finish, () => finish(undefined));
+  });
   if (!resolved) return undefined;
+  const requestTimeRemaining = deadline - Date.now();
+  if (requestTimeRemaining <= 0) return undefined;
 
   return new Promise((resolve) => {
+    let settled = false;
+    let activeResponse: import("node:http").IncomingMessage | undefined;
+    const finish = (value: DownloadedAsset | undefined) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(wallClockTimer);
+      resolve(value);
+    };
     const request = (url.protocol === "https:" ? requestHttps : requestHttp)(
       url,
       {
@@ -745,6 +800,7 @@ async function downloadPublicAsset(
         }) as never
       },
       (response) => {
+        activeResponse = response;
         const status = response.statusCode ?? 0;
         const location = response.headers.location;
         if (
@@ -761,20 +817,21 @@ async function downloadPublicAsset(
             }
           })();
           if (!nextUrl) {
-            resolve(undefined);
+            finish(undefined);
             return;
           }
           void downloadPublicAsset(
             nextUrl,
             redirectsRemaining - 1,
             url.protocol,
-            maxBytes
-          ).then(resolve);
+            maxBytes,
+            deadline
+          ).then(finish, () => finish(undefined));
           return;
         }
         if (status < 200 || status >= 300) {
           response.resume();
-          resolve(undefined);
+          finish(undefined);
           return;
         }
         const declaredLength = Number(response.headers["content-length"] ?? "0");
@@ -783,7 +840,7 @@ async function downloadPublicAsset(
           declaredLength > maxBytes
         ) {
           response.destroy();
-          resolve(undefined);
+          finish(undefined);
           return;
         }
         const chunks: Buffer[] = [];
@@ -793,13 +850,14 @@ async function downloadPublicAsset(
           byteLength += bytes.byteLength;
           if (byteLength > maxBytes) {
             response.destroy();
+            finish(undefined);
             return;
           }
           chunks.push(bytes);
         });
         response.once("end", () => {
           if (byteLength === 0 || byteLength > maxBytes) {
-            resolve(undefined);
+            finish(undefined);
             return;
           }
           const bytes = decodePublicAssetBytes(
@@ -808,10 +866,10 @@ async function downloadPublicAsset(
             maxBytes
           );
           if (!bytes) {
-            resolve(undefined);
+            finish(undefined);
             return;
           }
-          resolve({
+          finish({
             bytes,
             contentType: String(response.headers["content-type"] ?? "")
               .split(";", 1)[0]!
@@ -819,12 +877,20 @@ async function downloadPublicAsset(
               .toLowerCase()
           });
         });
-        response.once("error", () => resolve(undefined));
-        response.once("aborted", () => resolve(undefined));
+        response.once("error", () => finish(undefined));
+        response.once("aborted", () => finish(undefined));
       }
     );
-    request.setTimeout(10_000, () => request.destroy());
-    request.once("error", () => resolve(undefined));
+    const wallClockTimer = setTimeout(() => {
+      activeResponse?.destroy();
+      request.destroy();
+      finish(undefined);
+    }, requestTimeRemaining);
+    request.setTimeout(Math.min(10_000, requestTimeRemaining), () => {
+      request.destroy();
+      finish(undefined);
+    });
+    request.once("error", () => finish(undefined));
     request.end();
   });
 }
@@ -1320,7 +1386,8 @@ export function importedStyleSheetsFromCss(
 }
 
 async function fontsFromUnreadableStyleSheets(
-  inventory: VisiblePageAssetInventory
+  inventory: VisiblePageAssetInventory,
+  deadline: number
 ): Promise<VisibleFontSource[]> {
   const families = new Set(
     inventory.visibleFontFamilies.map((family) =>
@@ -1336,6 +1403,7 @@ async function fontsFromUnreadableStyleSheets(
   const visited = new Set<string>();
   let aggregateCssBytes = 0;
   for (let cursor = 0; cursor < queue.length && visited.size < 32; cursor += 1) {
+    if (Date.now() >= deadline) break;
     const entry = queue[cursor];
     if (!entry || visited.has(entry.source) || entry.depth > 3) continue;
     visited.add(entry.source);
@@ -1345,7 +1413,8 @@ async function fontsFromUnreadableStyleSheets(
       entry.source,
       3,
       undefined,
-      remainingCssBytes
+      remainingCssBytes,
+      deadline
     );
     if (!download) continue;
     const contentType = download.contentType;
@@ -1449,7 +1518,8 @@ async function fontsFromObservedPublicMetrics(
   page: Page,
   inventory: VisiblePageAssetInventory,
   observedSources: string[],
-  knownFonts: VisibleFontSource[]
+  knownFonts: VisibleFontSource[],
+  deadline: number
 ): Promise<VisibleFontSource[]> {
   const normalizeFamily = (value: string): string =>
     value.trim().toLocaleLowerCase("en-US");
@@ -1486,13 +1556,15 @@ async function fontsFromObservedPublicMetrics(
   >();
   let candidateBytes = 0;
   for (const source of candidateSources) {
+    if (Date.now() >= deadline) break;
     const remainingBytes = 8 * 1_048_576 - candidateBytes;
     if (remainingBytes <= 0) break;
     const response = await downloadPublicAsset(
       source,
       3,
       undefined,
-      Math.min(1_048_576, remainingBytes)
+      Math.min(1_048_576, remainingBytes),
+      deadline
     );
     const payload = response
       ? payloadFromDownload(response, "font")
@@ -1505,7 +1577,7 @@ async function fontsFromObservedPublicMetrics(
 
   const browser = page.context().browser();
   if (!browser) return [];
-  const context = await browser.newContext({
+  const contextPromise = browser.newContext({
     javaScriptEnabled: true,
     serviceWorkers: "block",
     viewport: { width: 32, height: 32 },
@@ -1513,23 +1585,43 @@ async function fontsFromObservedPublicMetrics(
     locale: "en-US",
     timezoneId: "UTC"
   });
-  let externalRequestAttempted = false;
-  await context.route("**/*", async (route) => {
-    const protocol = new URL(route.request().url()).protocol;
-    if (protocol === "http:" || protocol === "https:") {
-      externalRequestAttempted = true;
+  const contextResult = await settleWithinDeadline(contextPromise, deadline);
+  if (contextResult.status !== "completed") {
+    if (contextResult.status === "timed-out") {
+      void contextPromise.then((lateContext) => lateContext.close()).catch(() => {});
     }
-    await route.abort();
-  });
-  const metricPage = await context.newPage();
+    return [];
+  }
+  const context = contextResult.value;
   const metricCache = new Map<string, number[][] | undefined>();
   const matched: VisibleFontSource[] = [];
   try {
-    await metricPage.setContent(
-      '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; font-src data:">',
-      { waitUntil: "load" }
+    let externalRequestAttempted = false;
+    const routeResult = await settleWithinDeadline(
+      context.route("**/*", async (route) => {
+        const protocol = new URL(route.request().url()).protocol;
+        if (protocol === "http:" || protocol === "https:") {
+          externalRequestAttempted = true;
+        }
+        await route.abort();
+      }),
+      deadline
     );
+    if (routeResult.status !== "completed") return [];
+    const pageResult = await settleWithinDeadline(context.newPage(), deadline);
+    if (pageResult.status !== "completed") return [];
+    const metricPage = pageResult.value;
+    const contentResult = await settleWithinDeadline(
+      metricPage.setContent(
+        '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; font-src data:">',
+        { waitUntil: "load" }
+      ),
+      deadline
+    );
+    if (contentResult.status !== "completed") return [];
+    faceLoop:
     for (const [faceIndex, face] of unmatchedFaces.entries()) {
+      if (Date.now() >= deadline) break;
       const matchingCandidates = new Map<
         string,
         { source: string; payload: AssetPayload }
@@ -1537,6 +1629,7 @@ async function fontsFromObservedPublicMetrics(
       for (const [candidateIndex, candidate] of [
         ...candidates.values()
       ].entries()) {
+        if (Date.now() >= deadline) break faceLoop;
         const cacheKey = [
           candidate.payload.sha256,
           face.style,
@@ -1547,61 +1640,69 @@ async function fontsFromObservedPublicMetrics(
         if (!metricCache.has(cacheKey)) {
           externalRequestAttempted = false;
           try {
-            metrics = await metricPage.evaluate(
-              async ({ base64, descriptor, family, samples }) => {
-                const loadedFace = new FontFace(
-                  family,
-                  `url(data:font/woff2;base64,${base64})`,
-                  descriptor
-                );
-                await loadedFace.load();
-                document.fonts.add(loadedFace);
-                try {
-                  const canvas =
-                    typeof OffscreenCanvas === "function"
-                      ? new OffscreenCanvas(1, 1)
-                      : document.createElement("canvas");
-                  const context = canvas.getContext("2d");
-                  if (!context) return undefined;
-                  const weight =
-                    descriptor.weight === "bold"
-                      ? "700"
-                      : /^[1-9]00$/.test(descriptor.weight)
-                        ? descriptor.weight
-                        : "400";
-                  const style = ["italic", "oblique"].includes(
-                    descriptor.style
-                  )
-                    ? descriptor.style
-                    : "normal";
-                  context.font = `${style} ${weight} 16px "${family}"`;
-                  const metricValue = (value: number): number =>
-                    Number.isFinite(value)
-                      ? Math.round(value * 1_024) / 1_024
-                      : 0;
-                  return samples.map((sample) => {
-                    const measured = context.measureText(sample);
-                    return [
-                      metricValue(measured.width),
-                      metricValue(measured.actualBoundingBoxAscent),
-                      metricValue(measured.actualBoundingBoxDescent)
-                    ];
-                  });
-                } finally {
-                  document.fonts.delete(loadedFace);
-                }
-              },
-              {
-                base64: candidate.payload.base64,
-                descriptor: {
-                  style: face.style,
-                  weight: face.weight,
-                  stretch: face.stretch
+            const metricResult = await settleWithinDeadline(
+              metricPage.evaluate(
+                async ({ base64, descriptor, family, samples }) => {
+                  const loadedFace = new FontFace(
+                    family,
+                    `url(data:font/woff2;base64,${base64})`,
+                    descriptor
+                  );
+                  await loadedFace.load();
+                  document.fonts.add(loadedFace);
+                  try {
+                    const canvas =
+                      typeof OffscreenCanvas === "function"
+                        ? new OffscreenCanvas(1, 1)
+                        : document.createElement("canvas");
+                    const context = canvas.getContext("2d");
+                    if (!context) return undefined;
+                    const weight =
+                      descriptor.weight === "bold"
+                        ? "700"
+                        : /^[1-9]00$/.test(descriptor.weight)
+                          ? descriptor.weight
+                          : "400";
+                    const style = ["italic", "oblique"].includes(
+                      descriptor.style
+                    )
+                      ? descriptor.style
+                      : "normal";
+                    context.font = `${style} ${weight} 16px "${family}"`;
+                    const metricValue = (value: number): number =>
+                      Number.isFinite(value)
+                        ? Math.round(value * 1_024) / 1_024
+                        : 0;
+                    return samples.map((sample) => {
+                      const measured = context.measureText(sample);
+                      return [
+                        metricValue(measured.width),
+                        metricValue(measured.actualBoundingBoxAscent),
+                        metricValue(measured.actualBoundingBoxDescent)
+                      ];
+                    });
+                  } finally {
+                    document.fonts.delete(loadedFace);
+                  }
                 },
-                family: `ShowKitCandidate${faceIndex}_${candidateIndex}`,
-                samples: FONT_METRIC_SAMPLES
-              }
+                {
+                  base64: candidate.payload.base64,
+                  descriptor: {
+                    style: face.style,
+                    weight: face.weight,
+                    stretch: face.stretch
+                  },
+                  family: `ShowKitCandidate${faceIndex}_${candidateIndex}`,
+                  samples: FONT_METRIC_SAMPLES
+                }
+              ),
+              deadline
             );
+            if (metricResult.status === "timed-out") break faceLoop;
+            metrics =
+              metricResult.status === "completed"
+                ? metricResult.value
+                : undefined;
           } catch {
             metrics = undefined;
           }
@@ -1630,7 +1731,7 @@ async function fontsFromObservedPublicMetrics(
       });
     }
   } finally {
-    await context.close();
+    await settleWithinDeadline(context.close(), deadline);
   }
   return matched;
 }
@@ -1660,8 +1761,12 @@ export async function preparePlaywrightPageAssets(
     (consent.mode === "public-page" && consent.consent === "requested") ||
     (consent.mode === "visible-session" && consent.consent === "confirmed");
   if (!consentValid) return { assets: [], fontFaces: [], replacements: [] };
+  const assetPreparationDeadline = Date.now() + 10_000;
 
-  const stylesheetFonts = await fontsFromUnreadableStyleSheets(inventory);
+  const stylesheetFonts = await fontsFromUnreadableStyleSheets(
+    inventory,
+    assetPreparationDeadline
+  );
   const observedFonts = fontsFromObservedPublicRequests(
     inventory,
     observedPublicFontSources
@@ -1675,7 +1780,8 @@ export async function preparePlaywrightPageAssets(
     page,
     inventory,
     observedPublicFontSources,
-    directlyMappedFonts
+    directlyMappedFonts,
+    assetPreparationDeadline
   );
   const allFonts = [...directlyMappedFonts, ...metricMatchedFonts].filter(
     (font, index, fonts) =>
@@ -1727,7 +1833,13 @@ export async function preparePlaywrightPageAssets(
       const item = requested[cursor];
       cursor += 1;
       if (!item) continue;
-      const download = await downloadPublicAsset(item.source);
+      const download = await downloadPublicAsset(
+        item.source,
+        3,
+        undefined,
+        1_048_576,
+        assetPreparationDeadline
+      );
       if (download && item.kind === "image") {
         downloadedImages.set(item.source, download);
       }

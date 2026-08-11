@@ -2162,6 +2162,7 @@ const PLAYER_JS = `(() => {
     "lang",
     "multiple",
     "opacity",
+    "open",
     "points",
     "placeholder",
     "preserveAspectRatio",
@@ -2177,10 +2178,12 @@ const PLAYER_JS = `(() => {
     "stroke-opacity",
     "stroke-width",
     "selected",
+    "size",
     "tabindex",
     "title",
     "transform",
     "type",
+    "value",
     "viewBox",
     "width",
     "x",
@@ -2228,7 +2231,12 @@ const PLAYER_JS = `(() => {
     );
   }
 
-  function createSceneNode(node) {
+  const maximumSceneDepth = 256;
+
+  function createSceneNode(node, depth = 0) {
+    if (depth > maximumSceneDepth) {
+      return document.createTextNode("");
+    }
     if (node.type === "text") {
       return document.createTextNode(node.text);
     }
@@ -2240,6 +2248,24 @@ const PLAYER_JS = `(() => {
       : document.createElement(node.tag);
     for (const [name, value] of Object.entries(node.attributes)) {
       if (!allowedAttributes.has(name) && !/^aria-[a-z][a-z-]*$/.test(name)) continue;
+      if (
+        name === "value" &&
+        !(
+          node.tag === "input" &&
+          ["button", "reset", "submit"].includes(
+            String(node.attributes.type ?? "text").toLowerCase()
+          ) &&
+          value.length <= 50_000
+        )
+      ) continue;
+      if (
+        name === "size" &&
+        !(
+          node.tag === "select" &&
+          /^(?:[2-9]|[1-9][0-9]|100)$/.test(value)
+        )
+      ) continue;
+      if (name === "open" && !(node.tag === "details" && value === "")) continue;
       if (
         name === "src" &&
         !/^\\.\\/assets\\/[a-f0-9]{64}\\.(?:png|jpg|webp|avif|gif|svg)$/.test(value)
@@ -2259,7 +2285,7 @@ const PLAYER_JS = `(() => {
       }
     }
     for (const child of node.children) {
-      element.append(createSceneNode(child));
+      element.append(createSceneNode(child, depth + 1));
     }
     return element;
   }

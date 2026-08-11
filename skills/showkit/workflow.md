@@ -225,6 +225,11 @@ The `target` performs the Playwright action. ShowKit resolves the serializable
 `captureTarget` again inside its Chromium CDP isolated world before the action.
 Both must match one visible semantic element. Each tooltip must cite the
 evidence IDs captured for that step. Report this route as `ci-replayable`.
+Use the exact accessible name in `captureTarget.name` when it is known. If the
+name is omitted, ShowKit may recover it from bounded semantic sources on the
+same target and then verify the exact Playwright identity. If recovery cannot
+prove one bounded name, capture stops with `capture-target-name-required`. Do
+not add a site-specific selector or visible-text workaround.
 For an exact requested public URL in a fresh, signed-out context, the isolated
 Playwright route may fetch currently visible HTTP or HTTPS image sources with
 `pageAssetConsent: { mode: "public-page", consent: "requested" }` and no extra
@@ -238,6 +243,11 @@ not captured. Opaque public WOFF2 candidates may be compared with fixed
 non-page text metrics in a separate network-blocked context, with an 8 MB
 aggregate candidate limit per matching pass and a required single unique
 content-hash match.
+A confirmed visible-session capture may use ShowKit's fixed system font stack
+for an unavailable loaded text font only when fixed non-page Latin, Korean, and
+CJK metric samples remain within `0.8` through `1.25` on both axes. It records
+`bounded-font-metric-fallback`; icon fonts and out-of-range text fonts still
+stop the capture.
 ShowKit never saves the source asset URL. Playwright
 capture may remove only unresolved non-interactive decoration and records the
 exclusion. Targets, controls, and layout-critical images still stop capture.
@@ -266,7 +276,9 @@ After a supported capture:
    A nonzero
    `data-text-metric-fit-count` is allowed only for the bounded source-declared
    fallback rule in `references/visual-fidelity.md`; never raise the capture
-   resolution or bypass the documented asset provider to make this pass.
+   resolution or bypass the documented asset provider to make this pass. A
+   scene that records `bounded-font-metric-fallback` must still report zero
+   typography failures; the marker does not relax the acceptance budget.
    Report visual fidelity as `checked`, `incomplete`, or `blocked`.
 5. Keep captured, built, checked, previewed, and published states distinct.
 6. Publish only after a separate explicit request and destination confirmation.

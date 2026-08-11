@@ -152,6 +152,7 @@ export type SceneKernelResult =
         name: string;
         bounds: { x: number; y: number; width: number; height: number };
       };
+      targetUsesSyntheticBounds?: true;
       evidenceTexts: string[];
       assetPayloads: AssetPayload[];
       fontFaces: SceneFontFace[];
@@ -326,6 +327,7 @@ export async function extractSceneKernel(
       allowHiddenRoot?: boolean;
       allowHiddenSubtree?: boolean;
       separateChildElements?: boolean;
+      skipLabelledBy?: boolean;
     } = {}
   ): string => {
     const tag = element.tagName.toLowerCase();
@@ -352,9 +354,42 @@ export async function extractSceneKernel(
     }
     const inputType = (element.getAttribute("type") ?? "").toLowerCase();
     if (tag === "img" || (tag === "input" && inputType === "image")) {
-      return element.getAttribute("alt") ?? "";
+      const labelledByText = options.skipLabelledBy
+        ? ""
+        : (element.getAttribute("aria-labelledby") ?? "")
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 8)
+            .map((id) => {
+              const label = pageDocument.getElementById(id);
+              return label && label !== element
+                ? accessibleTextContent(label, {
+                    allowHiddenRoot: true,
+                    allowHiddenSubtree: true,
+                    separateChildElements: true,
+                    skipLabelledBy: true
+                  })
+                : "";
+            })
+            .join(" ");
+      return (
+        [
+          labelledByText,
+          element.getAttribute("aria-label"),
+          element.getAttribute("alt"),
+          element.getAttribute("title"),
+          tag === "input" ? "Submit" : ""
+        ].find((value) => normalizedText(value ?? "") !== "") ?? ""
+      );
     }
-    const parts: string[] = [];
+    const ariaLabel = element.getAttribute("aria-label");
+    if (ariaLabel) return ariaLabel;
+    const parts: string[] = [
+      pseudoText(
+        pageDocument.defaultView?.getComputedStyle(element, "::before")
+          .content ?? ""
+      )
+    ];
     for (const child of Array.from(element.childNodes)) {
       if (child.nodeType === 3) {
         parts.push(child.textContent ?? "");
@@ -368,33 +403,150 @@ export async function extractSceneKernel(
                 : {}),
               ...(options.separateChildElements
                 ? { separateChildElements: true }
-                : {})
+                : {}),
+              ...(options.skipLabelledBy ? { skipLabelledBy: true } : {})
             }
           )
         );
       }
     }
+    parts.push(
+      pseudoText(
+        pageDocument.defaultView?.getComputedStyle(element, "::after")
+          .content ?? ""
+      )
+    );
     return parts.join(options.separateChildElements ? " " : "");
   };
+  const supportedAriaRoles = new Set([
+    "alert", "alertdialog", "application", "article", "banner", "blockquote",
+    "button", "caption", "cell", "checkbox", "code", "columnheader",
+    "combobox", "complementary", "contentinfo", "definition", "deletion",
+    "dialog", "directory", "document", "emphasis", "feed", "figure", "form",
+    "generic", "grid", "gridcell", "group", "heading", "img", "insertion",
+    "link", "list", "listbox", "listitem", "log", "main", "marquee", "math",
+    "meter", "menu", "menubar", "menuitem", "menuitemcheckbox",
+    "menuitemradio", "navigation", "none", "note", "option", "paragraph",
+    "presentation", "progressbar", "radio", "radiogroup", "region", "row",
+    "rowgroup", "rowheader", "scrollbar", "search", "searchbox", "separator",
+    "slider", "spinbutton", "status", "strong", "subscript", "superscript",
+    "switch", "tab", "table", "tablist", "tabpanel", "term", "textbox",
+    "time", "timer", "toolbar", "tooltip", "tree", "treegrid", "treeitem"
+  ]);
+  const presentationRoleConflicts = (element: Element): boolean => {
+    const hasGlobalAriaState = Array.from(element.attributes).some(
+      (attribute) => attribute.name.startsWith("aria-")
+    );
+    if (hasGlobalAriaState || element.hasAttribute("tabindex")) return true;
+    if (element.matches(":disabled")) return false;
+    if (
+      element.matches(
+        "a[href],area[href],button,input:not([type='hidden']),select,textarea,summary,iframe,audio[controls],video[controls]"
+      )
+    ) {
+      return true;
+    }
+    const contentEditable = element.getAttribute("contenteditable");
+    return contentEditable !== null && contentEditable.toLowerCase() !== "false";
+  };
+  const supportedExplicitRole = (element: Element): string | undefined => {
+    const roles = element.getAttribute("role")?.trim().split(/\s+/) ?? [];
+    for (const role of roles) {
+      if (!supportedAriaRoles.has(role)) continue;
+      if (
+        ["none", "presentation"].includes(role) &&
+        presentationRoleConflicts(element)
+      ) {
+        continue;
+      }
+      return role;
+    }
+    return undefined;
+  };
   const implicitRole = (element: Element): string | undefined => {
-    const explicit = element.getAttribute("role");
+    const explicit = supportedExplicitRole(element);
     if (explicit) return explicit;
     const tag = element.tagName.toLowerCase();
+    if (["thead", "tbody", "tfoot", "tr", "td", "th"].includes(tag)) {
+      let ancestor = element.parentElement;
+      while (ancestor) {
+        const ancestorTag = ancestor.tagName.toLowerCase();
+        const ancestorRole = supportedExplicitRole(ancestor);
+        if (
+          ["table", "thead", "tbody", "tfoot", "tr"].includes(
+            ancestorTag
+          ) &&
+          ["none", "presentation"].includes(ancestorRole ?? "")
+        ) {
+          return undefined;
+        }
+        if (ancestorTag === "table") break;
+        ancestor = ancestor.parentElement;
+      }
+    }
+    if (tag === "table") return "table";
+    if (["thead", "tbody", "tfoot"].includes(tag)) return "rowgroup";
+    if (tag === "tr") return "row";
+    if (tag === "td") {
+      const table = element.closest("table");
+      const tableRole = table ? supportedExplicitRole(table) : undefined;
+      return ["grid", "treegrid"].includes(tableRole ?? "")
+        ? "gridcell"
+        : "cell";
+    }
+    if (tag === "th") {
+      const scope = element.getAttribute("scope")?.toLowerCase();
+      if (scope === "row" || scope === "rowgroup") return "rowheader";
+      if (scope === "col" || scope === "colgroup") return "columnheader";
+      if (element.closest("thead")) return "columnheader";
+      const row = element.closest("tr");
+      if (row) {
+        const siblings = Array.from(row.children);
+        const index = siblings.indexOf(element);
+        if (
+          [siblings[index - 1], siblings[index + 1]].some(
+            (sibling) => sibling?.tagName.toLowerCase() === "td"
+          )
+        ) {
+          return "rowheader";
+        }
+      }
+      return "columnheader";
+    }
     if (tag === "button") return "button";
     if (tag === "a" && element.hasAttribute("href")) return "link";
+    if (tag === "img") {
+      const decorativeAlternative = element.getAttribute("alt") === "";
+      const restoresImageSemantics =
+        presentationRoleConflicts(element) ||
+        normalizedText(element.getAttribute("title") ?? "") !== "";
+      if (!decorativeAlternative || restoresImageSemantics) return "img";
+    }
     if (tag === "textarea") return "textbox";
     if (tag === "select") {
-      return element.hasAttribute("multiple") ? "listbox" : "combobox";
+      return element.hasAttribute("multiple") ||
+        (element instanceof HTMLSelectElement && element.size > 1)
+        ? "listbox"
+        : "combobox";
     }
     if (tag === "input") {
       const type = (element.getAttribute("type") ?? "text").toLowerCase();
-      if (["button", "reset", "submit"].includes(type)) return "button";
+      if (["button", "file", "image", "reset", "submit"].includes(type)) {
+        return "button";
+      }
       if (type === "checkbox") return "checkbox";
       if (type === "radio") return "radio";
       if (type === "number") return "spinbutton";
       if (type === "range") return "slider";
+      if (
+        ["email", "search", "tel", "text", "url"].includes(type) &&
+        element instanceof HTMLInputElement &&
+        element.list
+      ) {
+        return "combobox";
+      }
       if (type === "search") return "searchbox";
-      if (!["hidden", "image"].includes(type)) return "textbox";
+      if (!["color", "hidden"].includes(type)) return "textbox";
     }
     return undefined;
   };
@@ -448,8 +600,8 @@ export async function extractSceneKernel(
       return explicitLabelNameCache.get(element)!;
     }
     const candidate = [
-      element.getAttribute("aria-label"),
       labelledText(element),
+      element.getAttribute("aria-label"),
       associatedLabelText(element)
     ].find((value) => normalizedText(value ?? "") !== "");
     const value = normalizedText(candidate ?? "");
@@ -457,22 +609,45 @@ export async function extractSceneKernel(
     return value;
   };
   const accessibleNameCache = new Map<Element, string>();
+  const inputButtonName = (element: Element): string => {
+    if (element.tagName.toLowerCase() !== "input") return "";
+    const type = (element.getAttribute("type") ?? "text").toLowerCase();
+    if (type === "image") {
+      return (
+        normalizedText(element.getAttribute("alt") ?? "") ||
+        normalizedText(element.getAttribute("title") ?? "") ||
+        "Submit"
+      );
+    }
+    const value = element.getAttribute("value");
+    if (normalizedText(value ?? "") !== "") return value!;
+    if (type === "submit") return "Submit";
+    if (type === "reset") return "Reset";
+    return "";
+  };
   const simpleAccessibleName = (element: Element): string => {
     if (accessibleNameCache.has(element)) {
       return accessibleNameCache.get(element)!;
     }
     const tag = element.tagName.toLowerCase();
     const inputType = (element.getAttribute("type") ?? "").toLowerCase();
+    const tableCaption =
+      tag === "table"
+        ? Array.from(element.children).find(
+            (child) => child.tagName.toLowerCase() === "caption"
+          )
+        : undefined;
     const candidate = [
       explicitLabelName(element),
-      tag === "input" && ["button", "reset", "submit"].includes(inputType)
-        ? element.getAttribute("value")
+      tableCaption ? accessibleTextContent(tableCaption) : "",
+      tag === "input" && ["button", "image", "reset", "submit"].includes(inputType)
+        ? inputButtonName(element)
         : "",
       tag === "img" || (tag === "input" && inputType === "image")
-        ? element.getAttribute("alt")
+        ? accessibleTextContent(element)
         : "",
-      element.getAttribute("title"),
-      accessibleTextContent(element)
+      accessibleTextContent(element),
+      element.getAttribute("title")
     ].find((value) => normalizedText(value ?? "") !== "");
     const value = normalizedText(candidate ?? "");
     accessibleNameCache.set(element, value);
@@ -489,6 +664,24 @@ export async function extractSceneKernel(
         Number.parseFloat(style.opacity || "1") === 0)
     ) {
       return "";
+    }
+    const tag = element.tagName.toLowerCase();
+    const inputType = (element.getAttribute("type") ?? "").toLowerCase();
+    if (tag === "img") {
+      return (
+        [
+          labelledText(element),
+          element.getAttribute("aria-label"),
+          element.getAttribute("alt"),
+          element.getAttribute("title")
+        ].find((value) => normalizedText(value ?? "") !== "") ?? ""
+      );
+    }
+    if (
+      tag === "input" &&
+      ["button", "image", "reset", "submit"].includes(inputType)
+    ) {
+      return inputButtonName(element);
     }
     const parts: string[] = [];
     for (const child of Array.from(element.childNodes)) {
@@ -511,11 +704,11 @@ export async function extractSceneKernel(
     const inputType = (element.getAttribute("type") ?? "").toLowerCase();
     const authoredName = [
       explicitLabelName(element),
-      tag === "input" && ["button", "reset", "submit"].includes(inputType)
-        ? element.getAttribute("value")
+      tag === "input" && ["button", "image", "reset", "submit"].includes(inputType)
+        ? inputButtonName(element)
         : "",
       tag === "img" || (tag === "input" && inputType === "image")
-        ? element.getAttribute("alt")
+        ? accessibleTextContent(element)
         : "",
       element.getAttribute("title")
     ].find((value) => normalizedText(value ?? "") !== "");
@@ -565,8 +758,17 @@ export async function extractSceneKernel(
           radio: "input,[role]",
           slider: "input,[role]",
           spinbutton: "input,[role]",
-          combobox: "select,[role]",
-          listbox: "select,[role]"
+          combobox: "select,input,[role]",
+          listbox: "select,[role]",
+          table: "table,[role]",
+          grid: "table,[role]",
+          rowgroup: "thead,tbody,tfoot,[role]",
+          row: "tr,[role]",
+          cell: "td,[role]",
+          gridcell: "td,[role]",
+          columnheader: "th,[role]",
+          rowheader: "th,[role]",
+          img: "img,[role]"
         };
         return Array.from(
           pageDocument.querySelectorAll(
@@ -607,11 +809,21 @@ export async function extractSceneKernel(
     if (target.strategy === "role") {
       return uniqueVisibleMatch(
         candidates.filter(
-          (element) =>
-            implicitRole(element) === target.role &&
-            simpleAccessibleNameVariants(element).includes(
-              normalizedText(target.name)
-            )
+          (element) => {
+            if (implicitRole(element) !== target.role) return false;
+            const requestedName = normalizedText(target.name);
+            if (simpleAccessibleNameVariants(element).includes(requestedName)) {
+              return true;
+            }
+            return (
+              target.role === "button" &&
+              element instanceof HTMLInputElement &&
+              element.type.toLowerCase() === "file" &&
+              explicitLabelName(element) === "" &&
+              requestedName !== "" &&
+              requestedName.length <= 180
+            );
+          }
         )
       );
     }
@@ -1578,17 +1790,16 @@ export async function extractSceneKernel(
     targetElement !== null &&
     targetInteractionRectangle !== undefined &&
     (siblingLabelRectangle !== undefined ||
-      (targetGeometryElement === targetElement &&
-        (Math.abs(targetInteractionRectangle.x - rectangleFor(targetElement).x) >
-          0.5 ||
-          Math.abs(targetInteractionRectangle.y - rectangleFor(targetElement).y) >
-            0.5 ||
-          Math.abs(
-            targetInteractionRectangle.width - rectangleFor(targetElement).width
-          ) > 0.5 ||
-          Math.abs(
-            targetInteractionRectangle.height - rectangleFor(targetElement).height
-          ) > 0.5)));
+      Math.abs(targetInteractionRectangle.x - rectangleFor(targetElement).x) >
+        0.5 ||
+      Math.abs(targetInteractionRectangle.y - rectangleFor(targetElement).y) >
+        0.5 ||
+      Math.abs(
+        targetInteractionRectangle.width - rectangleFor(targetElement).width
+      ) > 0.5 ||
+      Math.abs(
+        targetInteractionRectangle.height - rectangleFor(targetElement).height
+      ) > 0.5);
   if (targetElement) {
     const rectangle = rectangleFor(targetElement);
     const style = computedFor(targetElement);
@@ -1874,6 +2085,12 @@ export async function extractSceneKernel(
       return image.currentSrc || image.src;
     }
     if (
+      element instanceof HTMLInputElement &&
+      element.type.toLowerCase() === "image"
+    ) {
+      return element.src;
+    }
+    if (
       element.namespaceURI === "http://www.w3.org/2000/svg" &&
       element.tagName.toLowerCase() === "image"
     ) {
@@ -1966,6 +2183,9 @@ export async function extractSceneKernel(
     );
   };
   const remoteElements = new Set<Element>();
+  const boundedFontFallbackFamilies = new Set<string>();
+  const boundedSystemFontStack =
+    'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   let removedDecorativePrivateUseGlyph = false;
   const hasInteractiveAssetSemantics = (element: Element): boolean =>
     element.closest(
@@ -2098,6 +2318,9 @@ export async function extractSceneKernel(
         : []),
       ...(removedDecorativePrivateUseGlyph
         ? ["decorative-icon-font-glyphs"]
+        : []),
+      ...(boundedFontFallbackFamilies.size > 0
+        ? ["bounded-font-metric-fallback"]
         : []),
       ...(remoteElements.size > 0
         ? ["remote-decorative-assets"]
@@ -2608,7 +2831,11 @@ export async function extractSceneKernel(
         pseudo
       );
       if (localized !== undefined && localized !== "") {
-        styles[property] = localized;
+        styles[property] =
+          property === "font-family" &&
+          boundedFontFallbackFamilies.has(firstFontFamily(value))
+            ? boundedSystemFontStack
+            : localized;
       }
     }
     const renderedBackgroundReplacement = styleAssetSources(
@@ -2662,7 +2889,7 @@ export async function extractSceneKernel(
         ? computedFor(source.parentElement)
         : undefined
     );
-  const pseudoText = (content: string): string => {
+  function pseudoText(content: string): string {
     const trimmed = content.trim();
     if (
       trimmed === "" ||
@@ -2776,6 +3003,14 @@ export async function extractSceneKernel(
     }
     return false;
   };
+  const isPrivateUseCharacter = (character: string): boolean => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return (
+      (codePoint >= 0xe000 && codePoint <= 0xf8ff) ||
+      (codePoint >= 0xf0000 && codePoint <= 0xffffd) ||
+      (codePoint >= 0x100000 && codePoint <= 0x10fffd)
+    );
+  };
   const pseudoNode = (
     source: Element,
     pseudo: "::before" | "::after"
@@ -2786,17 +3021,10 @@ export async function extractSceneKernel(
     const visiblePseudoGlyphs = Array.from(text).filter(
       (character) => !/\s/u.test(character)
     );
+    const hasPrivateUseGlyphs = visiblePseudoGlyphs.some(isPrivateUseCharacter);
     const hasOnlyPrivateUseGlyphs =
-      visiblePseudoGlyphs.length > 0 &&
-      visiblePseudoGlyphs.every((character) => {
-        const codePoint = character.codePointAt(0) ?? 0;
-        return (
-          (codePoint >= 0xe000 && codePoint <= 0xf8ff) ||
-          (codePoint >= 0xf0000 && codePoint <= 0xffffd) ||
-          (codePoint >= 0x100000 && codePoint <= 0x10fffd)
-        );
-      });
-    if (hasOnlyPrivateUseGlyphs) {
+      hasPrivateUseGlyphs && visiblePseudoGlyphs.every(isPrivateUseCharacter);
+    if (hasPrivateUseGlyphs) {
       const family = firstFontFamily(
         computed.getPropertyValue("font-family")
       );
@@ -2832,6 +3060,7 @@ export async function extractSceneKernel(
             "a[href],button,[role='button'],[role='link'],[role='menuitem'],[role='tab']"
           );
         if (
+          hasOnlyPrivateUseGlyphs &&
           options.remoteAssetPolicy === "decorative-remove" &&
           textBearingSemanticControl
         ) {
@@ -3002,6 +3231,8 @@ export async function extractSceneKernel(
         "button",
         "checkbox",
         "email",
+        "file",
+        "image",
         "number",
         "radio",
         "range",
@@ -3022,14 +3253,42 @@ export async function extractSceneKernel(
       }
       if (["button", "reset", "submit"].includes(inputType)) {
         const authoredLabel = source.getAttribute("value");
-        if (authoredLabel) {
-          const value = redactTextValue(authoredLabel, redactEntireValue);
+        if (normalizedText(authoredLabel ?? "") !== "") {
+          const value = redactTextValue(authoredLabel!, redactEntireValue);
           if (value !== authoredLabel) redactedAttributeCount += 1;
           attributes.value = value;
         }
       }
-      if (source.hasAttribute("checked")) attributes.checked = "";
+      if (inputType === "image") {
+        const alternativeText = source.getAttribute("alt");
+        if (normalizedText(alternativeText ?? "") !== "") {
+          const value = redactTextValue(alternativeText!, redactEntireValue);
+          if (value !== alternativeText) redactedAttributeCount += 1;
+          attributes.alt = value;
+        }
+      }
+      if (
+        source instanceof HTMLInputElement &&
+        ["checkbox", "radio"].includes(inputType) &&
+        source.checked
+      ) {
+        attributes.checked = "";
+      }
       if (source.hasAttribute("readonly")) attributes.readonly = "";
+      if (
+        ["email", "search", "tel", "text", "url"].includes(inputType) &&
+        source instanceof HTMLInputElement &&
+        source.list &&
+        attributes.role === undefined
+      ) {
+        attributes.role = "combobox";
+      }
+      if (inputType === "file" && attributes["aria-label"] === undefined) {
+        const sourceName = simpleAccessibleName(source);
+        const value = redactTextValue(sourceName, redactEntireValue);
+        if (value !== sourceName) redactedAttributeCount += 1;
+        if (normalizedText(value) !== "") attributes["aria-label"] = value;
+      }
     }
     if (source.tagName === "TEXTAREA") {
       const placeholder = source.getAttribute("placeholder");
@@ -3044,17 +3303,36 @@ export async function extractSceneKernel(
     if (source.tagName === "SELECT" && source.hasAttribute("multiple")) {
       attributes.multiple = "";
     }
-    if (source.tagName === "OPTION" && source.hasAttribute("selected")) {
+    if (
+      source instanceof HTMLSelectElement &&
+      source.size > 1 &&
+      source.size <= 100
+    ) {
+      attributes.size = String(source.size);
+    }
+    if (source instanceof HTMLOptionElement && source.selected) {
       attributes.selected = "";
+    }
+    if (source instanceof HTMLDetailsElement && source.open) {
+      attributes.open = "";
     }
     if (source.tagName === "IMG") {
       const alternativeText = source.getAttribute("alt");
-      if (alternativeText) {
+      if (alternativeText !== null) {
         const value = redactTextValue(alternativeText, redactEntireValue);
         if (value !== alternativeText && attributes.alt === undefined) {
           redactedAttributeCount += 1;
         }
         attributes.alt = value;
+      }
+      if (source.hasAttribute("aria-labelledby")) {
+        const sourceName = simpleAccessibleName(source);
+        const value = redactTextValue(sourceName, redactEntireValue);
+        if (value !== sourceName) redactedAttributeCount += 1;
+        if (normalizedText(value) !== "") {
+          attributes["aria-label"] = value;
+          delete attributes["aria-labelledby"];
+        }
       }
       if (source.hasAttribute("width")) {
         attributes.width = source.getAttribute("width") ?? "";
@@ -3205,13 +3483,133 @@ export async function extractSceneKernel(
       .filter(Boolean)
   );
   const unbundledVisibleFontFamilies = new Set<string>();
+  const boundedFontFallbackCache = new Map<string, boolean>();
+  const canUseBoundedSystemFontFallback = (
+    computed: CSSStyleDeclaration
+  ): boolean => {
+    if (
+      options.pageAssetConsent?.mode !== "visible-session" ||
+      options.pageAssetConsent.consent !== "confirmed"
+    ) {
+      return false;
+    }
+    const familyStack = computed.getPropertyValue("font-family").trim();
+    const styleValue = computed.getPropertyValue("font-style").trim();
+    const style = ["italic", "oblique"].includes(styleValue)
+      ? styleValue
+      : "normal";
+    const weightValue = computed.getPropertyValue("font-weight").trim();
+    const weight = /^(?:normal|bold|[1-9]\d{0,2}|1000)$/.test(weightValue)
+      ? weightValue
+      : "400";
+    const cacheKey = [familyStack, style, weight].join("|");
+    const cached = boundedFontFallbackCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const canvas =
+      typeof OffscreenCanvas === "function"
+        ? new OffscreenCanvas(1, 1)
+        : pageDocument.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) {
+      boundedFontFallbackCache.set(cacheKey, false);
+      return false;
+    }
+    const samples = [
+      "Hamburgefontsiv 0123456789",
+      "MWmwilI1.,!?@",
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "abcdefghijklmnopqrstuvwxyz",
+      "가나다라마바사 아자차카타파하 0123456789",
+      "漢字かなカナ 0123456789"
+    ];
+    const measure = (families: string) => {
+      context.font = `${style} ${weight} 16px ${families}`;
+      return samples.map((sample) => {
+        const metrics = context.measureText(sample);
+        return {
+          width: metrics.width,
+          height:
+            metrics.actualBoundingBoxAscent +
+            metrics.actualBoundingBoxDescent
+        };
+      });
+    };
+    const sourceMetrics = measure(familyStack);
+    const fallbackMetrics = measure(boundedSystemFontStack);
+    const eligible = sourceMetrics.every((sourceMetric, index) => {
+      const fallbackMetric = fallbackMetrics[index];
+      if (
+        !fallbackMetric ||
+        !Number.isFinite(sourceMetric.width) ||
+        !Number.isFinite(sourceMetric.height) ||
+        !Number.isFinite(fallbackMetric.width) ||
+        !Number.isFinite(fallbackMetric.height) ||
+        sourceMetric.width <= 0 ||
+        sourceMetric.height <= 0 ||
+        fallbackMetric.width <= 0 ||
+        fallbackMetric.height <= 0
+      ) {
+        return false;
+      }
+      const widthScale = sourceMetric.width / fallbackMetric.width;
+      const heightScale = sourceMetric.height / fallbackMetric.height;
+      return (
+        widthScale >= 0.8 &&
+        widthScale <= 1.25 &&
+        heightScale >= 0.8 &&
+        heightScale <= 1.25
+      );
+    });
+    boundedFontFallbackCache.set(cacheKey, eligible);
+    return eligible;
+  };
+  const registerVisibleTextFont = (
+    value: string,
+    computed: CSSStyleDeclaration
+  ): boolean => {
+    if (value.trim() === "") return true;
+    const family = firstFontFamily(
+      computed.getPropertyValue("font-family")
+    );
+    if (
+      Array.from(value).some(isPrivateUseCharacter) &&
+      !bundledFontFamilies.has(family)
+    ) {
+      serializationBlocker ??= {
+        code: "UnsupportedSurface",
+        category: "icon-font"
+      };
+      return false;
+    }
+    if (
+      family !== "" &&
+      loadedDocumentFontFamilies.has(family) &&
+      !bundledFontFamilies.has(family)
+    ) {
+      if (canUseBoundedSystemFontFallback(computed)) {
+        boundedFontFallbackFamilies.add(family);
+      } else {
+        unbundledVisibleFontFamilies.add(family);
+      }
+    }
+    return true;
+  };
 
   let sanitizedTarget: SanitizedElementNode | undefined;
+  const maximumSanitizedDepth = 256;
   const sanitizeNode = async (
     source: Node,
-    includeText = true
+    includeText = true,
+    depth = 0
   ): Promise<SanitizedNode | null> => {
     if (serializationBlocker) return null;
+    if (depth > maximumSanitizedDepth) {
+      serializationBlocker = {
+        code: "CaptureTooLarge",
+        category: "serialized-node-limit"
+      };
+      return null;
+    }
     if (source.nodeType === 3) {
       if (!includeText) return null;
       const originalText = (source.textContent ?? "").slice(0, 100_000);
@@ -3241,16 +3639,7 @@ export async function extractSceneKernel(
           textRectangle.left < window.innerWidth
         ) {
           const computed = computedFor(source.parentElement);
-          const family = firstFontFamily(
-            computed.getPropertyValue("font-family")
-          );
-          if (
-            family !== "" &&
-            loadedDocumentFontFamilies.has(family) &&
-            !bundledFontFamilies.has(family)
-          ) {
-            unbundledVisibleFontFamilies.add(family);
-          }
+          if (!registerVisibleTextFont(originalText, computed)) return null;
           const sourceWhiteSpace =
             computed.getPropertyValue("white-space").trim() || "normal";
           const lineRectangles = textLineRectangles
@@ -3627,6 +4016,8 @@ export async function extractSceneKernel(
       renderedCanvasReplacementFor(sourceElement);
     const imageElement =
       sourceElement.tagName === "IMG" ||
+      (sourceElement instanceof HTMLInputElement &&
+        sourceElement.type.toLowerCase() === "image") ||
       (sourceElement.namespaceURI === "http://www.w3.org/2000/svg" &&
         sourceTag === "image");
     if (
@@ -3704,6 +4095,62 @@ export async function extractSceneKernel(
       !viewportOnly ||
       visualInViewport ||
       (elementVisible && computed.display === "contents");
+    if (visualInViewport) {
+      const renderedAttributeTexts: Array<{
+        value: string;
+        style: CSSStyleDeclaration;
+      }> = [];
+      if (sourceElement instanceof HTMLInputElement) {
+        const inputType = (sourceElement.getAttribute("type") ?? "text").toLowerCase();
+        if (["button", "reset", "submit"].includes(inputType)) {
+          renderedAttributeTexts.push({
+            value:
+              sourceElement.getAttribute("value") ??
+              (inputType === "submit"
+                ? "Submit"
+                : inputType === "reset"
+                  ? "Reset"
+                  : ""),
+            style: computed
+          });
+        }
+        if (inputType === "image") {
+          renderedAttributeTexts.push({
+            value: sourceElement.getAttribute("alt") ?? "Submit",
+            style: computed
+          });
+        }
+        if (sourceElement.value === "") {
+          renderedAttributeTexts.push({
+            value: sourceElement.getAttribute("placeholder") ?? "",
+            style: window.getComputedStyle(sourceElement, "::placeholder")
+          });
+        }
+      } else if (
+        sourceElement instanceof HTMLTextAreaElement &&
+        sourceElement.value === ""
+      ) {
+        renderedAttributeTexts.push({
+          value: sourceElement.getAttribute("placeholder") ?? "",
+          style: window.getComputedStyle(sourceElement, "::placeholder")
+        });
+      } else if (sourceElement instanceof HTMLImageElement) {
+        renderedAttributeTexts.push({
+          value: sourceElement.getAttribute("alt") ?? "",
+          style: computed
+        });
+      }
+      for (const { value, style } of renderedAttributeTexts) {
+        if (value.length > 50_000) {
+          serializationBlocker ??= {
+            code: "UnsupportedSurface",
+            category: "text-attribute-limit"
+          };
+          return null;
+        }
+        if (!registerVisibleTextFont(value, style)) return null;
+      }
+    }
     const outputTag = renderedCanvasReplacement
       ? "img"
       : allowedTags.has(sourceTag)
@@ -3769,7 +4216,11 @@ export async function extractSceneKernel(
         ? Array.from(sourceElement.shadowRoot.childNodes)
         : Array.from(sourceElement.childNodes);
     for (const child of sourceChildNodes) {
-      const sanitizedChild = await sanitizeNode(child, childTextVisible);
+      const sanitizedChild = await sanitizeNode(
+        child,
+        childTextVisible,
+        depth + 1
+      );
       if (sanitizedChild) children.push(sanitizedChild);
       if (serializationBlocker) return null;
     }
@@ -3826,6 +4277,34 @@ export async function extractSceneKernel(
       return null;
     }
     const nodeStyles = readStyles(sourceElement);
+    const visiblePlaceholder =
+      ((sourceElement instanceof HTMLInputElement && sourceElement.value === "") ||
+        (sourceElement instanceof HTMLTextAreaElement &&
+          sourceElement.value === "")) &&
+      normalizedText(sourceElement.getAttribute("placeholder") ?? "") !== "";
+    if (visiblePlaceholder) {
+      const placeholderStyle = window.getComputedStyle(
+        sourceElement,
+        "::placeholder"
+      );
+      for (const property of [
+        "font-family",
+        "font-size",
+        "font-stretch",
+        "font-style",
+        "font-weight",
+        "letter-spacing",
+        "line-height"
+      ]) {
+        const value = placeholderStyle.getPropertyValue(property).trim();
+        if (value === "") continue;
+        nodeStyles[property] =
+          property === "font-family" &&
+          boundedFontFallbackFamilies.has(firstFontFamily(value))
+            ? boundedSystemFontStack
+            : value;
+      }
+    }
     if (renderedCanvasReplacement) {
       nodeStyles["object-fit"] = "fill";
       nodeStyles.opacity = "1";
@@ -4234,30 +4713,8 @@ export async function extractSceneKernel(
       .join("")}</${node.tag}>`;
   };
   const roleFromTag = (element: Element): string | undefined => {
-    const explicitRole = element.getAttribute("role");
-    if (explicitRole) return explicitRole;
-    if (element.tagName === "INPUT") {
-      const inputType = (element.getAttribute("type") ?? "text").toLowerCase();
-      const inputRoles: Record<string, string | undefined> = {
-        button: "button",
-        checkbox: "checkbox",
-        color: undefined,
-        file: "button",
-        hidden: undefined,
-        image: "button",
-        number: "spinbutton",
-        radio: "radio",
-        range: "slider",
-        reset: "button",
-        search: "searchbox",
-        submit: "button"
-      };
-      return inputType in inputRoles ? inputRoles[inputType] : "textbox";
-    }
-    if (element.tagName === "TEXTAREA") return "textbox";
-    if (element.tagName === "SELECT") {
-      return element.hasAttribute("multiple") ? "listbox" : "combobox";
-    }
+    const resolvedRole = implicitRole(element);
+    if (resolvedRole) return resolvedRole;
     const roles: Record<string, string> = {
       A: "link",
       BUTTON: "button",
@@ -4269,8 +4726,7 @@ export async function extractSceneKernel(
       H5: "heading",
       H6: "heading",
       LI: "listitem",
-      NAV: "navigation",
-      SUMMARY: "button"
+      NAV: "navigation"
     };
     return roles[element.tagName];
   };
@@ -4280,7 +4736,64 @@ export async function extractSceneKernel(
   };
   const sanitizedAccessibleTextParts = (node: SanitizedNode): string[] => {
     if (node.type === "text") return [node.text];
+    if (node.attributes["data-showkit-pseudo"]) {
+      return node.children.flatMap(sanitizedTextParts);
+    }
     if (node.attributes["aria-hidden"] === "true") return [];
+    if (node.tag === "img") {
+      const name = [
+        node.attributes["aria-label"],
+        node.attributes.alt,
+        node.attributes.title
+      ].find((value) => normalizedText(value ?? "") !== "");
+      return name ? [name] : [];
+    }
+    if (node.tag === "input") {
+      const inputType = node.attributes.type ?? "text";
+      if (
+        inputType === "image" &&
+        [
+          node.attributes["aria-label"],
+          node.attributes.alt,
+          node.attributes.title
+        ].some((value) => normalizedText(value ?? "") !== "")
+      ) {
+        return [
+          [
+            node.attributes["aria-label"],
+            node.attributes.alt,
+            node.attributes.title
+          ].find((value) => normalizedText(value ?? "") !== "")!
+        ];
+      }
+      if (inputType === "submit") {
+        return [
+          normalizedText(node.attributes.value ?? "") !== ""
+            ? node.attributes.value!
+            : "Submit"
+        ];
+      }
+      if (inputType === "reset") {
+        return [
+          normalizedText(node.attributes.value ?? "") !== ""
+            ? node.attributes.value!
+            : "Reset"
+        ];
+      }
+      if (
+        inputType === "button" &&
+        normalizedText(node.attributes.value ?? "") !== ""
+      ) {
+        return [node.attributes.value!];
+      }
+      if (
+        inputType === "file" &&
+        normalizedText(node.attributes["aria-label"] ?? "") !== ""
+      ) {
+        return [node.attributes["aria-label"]!];
+      }
+      return [];
+    }
     return node.children.flatMap(sanitizedAccessibleTextParts);
   };
   const sanitizedTextForElement = (element: Element | null): string => {
@@ -4292,6 +4805,18 @@ export async function extractSceneKernel(
           .replace(/\s+/g, " ")
           .trim()
       : "";
+  };
+  const sanitizedContentName = (node: SanitizedNode): string => {
+    const parts = sanitizedAccessibleTextParts(node);
+    const variants = [parts.join(""), parts.join(" ")]
+      .map((value) => value.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    const requestedName = normalizedText(options.scopeTarget?.name ?? "");
+    return (
+      variants.find((value) => normalizedText(value) === requestedName) ??
+      variants.at(-1) ??
+      ""
+    );
   };
   const redactedAssistiveLabels = new Set<Element>();
   const sanitizedReferencedText = (element: Element | null): string => {
@@ -4319,8 +4844,8 @@ export async function extractSceneKernel(
           .map((id) => {
             const label = pageDocument.getElementById(id);
             return (
-              sanitizedTextForElement(label) ||
-              sanitizedReferencedText(label)
+              sanitizedReferencedText(label) ||
+              sanitizedTextForElement(label)
             );
           })
           .join(" ")
@@ -4347,26 +4872,116 @@ export async function extractSceneKernel(
     element: Element,
     sanitizedElement: SanitizedElementNode
   ): string => {
+    const tableCaption =
+      element.tagName.toLowerCase() === "table"
+        ? Array.from(element.children).find(
+            (child) => child.tagName.toLowerCase() === "caption"
+          )
+        : undefined;
+    const inputType =
+      element.tagName.toLowerCase() === "input"
+        ? (element.getAttribute("type") ?? "text").toLowerCase()
+        : "";
+    const inputName = ["button", "reset", "submit"].includes(inputType)
+      ? (normalizedText(sanitizedElement.attributes.value ?? "") !== ""
+          ? sanitizedElement.attributes.value
+          : undefined) ||
+        (inputType === "submit"
+          ? "Submit"
+          : inputType === "reset"
+            ? "Reset"
+            : undefined)
+      : inputType === "image"
+        ? sanitizedElement.attributes.alt
+        : inputType === "file"
+          ? normalizedText(options.scopeTarget?.name ?? "")
+        : undefined;
     const candidate = [
-      sanitizedElement.attributes["aria-label"],
       sanitizedLabelName(element),
-      element.tagName.toLowerCase() === "input" &&
-      ["button", "reset", "submit"].includes(
-        (element.getAttribute("type") ?? "text").toLowerCase()
-      )
-        ? sanitizedElement.attributes.value
-        : undefined,
+      sanitizedElement.attributes["aria-label"],
+      inputName,
+      tableCaption ? sanitizedTextForElement(tableCaption) : undefined,
+      sanitizedContentName(sanitizedElement),
       sanitizedElement.attributes.title,
-      sanitizedAccessibleTextParts(sanitizedElement).join(" ")
+      inputType === "image" ? "Submit" : undefined
     ]
       .map((value) => (value ?? "").replace(/\s+/g, " ").trim())
       .find(Boolean);
     return (candidate ?? "Hotspot target").slice(0, 180);
   };
+  const containsCapturedPseudoText = (node: SanitizedNode): boolean =>
+    node.type === "element" &&
+    ((node.attributes["data-showkit-pseudo"] !== undefined &&
+      sanitizedTextParts(node).some((value) => normalizedText(value) !== "")) ||
+      node.children.some(containsCapturedPseudoText));
+  const findTransferableTarget = (
+    node: SanitizedNode
+  ): SanitizedElementNode | undefined => {
+    if (node.type === "text") return undefined;
+    if (
+      node.attributes["data-showkit-anchor"] === (options.anchorId ?? "")
+    ) {
+      return node;
+    }
+    for (const child of node.children) {
+      const match = findTransferableTarget(child);
+      if (match) return match;
+    }
+    return undefined;
+  };
+  const transferableTarget = targetElement
+    ? findTransferableTarget(transferableRoot)
+    : undefined;
+  const materializeTargetAccessibleName = (name: string): void => {
+    if (!sanitizedTarget) return;
+    for (const node of [sanitizedTarget, transferableTarget]) {
+      if (!node) continue;
+      node.attributes["aria-label"] = name;
+      delete node.attributes["aria-labelledby"];
+    }
+  };
 
   const evidenceTexts: string[] = [];
   if (targetElement && sanitizedTarget) {
-    evidenceTexts.push(accessibleName(targetElement, sanitizedTarget));
+    const sanitizedTargetAccessibleName = accessibleName(
+      targetElement,
+      sanitizedTarget
+    );
+    const sourceTargetAccessibleName = normalizedText(
+      simpleAccessibleName(targetElement)
+    );
+    const targetAccessibleName =
+      !textRedactionActive &&
+      sanitizedTargetAccessibleName === "Hotspot target" &&
+      sourceTargetAccessibleName !== ""
+        ? sourceTargetAccessibleName.slice(0, 180)
+        : sanitizedTargetAccessibleName;
+    if (
+      normalizedText(sanitizedTargetAccessibleName) !==
+      normalizedText(targetAccessibleName)
+    ) {
+      materializeTargetAccessibleName(targetAccessibleName);
+    }
+    if (
+      containsCapturedPseudoText(sanitizedTarget) &&
+      !sanitizedTarget.attributes["aria-label"]
+    ) {
+      materializeTargetAccessibleName(targetAccessibleName);
+    }
+    if (
+      targetElement.hasAttribute("aria-labelledby") ||
+      sanitizedLabelName(targetElement) !== ""
+    ) {
+      materializeTargetAccessibleName(targetAccessibleName);
+    }
+    if (
+      targetElement instanceof HTMLInputElement &&
+      targetElement.type.toLowerCase() === "file" &&
+      !sanitizedTarget.attributes["aria-label"]
+    ) {
+      materializeTargetAccessibleName(targetAccessibleName);
+    }
+    evidenceTexts.push(targetAccessibleName);
     const context = targetElement.closest("section, article, main, [role='dialog']");
     const sanitizedContext = context
       ? sourceSanitizedElements.get(context)
@@ -4385,7 +5000,12 @@ export async function extractSceneKernel(
   const normalize = (value: number, total: number) =>
     Math.max(0, Math.min(1, Number((value / total).toFixed(6))));
   const targetRole = targetElement ? roleFromTag(targetElement) : undefined;
-  if (targetElement && (!rectangle || !sanitizedTarget || !targetRole)) {
+  const nativeSemanticTarget =
+    targetElement?.tagName.toLowerCase() === "summary";
+  if (
+    targetElement &&
+    (!rectangle || !sanitizedTarget || (!targetRole && !nativeSemanticTarget))
+  ) {
     return blocked(options.targetErrorCode, "semantic-target-required");
   }
   const safeEvidenceTexts = [...new Set(evidenceTexts)]
@@ -4460,6 +5080,9 @@ export async function extractSceneKernel(
             }
           }
         }
+      : {}),
+    ...(needsSyntheticInteractionBox
+      ? { targetUsesSyntheticBounds: true as const }
       : {}),
     evidenceTexts: safeEvidenceTexts,
     assetPayloads: [...assetPayloads.values()].sort((left, right) =>

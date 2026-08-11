@@ -123,29 +123,74 @@ async function ensureExecutionContext(
   return executionContextId;
 }
 
-function ariaSnapshotMatchesTarget(
-  snapshot: string,
-  target: { role?: string; name: string }
-): boolean {
-  if (!target.role || !target.name) return false;
-  const match = /^\s*-\s+([a-z][a-z0-9-]*)\s+("(?:\\.|[^"\\])*")/im.exec(
-    snapshot
-  );
-  if (!match?.[1] || !match[2] || match[1] !== target.role) return false;
-  let locatorName: string;
+async function locatorMatchesSemanticTarget(
+  page: Page,
+  locator: Locator,
+  target: { role?: string; name: string },
+  captureTarget: SemanticCaptureTarget
+): Promise<boolean> {
   try {
-    locatorName = JSON.parse(match[2]) as string;
+    if (captureTarget.strategy === "role") {
+      return (
+        (await page
+          .getByRole(
+            captureTarget.role as Parameters<Page["getByRole"]>[0],
+            { name: captureTarget.name, exact: true }
+          )
+          .and(locator)
+          .count()) === 1
+      );
+    }
+    if (captureTarget.strategy === "test-id") {
+      return (
+        (await page
+          .getByTestId(captureTarget.testId)
+          .and(locator)
+          .count()) === 1
+      );
+    }
+    if (captureTarget.strategy === "label") {
+      return (
+        (await page
+          .getByLabel(captureTarget.name, { exact: true })
+          .and(locator)
+          .count()) === 1
+      );
+    }
+    if (captureTarget.strategy === "title") {
+      return (
+        (await page
+          .getByTitle(captureTarget.name, { exact: true })
+          .and(locator)
+          .count()) === 1
+      );
+    }
+    if (captureTarget.strategy === "visible-text") {
+      const textLocator = page.getByText(captureTarget.name, { exact: true });
+      if ((await textLocator.and(locator).count()) === 1) return true;
+      return (await locator.filter({ has: textLocator }).count()) === 1;
+    }
+    if (captureTarget.strategy !== "href") return false;
+    if (!target.name) return false;
+    return await locator.evaluate(
+      (element, expected) => {
+        const href = element.getAttribute("href");
+        if (!href || href.length > 2_048) return false;
+        try {
+          const path =
+            href === expected.path
+              ? href
+              : new URL(href, expected.baseUrl).pathname;
+          return path === expected.path;
+        } catch {
+          return false;
+        }
+      },
+      { path: captureTarget.path, baseUrl: page.url() }
+    );
   } catch {
     return false;
   }
-  const normalizeName = (value: string): string =>
-    value
-      .normalize("NFKC")
-      .replace(/\s+/g, " ")
-      .replace(/\s+([,.;:!?])/g, "$1")
-      .replace(/([([{])\s+/g, "$1")
-      .trim();
-  return normalizeName(locatorName) === normalizeName(target.name);
 }
 
 type InteractionBounds = {
@@ -179,62 +224,61 @@ async function visibleInteractionBounds(
 ): Promise<{ x: number; y: number; width: number; height: number } | null> {
   const bounds = await target.boundingBox();
   if (!bounds) return null;
-  const clippedBounds = clipBoundsToViewport(bounds, page.viewportSize());
-  if (bounds.width >= 24 && bounds.height >= 24) return clippedBounds;
+  return clipBoundsToViewport(bounds, page.viewportSize());
+}
+
+async function syntheticBoundsMatchAssociatedLabel(
+  target: Locator,
+  targetBounds: { x: number; y: number; width: number; height: number },
+  viewport: { width: number; height: number }
+): Promise<boolean> {
   try {
-    const promotedBounds = await target.evaluate((element) => {
-      if (!(element instanceof HTMLInputElement)) return null;
-      if (!["checkbox", "radio"].includes(element.type.toLowerCase())) {
-        return null;
-      }
-      const labels = new Set(Array.from(element.labels ?? []));
-      const containingLabel = element.closest("label");
-      if (containingLabel) labels.add(containingLabel);
-      const label = [...labels]
-        .filter((candidate) => {
-          const rectangle = candidate.getBoundingClientRect();
-          const style = getComputedStyle(candidate);
+    return await target.evaluate(
+      (element, expected) => {
+        if (!(element instanceof HTMLInputElement)) return false;
+        const labels = new Set(Array.from(element.labels ?? []));
+        const containingLabel = element.closest("label");
+        if (containingLabel) labels.add(containingLabel);
+        const horizontalTolerance = Math.max(0.003, 3 / expected.viewport.width);
+        const verticalTolerance = Math.max(0.003, 3 / expected.viewport.height);
+        return [...labels].some((label) => {
+          const style = getComputedStyle(label);
+          const rectangle = label.getBoundingClientRect();
+          if (
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            style.visibility === "collapse" ||
+            Number.parseFloat(style.opacity || "1") <= 0
+          ) {
+            return false;
+          }
+          const left = Math.max(0, rectangle.left);
+          const top = Math.max(0, rectangle.top);
+          const right = Math.min(expected.viewport.width, rectangle.right);
+          const bottom = Math.min(expected.viewport.height, rectangle.bottom);
+          if (right <= left || bottom <= top) return false;
+          const normalized = {
+            x: left / expected.viewport.width,
+            y: top / expected.viewport.height,
+            width: (right - left) / expected.viewport.width,
+            height: (bottom - top) / expected.viewport.height
+          };
           return (
-            rectangle.width >= 24 &&
-            rectangle.height >= 24 &&
-            rectangle.bottom > 0 &&
-            rectangle.right > 0 &&
-            rectangle.top < window.innerHeight &&
-            rectangle.left < window.innerWidth &&
-            style.display !== "none" &&
-            style.visibility !== "hidden" &&
-            style.visibility !== "collapse" &&
-            Number.parseFloat(style.opacity || "1") > 0
+            Math.abs(normalized.x - expected.targetBounds.x) <=
+              horizontalTolerance &&
+            Math.abs(normalized.y - expected.targetBounds.y) <=
+              verticalTolerance &&
+            Math.abs(normalized.width - expected.targetBounds.width) <=
+              horizontalTolerance &&
+            Math.abs(normalized.height - expected.targetBounds.height) <=
+              verticalTolerance
           );
-        })
-        .sort((left, right) => {
-          const containmentDifference =
-            Number(!left.contains(element)) - Number(!right.contains(element));
-          if (containmentDifference !== 0) return containmentDifference;
-          const leftRectangle = left.getBoundingClientRect();
-          const rightRectangle = right.getBoundingClientRect();
-          return (
-            leftRectangle.width * leftRectangle.height -
-            rightRectangle.width * rightRectangle.height
-          );
-        })[0];
-      if (!label) return null;
-      const rectangle = label.getBoundingClientRect();
-      const left = Math.max(0, rectangle.left);
-      const top = Math.max(0, rectangle.top);
-      const right = Math.min(window.innerWidth, rectangle.right);
-      const bottom = Math.min(window.innerHeight, rectangle.bottom);
-      if (right <= left || bottom <= top) return null;
-      return {
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top
-      };
-    });
-    return promotedBounds ?? clippedBounds;
+        });
+      },
+      { targetBounds, viewport }
+    );
   } catch {
-    return clippedBounds;
+    return false;
   }
 }
 
@@ -857,23 +901,6 @@ export async function captureScene(
   let locatorBounds = targetOptions
     ? await visibleInteractionBounds(page, targetOptions.target)
     : undefined;
-  let locatorAriaSnapshot: string | undefined;
-  if (targetOptions) {
-    try {
-      locatorAriaSnapshot = await targetOptions.target.ariaSnapshot({
-        timeout: 2_000
-      });
-    } catch {
-      throw new ShowKitError({
-        code: targetOptions.targetErrorCode ?? "TargetMissing",
-        message: `[SHOWKIT:${targetOptions.targetErrorCode ?? "TargetMissing"}] ShowKit could not verify the action target's semantic identity.`,
-        exitCode: EXIT_CODES.validation,
-        recovery:
-          "Use one visible semantic element with an accessible role and name, then capture again.",
-        details: { category: "target-locator-unavailable" }
-      });
-    }
-  }
   if (targetOptions && !locatorBounds) {
     throw new ShowKitError({
       code: targetOptions.targetErrorCode ?? "TargetMissing",
@@ -899,20 +926,6 @@ export async function captureScene(
         exitCode: EXIT_CODES.validation,
         recovery:
           "Refresh the page state and select one visible semantic element.",
-        details: { category: "target-locator-unavailable" }
-      });
-    }
-    try {
-      locatorAriaSnapshot = await targetOptions.target.ariaSnapshot({
-        timeout: 2_000
-      });
-    } catch {
-      throw new ShowKitError({
-        code: targetOptions.targetErrorCode ?? "TargetMissing",
-        message: `[SHOWKIT:${targetOptions.targetErrorCode ?? "TargetMissing"}] ShowKit could not verify the action target's semantic identity.`,
-        exitCode: EXIT_CODES.validation,
-        recovery:
-          "Use one visible semantic element with an accessible role and name, then capture again.",
         details: { category: "target-locator-unavailable" }
       });
     }
@@ -998,20 +1011,6 @@ export async function captureScene(
           details: { category: "target-locator-unavailable" }
         });
       }
-      try {
-        locatorAriaSnapshot = await targetOptions.target.ariaSnapshot({
-          timeout: 2_000
-        });
-      } catch {
-        throw new ShowKitError({
-          code: targetOptions.targetErrorCode ?? "TargetMissing",
-          message: `[SHOWKIT:${targetOptions.targetErrorCode ?? "TargetMissing"}] ShowKit could not verify the action target's semantic identity.`,
-          exitCode: EXIT_CODES.validation,
-          recovery:
-            "Use one visible semantic element with an accessible role and name, then capture again.",
-          details: { category: "target-locator-unavailable" }
-        });
-      }
     }
     result = await extractPreparedScene();
   }
@@ -1052,10 +1051,39 @@ export async function captureScene(
       Math.abs(
         normalizedLocatorBounds.height - result.target.bounds.height
       ) <= verticalTolerance;
-    const sameSemanticIdentity =
-      typeof locatorAriaSnapshot === "string" &&
-      ariaSnapshotMatchesTarget(locatorAriaSnapshot, result.target);
-    if (!sameBounds || !sameSemanticIdentity) {
+    const syntheticBoundsContainLocator =
+      result.targetUsesSyntheticBounds === true &&
+      result.target.bounds.x <=
+        normalizedLocatorBounds.x + horizontalTolerance &&
+      result.target.bounds.y <= normalizedLocatorBounds.y + verticalTolerance &&
+      result.target.bounds.x + result.target.bounds.width >=
+        normalizedLocatorBounds.x +
+          normalizedLocatorBounds.width -
+          horizontalTolerance &&
+      result.target.bounds.y + result.target.bounds.height >=
+        normalizedLocatorBounds.y +
+          normalizedLocatorBounds.height -
+          verticalTolerance;
+    const syntheticBoundsMatchLabel =
+      result.targetUsesSyntheticBounds === true &&
+      !syntheticBoundsContainLocator &&
+      (await syntheticBoundsMatchAssociatedLabel(
+        targetOptions.target,
+        result.target.bounds,
+        result.viewport
+      ));
+    const sameSemanticIdentity = await locatorMatchesSemanticTarget(
+      page,
+      targetOptions.target,
+      result.target,
+      targetOptions.captureTarget
+    );
+    if (
+      (!sameBounds &&
+        !syntheticBoundsContainLocator &&
+        !syntheticBoundsMatchLabel) ||
+      !sameSemanticIdentity
+    ) {
       throw new ShowKitError({
         code: targetOptions.targetErrorCode ?? "TargetMissing",
         message: `[SHOWKIT:${targetOptions.targetErrorCode ?? "TargetMissing"}] The action target does not match the isolated capture target. [SHOWKIT-CATEGORY:target-locator-mismatch]`,

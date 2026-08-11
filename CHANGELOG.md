@@ -5,6 +5,25 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.11 - 2026-08-10
+
+- Recovered a missing Playwright hotspot name from bounded semantic sources and
+  a leaf-only accessibility fallback that excludes links, editable content, and
+  selected files. Invalid target setup now includes a specific recovery action.
+- Matched native table, grid, image, disclosure, list, and file-input semantics
+  with Playwright, including safe live checked, selected, and open states.
+- Verified exact target identity while allowing bounded visible labels and
+  disclosure rows to become the interactive hotspot without a site exception.
+- Allowed confirmed visible-session capture to use ShowKit's fixed system font
+  stack when unavailable text-font metrics remain bounded across Latin, Korean,
+  and CJK samples. Icon fonts and out-of-range metrics remain blocked.
+- Applied one absolute deadline to consented public-asset recovery and preserved
+  only context-safe control attributes in the final interactive player.
+- Updated the installed ShowKit skill compatibility range to require
+  `@showkit/cli >=0.2.11 <0.3.0`.
+- Scoped CI runner jobs to the public export while retaining the complete local
+  release gate for the private source workspace.
+
 ## 0.2.10 - 2026-08-10
 
 - Added owner-only rename and delete actions to **Your demos**. Rename keeps the

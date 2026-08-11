@@ -117,13 +117,26 @@ CSS may be read transiently, up to 4 MB in aggregate, to locate a required
 visible WOFF2 font; the CSS is never captured. A static complex SVG sprite may
 be rendered only as the exact bounded background layer in a network-blocked,
 JavaScript-disabled context; its source bytes are not saved. Missing or invalid
-critical assets still stop the capture. If an observed public WOFF2 filename is
-opaque, ShowKit compares fixed non-page text metrics in a separate
-network-blocked context and accepts only one unique content-hash match.
+critical assets still stop the capture. A confirmed visible-session capture has
+one text-font exception: when exact loaded font bytes remain unavailable,
+ShowKit may use its fixed system font stack only when fixed non-page Latin,
+Korean, and CJK metric samples remain within `0.8` through `1.25` on both axes.
+Icon fonts and out-of-range text fonts still stop the capture. If an observed
+public WOFF2 filename is opaque, ShowKit compares fixed non-page text metrics in
+a separate network-blocked context and accepts only one unique content-hash
+match.
 Playwright capture removes only unresolved non-interactive decoration by
 default and records that exclusion. Set `remoteAssetPolicy: "strict"` on the
 first `demo.step()` when every visible decorative asset must be reproduced;
-targets, controls, and layout-critical assets always remain fail-closed.
+outside the bounded text-font exception above, targets, controls, and
+layout-critical assets always remain fail-closed.
+
+Give `captureTarget.name` the exact accessible name when it is known. If the
+name is omitted, ShowKit may recover it from bounded semantic sources on the
+same target and then verify the exact Playwright identity. If no bounded name
+can be verified, capture stops with `capture-target-name-required` and asks for
+the exact name instead of using a site-specific selector or visible-text
+workaround.
 
 ## Package exports
 

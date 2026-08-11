@@ -52,7 +52,9 @@ not a promise to clone every website or to produce pixel-identical output.
 6. Stop before persistence when a layout-critical dependency cannot be
    reproduced as safe HTML, CSS, or an approved local content-addressed asset.
    Use `UnsupportedSurface`; never substitute a generic icon, native control,
-   fallback font, blank media region, or full-scene screenshot.
+   unverified fallback font, blank media region, or full-scene screenshot. The
+   only system text-font exception is the confirmed and bounded rule in
+   `security.md`.
 
 Layout-critical means its absence changes recognition, meaning, target
 affordance, text wrapping, control geometry, or the primary layout. A purely
@@ -102,6 +104,9 @@ await captureBrowserSession({
 Do this only after explicit consent. Text-only redaction does not grant private
 asset consent. Fonts and layout-critical images, masks, backgrounds, and icons
 are assets; bundle only supported bytes exposed by the documented provider.
+If exact loaded text-font bytes still remain unavailable after confirmed
+visible-session consent, use the fixed system stack only when the bounded
+non-page metric check in `security.md` passes. Keep icon fonts fail-closed.
 
 ## Compare the source and preview
 
@@ -178,6 +183,14 @@ than `8` CSS pixels, the text stays selectable, and the generated HTML audit
 still reports zero drift, unsafe multi-line wrappers, and collisions. Record the
 number in `data-text-metric-fit-count`. Do not fetch the font body through an
 undocumented path, increase the capture resolution, or accept a larger fit.
+For a confirmed visible-session capture, the extractor may instead replace an
+unavailable loaded text font with ShowKit's fixed system stack before
+persistence. It may do so only when fixed non-page Latin, Korean, and CJK
+samples stay within `0.8` through `1.25` on both axes. The captured scene must
+record `bounded-font-metric-fallback`, keep the text selectable, and still pass
+the generated HTML audit with zero metric drift, unsafe wrapping, suppressed
+placeholders, and collisions. This rule never applies to private-use glyphs or
+another icon font.
 The current target must remain visible and undimmed inside the spotlight.
 For CSS generated content, preserve only the visual content before an optional
 alternative-text `/` value. Keep an empty generated item only when its box
@@ -226,8 +239,11 @@ When the comparison fails:
    visible non-system font has an exact `fontFaces` entry and local WOFF2 asset.
    A downloaded font file without its family, weight, and style mapping does
    not satisfy this check. If the documented provider rejected the WOFF2
-   response type, use only the bounded generated-HTML metric fit above; if its
-   limits are exceeded, keep the scene failed.
+   response type, use only the bounded generated-HTML metric fit above. For a
+   confirmed visible session whose exact text-font bytes remain unavailable,
+   accept only a recorded `bounded-font-metric-fallback` that passed the fixed
+   non-page metric check. If either rule's limits are exceeded, keep the scene
+   failed.
 5. Recapture once through the normal extractor and rebuild the demo.
 6. Use another supported semantic target or route only when it preserves the
    person's requested outcome.
