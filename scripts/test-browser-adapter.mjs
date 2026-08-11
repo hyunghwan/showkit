@@ -185,6 +185,7 @@ function mockAdapter(
         return true;
       },
       async evaluateTarget(target, _pageFunction, options) {
+        assert.equal(options.scrollCapture, "revealed");
         return sceneResult(target.name, options);
       },
       async performAction() {
@@ -193,7 +194,8 @@ function mockAdapter(
           "https://app.example.test/dashboard?after=never-persist#private";
         if (interruptAfterAction) alive = false;
       },
-      async evaluateTerminal() {
+      async evaluateTerminal(_pageFunction, options) {
+        assert.equal(options.scrollCapture, "revealed");
         return terminalResult();
       },
       async cleanup() {

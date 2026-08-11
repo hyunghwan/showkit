@@ -2535,6 +2535,122 @@ test("captures the revealed semantic scroll range and restores nested scroll sta
   ).toBe("340px");
 });
 
+test("keeps earlier content when nested scroll exceeds its document offset", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 800, height: 500 });
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; width: 800px; }
+      #panel { height: 120px; left: 80px; overflow-y: auto; position: absolute; top: 100px; width: 420px; }
+      #panel-content { height: 760px; position: relative; }
+      #earlier-detail { left: 24px; position: absolute; top: 0; }
+      #review-row { left: 24px; position: absolute; top: 540px; }
+      #nested-unrevealed { left: 24px; position: absolute; top: 700px; }
+    </style>
+    <section id="panel" aria-label="Review queue">
+      <div id="panel-content">
+        <p id="earlier-detail">Earlier revealed detail</p>
+        <button id="review-row" type="button">Review row</button>
+        <p id="nested-unrevealed">Nested content not revealed yet</p>
+      </div>
+    </section>
+  `);
+  await page.locator("#panel").evaluate((panel) => {
+    if (panel instanceof HTMLElement) panel.scrollTop = 500;
+  });
+
+  const result = await page
+    .getByRole("button", { name: "Review row", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-review-row",
+      nodeMode: "json",
+      scrollCapture: "revealed"
+    });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok || result.scanOnly) return;
+  expect(result.html).toContain("Earlier revealed detail");
+  expect(result.html).toContain("Review row");
+  expect(result.html).not.toContain("Nested content not revealed yet");
+  expect(result.html).toContain('data-showkit-scroll-y="500"');
+});
+
+test("blocks unsupported surfaces anywhere in the revealed range", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 800, height: 500 });
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; width: 800px; }
+      main { height: 1200px; position: relative; }
+      canvas { height: 100px; left: 40px; position: absolute; top: 100px; width: 200px; }
+      button { left: 40px; position: absolute; top: 700px; }
+    </style>
+    <main>
+      <canvas width="200" height="100"></canvas>
+      <button type="button">Review range</button>
+    </main>
+  `);
+  await page.evaluate(() => window.scrollTo(0, 600));
+
+  const documentResult = await page
+    .getByRole("button", { name: "Review range", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-review-range",
+      nodeMode: "json",
+      scrollCapture: "revealed"
+    });
+  expect(documentResult).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "canvas"
+      })
+    })
+  );
+
+  await page.setContent(`
+    <style>
+      html, body { margin: 0; width: 800px; }
+      #panel { height: 120px; left: 80px; overflow-y: auto; position: absolute; top: 100px; width: 420px; }
+      #panel-content { height: 760px; position: relative; }
+      iframe { height: 80px; left: 24px; position: absolute; top: 0; width: 200px; }
+      button { left: 24px; position: absolute; top: 540px; }
+    </style>
+    <section id="panel" aria-label="Review queue">
+      <div id="panel-content">
+        <iframe title="Earlier embedded content"></iframe>
+        <button type="button">Review nested range</button>
+      </div>
+    </section>
+  `);
+  await page.locator("#panel").evaluate((panel) => {
+    if (panel instanceof HTMLElement) panel.scrollTop = 500;
+  });
+
+  const nestedResult = await page
+    .getByRole("button", { name: "Review nested range", exact: true })
+    .evaluate(extractSceneKernel, {
+      ...baseOptions,
+      anchorId: "sk-review-nested-range",
+      nodeMode: "json",
+      scrollCapture: "revealed"
+    });
+  expect(nestedResult).toEqual(
+    expect.objectContaining({
+      ok: false,
+      blocker: expect.objectContaining({
+        code: "UnsupportedSurface",
+        category: "iframe"
+      })
+    })
+  );
+});
+
 test("preserves named grid placement when replaying a captured scene", async ({
   page
 }) => {

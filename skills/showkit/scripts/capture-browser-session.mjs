@@ -1300,6 +1300,7 @@ function kernelOptions(cli, options) {
     remoteAssetPolicy: options.remoteAssetPolicy,
     targetErrorCode: "BrowserTargetAmbiguous",
     nodeMode: "json",
+    scrollCapture: "revealed",
     transferEncoding: "lzss-json",
     ...(options.sensitiveTextRedaction
       ? { sensitiveTextRedaction: options.sensitiveTextRedaction }

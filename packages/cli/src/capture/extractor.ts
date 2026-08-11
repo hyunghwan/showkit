@@ -1405,43 +1405,45 @@ export async function extractSceneKernel(
         rectangle.left < window.innerWidth
       );
     }
-    const documentLeft = rectangle.left + rawScrollX;
-    const documentTop = rectangle.top + rawScrollY;
-    if (
-      documentLeft + rectangle.width <= 0 ||
-      documentTop + rectangle.height <= 0 ||
-      documentLeft >= capturedScroll.width ||
-      documentTop >= capturedScroll.height
-    ) {
-      return false;
-    }
+    let capturedExtentElement = element;
+    let documentExtentRectangle = rectangle;
     let ancestor = parentElementOrHost(element);
     while (ancestor && ancestor !== pageDocument.documentElement) {
       const axes = scrollableAxes(ancestor);
       if (axes.x || axes.y) {
         const ancestorRectangle = rectangleFor(ancestor);
+        const capturedExtentRectangle = rectangleFor(capturedExtentElement);
         const contentLeft =
-          rectangle.left -
+          capturedExtentRectangle.left -
           (ancestorRectangle.left + ancestor.clientLeft) +
           ancestor.scrollLeft;
         const contentTop =
-          rectangle.top -
+          capturedExtentRectangle.top -
           (ancestorRectangle.top + ancestor.clientTop) +
           ancestor.scrollTop;
         if (
           (axes.x &&
-            (contentLeft + rectangle.width <= 0 ||
+            (contentLeft + capturedExtentRectangle.width <= 0 ||
               contentLeft >= ancestor.scrollLeft + ancestor.clientWidth)) ||
           (axes.y &&
-            (contentTop + rectangle.height <= 0 ||
+            (contentTop + capturedExtentRectangle.height <= 0 ||
               contentTop >= ancestor.scrollTop + ancestor.clientHeight))
         ) {
           return false;
         }
+        capturedExtentElement = ancestor;
+        documentExtentRectangle = ancestorRectangle;
       }
       ancestor = parentElementOrHost(ancestor);
     }
-    return true;
+    const documentLeft = documentExtentRectangle.left + rawScrollX;
+    const documentTop = documentExtentRectangle.top + rawScrollY;
+    return !(
+      documentLeft + documentExtentRectangle.width <= 0 ||
+      documentTop + documentExtentRectangle.height <= 0 ||
+      documentLeft >= capturedScroll.width ||
+      documentTop >= capturedScroll.height
+    );
   };
   const renderedCanvasSource = (element: Element): string => {
     const rectangle = rectangleFor(element);
@@ -1597,18 +1599,37 @@ export async function extractSceneKernel(
       rectangle.left < window.innerWidth
     );
   };
+  const isCapturedVisualSurface = (element: Element): boolean => {
+    const computed = computedFor(element);
+    if (
+      computed.display === "none" ||
+      computed.visibility === "hidden" ||
+      computed.visibility === "collapse" ||
+      Number.parseFloat(computed.opacity || "1") === 0
+    ) {
+      return false;
+    }
+    const rectangle = rectangleFor(element);
+    return (
+      rectangle.width > 0 &&
+      rectangle.height > 0 &&
+      insideCapturedScrollExtent(element, rectangle)
+    );
+  };
   const nonVisualUnsupportedElements = allElements.filter(
-    (element) => isUnsupportedElement(element) && !isVisualSurface(element)
+    (element) =>
+      isUnsupportedElement(element) && !isCapturedVisualSurface(element)
   );
   const unsupportedShadowHost = openShadowHosts.find(
     (element) =>
-      isVisualSurface(element) && !isSafeTextOpenShadowRoot(element)
+      isCapturedVisualSurface(element) && !isSafeTextOpenShadowRoot(element)
   );
   if (unsupportedShadowHost) {
     return blocked("UnsupportedSurface", "shadow-root");
   }
   const unsupportedElement = allElements.find(
-    (element) => isUnsupportedElement(element) && isVisualSurface(element)
+    (element) =>
+      isUnsupportedElement(element) && isCapturedVisualSurface(element)
   );
   if (unsupportedElement) {
     return blocked("UnsupportedSurface", unsupportedElement.tagName.toLowerCase());
