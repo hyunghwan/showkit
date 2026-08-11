@@ -2058,12 +2058,6 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera",
       "focus"
     );
-    await expect.poll(() =>
-      page.locator("#scene-viewport").evaluate((element) => {
-        const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
-        return matrix.a;
-      })
-    ).toBeGreaterThan(1.15);
     await expect(page.locator("#scene-shell")).not.toHaveAttribute(
       "data-camera-transitioning",
       "true"
@@ -2083,6 +2077,12 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
         delete testWindow.__showkitOriginalRequestAnimationFrame;
       }
     });
+    await expect.poll(() =>
+      page.locator("#scene-viewport").evaluate((element) => {
+        const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+        return matrix.a;
+      })
+    ).toBeGreaterThan(1.15);
     await expect(page.locator("#hotspot")).toBeFocused();
     const focused = await page.evaluate(() => {
       const shell = document.querySelector("#scene-shell");
