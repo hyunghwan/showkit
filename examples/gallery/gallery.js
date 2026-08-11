@@ -20,7 +20,7 @@ const iframe = document.getElementById("showkit-demo");
 const openDemo = document.getElementById("open-demo");
 
 function demoUrl(demoId) {
-  return `${origin}/demos/${demoId}/?release=${release}`;
+  return `${origin}/demos/${demoId}/index.html?release=${release}`;
 }
 
 function selectDemo(demoId, options = {}) {

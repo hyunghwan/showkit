@@ -74,7 +74,11 @@ test("selects the three current landing-page demos", async ({ page }) => {
   const frame = page.locator("#showkit-demo");
   await expect(frame).toHaveAttribute(
     "src",
-    "https://showkit.sqncs.com/demos/travel-search/?release=2026-08-06-linear-text-layout-v3"
+    "https://showkit.sqncs.com/demos/travel-search/index.html?release=2026-08-06-linear-text-layout-v3"
+  );
+  await expect(page.locator("#open-demo")).toHaveAttribute(
+    "href",
+    "https://showkit.sqncs.com/demos/travel-search/index.html?release=2026-08-06-linear-text-layout-v3"
   );
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(
     "Explore flexible travel dates"
@@ -82,7 +86,7 @@ test("selects the three current landing-page demos", async ({ page }) => {
 
   await tabs.nth(1).click();
   await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
-  await expect(frame).toHaveAttribute("src", /\/demos\/issue-priority\//);
+  await expect(frame).toHaveAttribute("src", /\/demos\/issue-priority\/index\.html/);
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(
     "Scaffold a project with Linear Agent"
   );
@@ -90,13 +94,13 @@ test("selects the three current landing-page demos", async ({ page }) => {
   await tabs.nth(1).press("ArrowRight");
   await expect(tabs.nth(2)).toBeFocused();
   await expect(tabs.nth(2)).toHaveAttribute("aria-selected", "true");
-  await expect(frame).toHaveAttribute("src", /\/demos\/stripe-payments\//);
+  await expect(frame).toHaveAttribute("src", /\/demos\/stripe-payments\/index\.html/);
   await expect(page.getByRole("heading", { level: 2 })).toHaveText(
     "Filter payments by date and amount"
   );
   await expect(page.locator("#open-demo")).toHaveAttribute(
     "href",
-    /\/demos\/stripe-payments\//
+    /\/demos\/stripe-payments\/index\.html/
   );
   await expect.poll(() => requestedDemos.length).toBeGreaterThanOrEqual(3);
 });
