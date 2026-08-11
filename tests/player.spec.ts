@@ -2032,37 +2032,27 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       ];
     });
     await page.getByRole("button", { name: "Explore demo" }).click();
-    await page.evaluate(async () => {
-      const testWindow = window as Window & {
-        __showkitOriginalRequestAnimationFrame?: typeof window.requestAnimationFrame;
-      };
+    await page.evaluate(() => {
       const scrollLayer = document.querySelector("#scene-scroll");
-      const viewport = document.querySelector("#scene-viewport");
-      if (
-        !(scrollLayer instanceof HTMLElement) ||
-        !(viewport instanceof HTMLElement)
-      ) {
+      if (!(scrollLayer instanceof HTMLElement)) {
         throw new Error("Scene camera layers are unavailable.");
       }
-      testWindow.__showkitOriginalRequestAnimationFrame =
-        window.requestAnimationFrame;
-      window.requestAnimationFrame = () => 0;
       scrollLayer.dispatchEvent(new Event("scroll"));
-      await new Promise<void>((resolve) => {
-        let remaining = 10;
-        const churn = () => {
-          viewport.style.transform += " translateZ(0)";
-          window.dispatchEvent(new Event("resize"));
-          remaining -= 1;
-          if (remaining === 0) {
-            resolve();
-            return;
-          }
-          window.setTimeout(churn, 90);
-        };
-        churn();
-      });
     });
+    for (let iteration = 0; iteration < 10; iteration += 1) {
+      await page.locator("#scene-viewport").evaluate((viewport) => {
+        if (!(viewport instanceof HTMLElement)) {
+          throw new Error("Scene camera viewport is unavailable.");
+        }
+        viewport.style.transform = "none";
+        window.dispatchEvent(new Event("resize"));
+      });
+      if (iteration < 9) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 90);
+        });
+      }
+    }
 
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
       "data-camera",
@@ -2072,16 +2062,6 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera-transitioning",
       "true"
     );
-    await page.evaluate(() => {
-      const testWindow = window as Window & {
-        __showkitOriginalRequestAnimationFrame?: typeof window.requestAnimationFrame;
-      };
-      if (testWindow.__showkitOriginalRequestAnimationFrame) {
-        window.requestAnimationFrame =
-          testWindow.__showkitOriginalRequestAnimationFrame;
-        delete testWindow.__showkitOriginalRequestAnimationFrame;
-      }
-    });
     await expect.poll(() =>
       page.locator("#scene-viewport").evaluate((element) => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
