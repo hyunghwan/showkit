@@ -2031,19 +2031,32 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       ];
     });
     await page.getByRole("button", { name: "Explore demo" }).click();
-    await expect(page.locator("#scene-shell")).toHaveAttribute(
-      "data-camera-transitioning",
-      "true"
-    );
-
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
       "data-camera",
       "focus"
     );
-    await expect(page.locator("#scene-shell")).not.toHaveAttribute(
-      "data-camera-transitioning",
-      "true"
-    );
+    await expect.poll(() =>
+      page.evaluate(() => {
+        const hotspot = document.querySelector("#hotspot");
+        const tooltip = document.querySelector("#tooltip");
+        if (!(hotspot instanceof HTMLElement) || !(tooltip instanceof HTMLElement)) {
+          return null;
+        }
+        const hotspotStyle = getComputedStyle(hotspot);
+        const tooltipStyle = getComputedStyle(tooltip);
+        return {
+          hotspotOpacity: Number(hotspotStyle.opacity),
+          hotspotPointerEvents: hotspotStyle.pointerEvents,
+          tooltipOpacity: Number(tooltipStyle.opacity),
+          tooltipPointerEvents: tooltipStyle.pointerEvents
+        };
+      })
+    ).toEqual({
+      hotspotOpacity: 1,
+      hotspotPointerEvents: "auto",
+      tooltipOpacity: 1,
+      tooltipPointerEvents: "auto"
+    });
     await expect.poll(() =>
       page.locator("#scene-viewport").evaluate((element) => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);

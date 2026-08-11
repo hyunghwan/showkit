@@ -668,20 +668,31 @@ body[data-initial-render="true"] .hotspot::after {
   transition: none !important;
 }
 
-@keyframes showkit-camera-transition-clock {
-  from { opacity: 1; }
+@keyframes showkit-camera-overlay-reveal {
+  from { opacity: 0; }
   to { opacity: 1; }
 }
 
-.scene-shell[data-camera-transitioning="true"] {
-  animation: showkit-camera-transition-clock 650ms linear;
+@keyframes showkit-camera-interaction-restore {
+  from { pointer-events: none; }
+  to { pointer-events: auto; }
 }
 
-.scene-shell[data-camera-transitioning="true"] .hotspot,
-.scene-shell[data-camera-transitioning="true"] .tooltip,
+.scene-shell[data-camera-transitioning="true"] .hotspot {
+  animation:
+    showkit-camera-overlay-reveal 650ms step-end both,
+    showkit-camera-interaction-restore 650ms step-end both,
+    hotspot-attention 1.65s cubic-bezier(0.2, 0.75, 0.25, 1) infinite;
+}
+
+.scene-shell[data-camera-transitioning="true"] .tooltip {
+  animation:
+    showkit-camera-overlay-reveal 650ms step-end both,
+    showkit-camera-interaction-restore 650ms step-end both;
+}
+
 .scene-shell[data-camera-transitioning="true"] .step-backdrop {
-  opacity: 0;
-  pointer-events: none;
+  animation: showkit-camera-overlay-reveal 650ms step-end both;
 }
 
 .scene-scroll {
@@ -3256,12 +3267,12 @@ const PLAYER_JS = `(() => {
     elements.tooltip.style.visibility = "visible";
   }
 
-  function clearCameraTransition() {
+  function clearCameraTransition(reposition = true) {
     window.clearTimeout(overlayRevealTimer);
     overlayRevealTimer = 0;
     overlayRevealAt = 0;
     delete elements.shell.dataset.cameraTransitioning;
-    positionOverlay();
+    if (reposition) positionOverlay();
   }
 
   function finishCameraTransition() {
@@ -3294,14 +3305,16 @@ const PLAYER_JS = `(() => {
     "transitioncancel",
     finishViewportCameraTransition
   );
-  elements.shell.addEventListener("animationend", (event) => {
+  function finishOverlayReveal(event) {
     if (
-      event.target !== elements.shell ||
-      event.animationName !== "showkit-camera-transition-clock" ||
+      event.animationName !== "showkit-camera-overlay-reveal" ||
       elements.shell.dataset.cameraTransitioning !== "true"
     ) return;
     clearCameraTransition();
-  });
+  }
+
+  elements.shell.addEventListener("animationend", finishOverlayReveal);
+  elements.shell.addEventListener("animationcancel", finishOverlayReveal);
 
   function scheduleOverlayPosition(duration = 180) {
     window.cancelAnimationFrame(overlayFrame);
@@ -3480,6 +3493,7 @@ const PLAYER_JS = `(() => {
   }
 
   function render() {
+    clearCameraTransition(false);
     renderRevision += 1;
     const welcome = hasWelcome && current < 0;
     const complete = current >= demo.steps.length;
