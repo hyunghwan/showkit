@@ -668,6 +668,15 @@ body[data-initial-render="true"] .hotspot::after {
   transition: none !important;
 }
 
+@keyframes showkit-camera-transition-clock {
+  from { opacity: 1; }
+  to { opacity: 1; }
+}
+
+.scene-shell[data-camera-transitioning="true"] {
+  animation: showkit-camera-transition-clock 650ms linear;
+}
+
 .scene-shell[data-camera-transitioning="true"] .hotspot,
 .scene-shell[data-camera-transitioning="true"] .tooltip,
 .scene-shell[data-camera-transitioning="true"] .step-backdrop {
@@ -3268,10 +3277,27 @@ const PLAYER_JS = `(() => {
     clearCameraTransition();
   }
 
-  elements.viewport.addEventListener("transitionend", (event) => {
+  function finishViewportCameraTransition(event) {
     if (
       event.target !== elements.viewport ||
       !["left", "top", "transform"].includes(event.propertyName) ||
+      elements.shell.dataset.cameraTransitioning !== "true"
+    ) return;
+    clearCameraTransition();
+  }
+
+  elements.viewport.addEventListener(
+    "transitionend",
+    finishViewportCameraTransition
+  );
+  elements.viewport.addEventListener(
+    "transitioncancel",
+    finishViewportCameraTransition
+  );
+  elements.shell.addEventListener("animationend", (event) => {
+    if (
+      event.target !== elements.shell ||
+      event.animationName !== "showkit-camera-transition-clock" ||
       elements.shell.dataset.cameraTransitioning !== "true"
     ) return;
     clearCameraTransition();
