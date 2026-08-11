@@ -2031,10 +2031,9 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       ];
     });
     await page.getByRole("button", { name: "Explore demo" }).click();
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const testWindow = window as Window & {
         __showkitOriginalRequestAnimationFrame?: typeof window.requestAnimationFrame;
-        __showkitCameraChurnTimer?: number;
       };
       const scrollLayer = document.querySelector("#scene-scroll");
       const viewport = document.querySelector("#scene-viewport");
@@ -2048,10 +2047,20 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
         window.requestAnimationFrame;
       window.requestAnimationFrame = () => 0;
       scrollLayer.dispatchEvent(new Event("scroll"));
-      testWindow.__showkitCameraChurnTimer = window.setInterval(() => {
-        viewport.style.transform += " translateZ(0)";
-        window.dispatchEvent(new Event("resize"));
-      }, 80);
+      await new Promise<void>((resolve) => {
+        let remaining = 10;
+        const churn = () => {
+          viewport.style.transform += " translateZ(0)";
+          window.dispatchEvent(new Event("resize"));
+          remaining -= 1;
+          if (remaining === 0) {
+            resolve();
+            return;
+          }
+          window.setTimeout(churn, 90);
+        };
+        churn();
+      });
     });
 
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
@@ -2065,12 +2074,7 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
     await page.evaluate(() => {
       const testWindow = window as Window & {
         __showkitOriginalRequestAnimationFrame?: typeof window.requestAnimationFrame;
-        __showkitCameraChurnTimer?: number;
       };
-      if (testWindow.__showkitCameraChurnTimer !== undefined) {
-        window.clearInterval(testWindow.__showkitCameraChurnTimer);
-        delete testWindow.__showkitCameraChurnTimer;
-      }
       if (testWindow.__showkitOriginalRequestAnimationFrame) {
         window.requestAnimationFrame =
           testWindow.__showkitOriginalRequestAnimationFrame;
