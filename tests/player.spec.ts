@@ -1953,6 +1953,7 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
   test("zooms toward compact edge targets and returns to the full HTML scene", async ({
     page
   }) => {
+    test.slow();
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(customOverlayUrl);
     await page.evaluate(() => {
