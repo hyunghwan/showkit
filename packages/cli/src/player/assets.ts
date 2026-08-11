@@ -3247,6 +3247,14 @@ const PLAYER_JS = `(() => {
     elements.tooltip.style.visibility = "visible";
   }
 
+  function clearCameraTransition() {
+    window.clearTimeout(overlayRevealTimer);
+    overlayRevealTimer = 0;
+    overlayRevealAt = 0;
+    delete elements.shell.dataset.cameraTransitioning;
+    positionOverlay();
+  }
+
   function finishCameraTransition() {
     overlayRevealTimer = 0;
     const remaining = overlayRevealAt - performance.now();
@@ -3257,10 +3265,17 @@ const PLAYER_JS = `(() => {
       );
       return;
     }
-    overlayRevealAt = 0;
-    delete elements.shell.dataset.cameraTransitioning;
-    positionOverlay();
+    clearCameraTransition();
   }
+
+  elements.viewport.addEventListener("transitionend", (event) => {
+    if (
+      event.target !== elements.viewport ||
+      !["left", "top", "transform"].includes(event.propertyName) ||
+      elements.shell.dataset.cameraTransitioning !== "true"
+    ) return;
+    clearCameraTransition();
+  });
 
   function scheduleOverlayPosition(duration = 180) {
     window.cancelAnimationFrame(overlayFrame);
