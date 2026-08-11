@@ -165,8 +165,12 @@ trust boundary.
 ## Output
 
 ShowKit builds selectable, semantic HTML with local content-addressed assets,
-DOM-anchored hotspots, tooltips, keyboard navigation, progress, Back, Next, and
-Restart demo. A small `Powered by ShowKit` link sits below the interactive
+native scrolling through the safely captured range, DOM-anchored hotspots,
+tooltips, keyboard navigation, progress, Back, Next, and Restart demo. The
+default player starts on step one with the full scene fitted and already
+settled, without an entrance animation. A generated cover composed from the
+first live HTML scene and restrained target focus are optional presentation
+modes. A small `Powered by ShowKit` link sits below the interactive
 player layers in the bottom-right and opens the ShowKit website in a new tab.
 The same captured input produces the same artifact hash.
 
@@ -188,7 +192,7 @@ Add Playwright only for an approved headed-browser or CI flow:
 ```bash
 npm install -D @playwright/test
 npx showkit doctor --capability playwright --browser-channel chrome --json
-npx showkit capture ./demo.spec.ts --viewport 1280x720 --preflight --json
+npx showkit capture ./demo.spec.ts --viewport 1440x900 --preflight --json
 ```
 
 This checks installed Google Chrome. If it is unavailable, install bundled

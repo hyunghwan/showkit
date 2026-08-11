@@ -9,7 +9,7 @@ For install-first onboarding, finish the skill install and then ask only:
 
 > What product URL or currently open product flow should I use?
 
-Use a new empty output folder and 1280×720 by default after the answer. Do not
+Use a new empty output folder and 1440×900 by default after the answer. Do not
 ask for the folder, audience, takeaway, viewport, or capture implementation
 before the URL or open flow is known.
 

@@ -249,6 +249,7 @@ export const DemoFixtureSchema = z
                 "toggle",
                 "disclose",
                 "filter",
+                "inspect",
                 "mutation-confirmed"
               ])
               .default("select")
@@ -469,6 +470,15 @@ export const SceneSchema = z.object({
     width: z.number().int().positive(),
     height: z.number().int().positive()
   }).strict(),
+  scroll: z
+    .object({
+      x: z.number().int().nonnegative().max(100_000),
+      y: z.number().int().nonnegative().max(100_000),
+      width: z.number().int().positive().max(100_000),
+      height: z.number().int().positive().max(100_000)
+    })
+    .strict()
+    .optional(),
   anchorId: z.string().min(1).optional(),
   target: z
     .object({
@@ -479,7 +489,37 @@ export const SceneSchema = z.object({
     })
     .strict()
     .optional()
-}).strict();
+}).strict().superRefine((scene, context) => {
+  if (!scene.scroll) return;
+  if (scene.scroll.width < scene.viewport.width) {
+    context.addIssue({
+      code: "custom",
+      path: ["scroll", "width"],
+      message: "Scene scroll width must contain the captured viewport."
+    });
+  }
+  if (scene.scroll.height < scene.viewport.height) {
+    context.addIssue({
+      code: "custom",
+      path: ["scroll", "height"],
+      message: "Scene scroll height must contain the captured viewport."
+    });
+  }
+  if (scene.scroll.x + scene.viewport.width > scene.scroll.width) {
+    context.addIssue({
+      code: "custom",
+      path: ["scroll", "x"],
+      message: "Scene horizontal scroll offset must stay inside the captured range."
+    });
+  }
+  if (scene.scroll.y + scene.viewport.height > scene.scroll.height) {
+    context.addIssue({
+      code: "custom",
+      path: ["scroll", "y"],
+      message: "Scene vertical scroll offset must stay inside the captured range."
+    });
+  }
+});
 
 export const CaptureStepSchema = z.object({
   id: IdentifierSchema,
@@ -887,12 +927,7 @@ export const StorySpecSchema = z.object({
       backdrop: PlayerBackdropSchema.default("heavy")
     })
     .strict()
-    .default({
-      title: "Welcome to this interactive demo",
-      body: "Explore the captured product flow at your own pace.",
-      actionLabel: "Explore demo",
-      backdrop: "heavy"
-    }),
+    .optional(),
   steps: z.array(StoryStepSchema).min(1),
   theme: z
     .object({
@@ -974,7 +1009,8 @@ export const StorySpecSchema = z.object({
   player: z
     .object({
       chrome: PlayerChromeSchema,
-      navigation: z.enum(["controls", "hotspots"]).default("controls")
+      navigation: z.enum(["controls", "hotspots"]).default("controls"),
+      camera: z.enum(["fit", "focus"]).default("fit")
     })
     .strict()
     .default({
@@ -990,7 +1026,8 @@ export const StorySpecSchema = z.object({
           cta: "tooltip"
         }
       },
-      navigation: "controls"
+      navigation: "controls",
+      camera: "fit"
     }),
   cta: z
     .object({

@@ -80,6 +80,7 @@ function sceneResult(name, options) {
       }
     ],
     viewport: { width: 1280, height: 720 },
+    scroll: { x: 0, y: 0, width: 1280, height: 720 },
     target: {
       tag: "button",
       role: "button",
@@ -121,6 +122,7 @@ function terminalResult() {
       }
     ],
     viewport: { width: 1280, height: 720 },
+    scroll: { x: 0, y: 0, width: 1280, height: 720 },
     evidenceTexts: [],
     assetPayloads: [],
     fontFaces: [],
@@ -183,6 +185,7 @@ function mockAdapter(
         return true;
       },
       async evaluateTarget(target, _pageFunction, options) {
+        assert.equal(options.scrollCapture, "revealed");
         return sceneResult(target.name, options);
       },
       async performAction() {
@@ -191,7 +194,8 @@ function mockAdapter(
           "https://app.example.test/dashboard?after=never-persist#private";
         if (interruptAfterAction) alive = false;
       },
-      async evaluateTerminal() {
+      async evaluateTerminal(_pageFunction, options) {
+        assert.equal(options.scrollCapture, "revealed");
         return terminalResult();
       },
       async cleanup() {
@@ -2307,6 +2311,7 @@ const transferLocator = {
         nodesJsonLength: transferredNodesJson.length
       },
       viewport: { width: 1280, height: 720 },
+      scroll: { x: 0, y: 0, width: 1280, height: 720 },
       evidenceTexts: ["Compose"],
       assetPayloads: [],
       excludedSurfaces: [],
@@ -2475,6 +2480,7 @@ const compressedTransferLocator = {
         nodesJsonLength: transferredNodesJson.length
       },
       viewport: { width: 1280, height: 720 },
+      scroll: { x: 0, y: 0, width: 1280, height: 720 },
       evidenceTexts: ["Compose"],
       assetPayloads: [],
       excludedSurfaces: [],

@@ -29,7 +29,7 @@ import {
 } from "../core/security.js";
 import type { PageAssetConsent } from "./extractor.js";
 
-const DEFAULT_CAPTURE_VIEWPORT = { width: 1280, height: 720 } as const;
+const DEFAULT_CAPTURE_VIEWPORT = { width: 1440, height: 900 } as const;
 type CaptureStepPhase = "setup" | "capture" | "action" | "outcome";
 
 function expectedCaptureViewport(): { width: number; height: number } {

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Workspace presentation</title>
+    <link rel="stylesheet" href="./visual-fidelity.css">
+  </head>
+  <body data-state="draft">
+    <div class="app-shell">
+      <aside class="rail">
+        <a class="brand" href="#" aria-label="Northstar workspace">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <span>
+            <strong>Northstar</strong>
+            <small>Team workspace</small>
+          </span>
+        </a>
+        <nav aria-label="Workspace navigation">
+          <button type="button" class="nav-item active">Overview</button>
+          <button type="button" class="nav-item">Presentations</button>
+          <button type="button" class="nav-item">Preferences</button>
+        </nav>
+        <div class="rail-note">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>All changes saved</span>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Presentation workspace</p>
+            <h1>Prepare the weekly review.</h1>
+          </div>
+          <div class="topbar-actions">
+            <button type="button" class="button quiet">Share</button>
+            <button type="button" class="button primary" data-action="review-summary">
+              Review summary
+            </button>
+          </div>
+        </header>
+
+        <section class="content-grid" aria-label="Presentation settings">
+          <article class="card preview-card">
+            <div class="card-heading">
+              <div>
+                <p class="card-kicker">Preview</p>
+                <h2>Customer signals</h2>
+              </div>
+              <span class="state-pill" aria-live="polite">Draft</span>
+            </div>
+            <div class="preview-frame">
+              <img
+                src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc5NjAnIGhlaWdodD0nMzYwJyB2aWV3Qm94PScwIDAgOTYwIDM2MCc+PHJlY3Qgd2lkdGg9JzI0MCcgaGVpZ2h0PSczNjAnIGZpbGw9JyMxZTNhNWYnLz48cmVjdCB4PScyNDAnIHdpZHRoPScyNDAnIGhlaWdodD0nMzYwJyBmaWxsPScjMmY3ZDZkJy8+PHJlY3QgeD0nNDgwJyB3aWR0aD0nMjQwJyBoZWlnaHQ9JzM2MCcgZmlsbD0nI2Q3OWMzZCcvPjxyZWN0IHg9JzcyMCcgd2lkdGg9JzI0MCcgaGVpZ2h0PSczNjAnIGZpbGw9JyNiZDViNGMnLz48Y2lyY2xlIGN4PScxNzAnIGN5PScxODAnIHI9JzgwJyBmaWxsPScjZjRlZmU0Jy8+PGNpcmNsZSBjeD0nNzkwJyBjeT0nMTgwJyByPSc4MCcgZmlsbD0nI2Y0ZWZlNCcvPjxwYXRoIGQ9J00zMTAgMjM4IDQwNSAxMTJsODAgMTI2eicgZmlsbD0nI2Y0ZWZlNCcvPjxwYXRoIGQ9J201NjAgMTIwIDkyIDYwLTkyIDYweicgZmlsbD0nI2Y0ZWZlNCcvPjwvc3ZnPg=="
+                alt="Four abstract customer segments"
+                width="960"
+                height="360"
+              >
+              <div class="preview-copy">
+                <span>Week 24</span>
+                <strong>Three signals worth discussing</strong>
+              </div>
+            </div>
+            <div class="preview-actions">
+              <button type="button" class="button quiet" data-action="align-preview">
+                Align preview
+              </button>
+              <span class="alignment-label">Right aligned</span>
+            </div>
+          </article>
+
+          <aside class="settings-stack">
+            <section class="card settings-card">
+              <p class="card-kicker">Appearance</p>
+              <h2>Keep the review focused.</h2>
+              <p class="supporting-copy">
+                Use one emphasis color and keep supporting details quiet.
+              </p>
+              <label class="preference-row">
+                <input type="checkbox" data-setting="emphasis">
+                <span>
+                  <strong>Emphasize key metrics</strong>
+                  <small>Use the accent color on reviewed items.</small>
+                </span>
+              </label>
+              <button type="button" class="button primary full-width" data-action="customize-view">
+                Customize view
+              </button>
+            </section>
+
+            <section class="card activity-card">
+              <div>
+                <p class="card-kicker">Readiness</p>
+                <h2>2 of 3 sections reviewed</h2>
+              </div>
+              <div class="progress" aria-label="Two of three sections reviewed">
+                <span></span><span></span><span></span>
+              </div>
+            </section>
+          </aside>
+        </section>
+      </main>
+    </div>
+    <script src="./visual-fidelity.js"></script>
+  </body>
+</html>

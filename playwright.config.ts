@@ -14,11 +14,14 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] }
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 900 }
+      }
     }
   ],
   use: {
-    viewport: { width: 1280, height: 720 },
+    viewport: { width: 1440, height: 900 },
     locale: "en-US",
     timezoneId: "America/Los_Angeles",
     screenshot: "off",
@@ -28,7 +31,8 @@ export default defineConfig({
   webServer: {
     command: "node fixtures/demo-apps/server.mjs",
     url: "http://127.0.0.1:4173/health",
-    reuseExistingServer: true,
+    reuseExistingServer:
+      process.env.SHOWKIT_TEST_REUSE_FIXTURE_SERVER === "true",
     timeout: 10_000
   }
 });

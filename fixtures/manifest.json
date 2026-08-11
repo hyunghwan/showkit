@@ -25,6 +25,40 @@
       ]
     },
     {
+      "id": "revealed-semantic-scroll",
+      "purpose": "proof",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "site-neutral document and nested scroll detection",
+        "previously revealed semantic HTML remains selectable",
+        "unrevealed content remains excluded",
+        "fixed and sticky context remains anchored",
+        "0 URL or domain-specific capture branches"
+      ]
+    },
+    {
+      "id": "automatic-focus-camera",
+      "purpose": "proof",
+      "spec": "tests/player.spec.ts",
+      "expectedSignals": [
+        "compact edge target receives deterministic focus zoom",
+        "ordinary and tall scenes remain fitted",
+        "hotspot tracks its semantic target during camera motion",
+        "0 per-step camera coordinates"
+      ]
+    },
+    {
+      "id": "generated-html-cover",
+      "purpose": "showcase",
+      "spec": "tests/player.spec.ts",
+      "expectedSignals": [
+        "welcome composition uses the first live HTML scene",
+        "editorial title and action remain readable",
+        "wide and narrow layouts remain responsive",
+        "0 cover screenshot files"
+      ]
+    },
+    {
       "id": "capture-performance",
       "purpose": "proof",
       "spec": "demo-apps/performance/performance.demo.ts",
@@ -250,6 +284,29 @@
         "UnsupportedSurface",
         "browser-isolation-unavailable",
         "0 publishable capture files"
+      ]
+    },
+    {
+      "id": "native-screenshot-visual-fidelity",
+      "purpose": "assurance",
+      "spec": "tests/visual-fidelity.spec.ts",
+      "expectedSignals": [
+        "same-run browser-native source and replay screenshots compared in memory",
+        "full-scene changed pixel ratio below 0.2% at 1280x720",
+        "focused target changed pixel ratio below 0.5%",
+        "outline, accent color, object position, and text shadow preserved",
+        "0 QA screenshot files"
+      ]
+    },
+    {
+      "id": "native-dialog",
+      "purpose": "assurance",
+      "spec": "demo-apps/assurance/native-dialog.demo.ts",
+      "expectedSignals": [
+        "UnsupportedSurface dialog",
+        "native dialog semantics are not flattened",
+        "0 publishable capture files",
+        "0 screenshot fallback files"
       ]
     },
     {

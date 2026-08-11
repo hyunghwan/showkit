@@ -44,10 +44,10 @@ belong on stderr.
 | --- | --- |
 | `showkit doctor --json` | Report CLI, skill, host, project, and optional Playwright readiness |
 | `showkit init --json` | Create the local `.showkit/` project structure |
-| `showkit capture <demo.spec.ts> --viewport 1280x720 --preflight --json` | Verify Playwright discovers and loads the flow with the default capture contract without running its test or opening its configured browser |
+| `showkit capture <demo.spec.ts> --viewport 1440x900 --preflight --json` | Verify Playwright discovers and loads the flow with the default capture contract without running its test or opening its configured browser |
 | `showkit capture static <safe-envelope.json> --json` | Import a sanitized static-source envelope without Playwright |
 | `showkit capture session <safe-envelope.json> --json` | Import a temporary browser envelope after host isolation succeeds |
-| `showkit capture <demo.spec.ts> --viewport 1280x720 --project <name> --json` | Run one approved Playwright fixture project at the default capture viewport; omit `--project` when the config has one project |
+| `showkit capture <demo.spec.ts> --viewport 1440x900 --project <name> --json` | Run one approved Playwright fixture project at the default capture viewport; omit `--project` when the config has one project |
 | `showkit story apply <story.json> --json` | Check and immutably save demo content for the latest capture |
 | `showkit validate --json` | Run evidence, player, and artifact checks |
 | `showkit build web,markdown --json` | Build portable HTML and optional Markdown output |
@@ -76,7 +76,7 @@ mutating action before running it. “The previous demo did not change” descri
 ShowKit's local files; it does not claim that source product actions are
 read-only.
 
-New Playwright captures default to 1280×720. Pass the same viewport to
+New Playwright captures default to 1440×900. Pass the same viewport to
 preflight and capture. Use another `WIDTHxHEIGHT` value only for an exact
 requested size or an existing demo, and set the Playwright flow to that same
 fixed viewport.
@@ -165,13 +165,15 @@ A built artifact contains semantic HTML, local content-addressed assets, an
 artifact manifest, and verification and quality reports. The same captured
 input and demo content produce the same artifact hash.
 
-The default player fills its embed container, starts with a welcome card,
-keeps step progress on the tooltip's top edge, shows Back and Next during the
-tour, and shows Restart demo only on the final card. A small bottom-right
-`Powered by ShowKit` link opens the ShowKit website in a new tab and stays
-below hotspots, tooltips, controls, and the welcome layer. Theme values must
-pass the player's WCAG 2.2 AA contrast checks. These checks cover ShowKit
-player chrome, not the accessibility of captured product content.
+The default player fills its embed container, starts on step one with the full
+scene fitted and already settled without an entrance animation, keeps step
+progress on the tooltip's top edge, shows Back and Next during the tour, and
+shows Restart demo only on the final card. A generated welcome cover and
+restrained global focus mode are optional. A small
+bottom-right `Powered by ShowKit` link opens the ShowKit website in a new tab
+and stays below hotspots, tooltips, controls, and an enabled welcome layer.
+Theme values must pass the player's WCAG 2.2 AA contrast checks. These checks
+cover ShowKit player chrome, not the accessibility of captured product content.
 
 ## Exit codes
 

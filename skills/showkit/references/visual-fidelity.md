@@ -119,6 +119,22 @@ content consent required for capture. Keep them out of the project, captured
 product flow, demo, and publish payload. A screenshot is never capture input or
 a scene fallback.
 
+When the source and preview can run in the same Playwright browser, use the
+browser's native PNG screenshot buffers as a same-run QA oracle. Lock the
+browser engine and process, operating system, device pixel ratio, CSS viewport,
+zoom, locale, timezone, color scheme, and available fonts. Hide only ShowKit's
+known tooltip, hotspot, backdrop, watermark, and player controls, then wait for
+`document.fonts.ready`, a checked HTML typography audit, and two animation
+frames. Compare the source and replay buffers in memory; do not create baseline,
+actual, or diff image files. Cross-browser or cross-machine screenshots are
+diagnostic evidence, not a deterministic pixel gate.
+
+A reusable extractor or player change must pass the brand-neutral same-run
+assurance fixture with no more than `0.2%` changed full-scene pixels and no more
+than `0.5%` changed pixels in the padded active-target region, using a
+per-channel anti-aliasing tolerance of `16`. These limits are a regression gate
+for the controlled fixture, not a pixel-identity claim for arbitrary products.
+
 Check all of the following:
 
 - primary containers, spacing, fills, borders, radii, shadows, and stacking

@@ -14,12 +14,6 @@ export function createEvidenceGroundedStory(capture: CaptureSource): StorySpec {
     audience: "Product viewers",
     goal: "Explore the verified product flow at your own pace.",
     locale: "en-US",
-    welcome: {
-      title: "Welcome to this interactive demo",
-      body: "Explore the captured product flow at your own pace.",
-      actionLabel: "Explore demo",
-      backdrop: "heavy"
-    },
     steps: capture.steps.map((step) => {
       const targetName = step.scene.target?.name ?? step.title;
       return {
@@ -53,7 +47,8 @@ export function createEvidenceGroundedStory(capture: CaptureSource): StorySpec {
           cta: "tooltip"
         }
       },
-      navigation: "controls"
+      navigation: "controls",
+      camera: "fit"
     },
     completion: {
       title: "Ready to create your demo?",

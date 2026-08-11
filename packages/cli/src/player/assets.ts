@@ -42,6 +42,12 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
       nodes: captureStep.scene.nodes,
       fontFaces: captureStep.scene.fontFaces ?? [],
       viewport: captureStep.scene.viewport,
+      scroll: captureStep.scene.scroll ?? {
+        x: 0,
+        y: 0,
+        width: captureStep.scene.viewport.width,
+        height: captureStep.scene.viewport.height
+      },
       anchorId: storyStep.anchorId,
       target: captureStep.scene.target,
       tooltip: storyStep.tooltip,
@@ -66,7 +72,13 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
     terminal: {
       nodes: capture.terminalScene.nodes,
       fontFaces: capture.terminalScene.fontFaces ?? [],
-      viewport: capture.terminalScene.viewport
+      viewport: capture.terminalScene.viewport,
+      scroll: capture.terminalScene.scroll ?? {
+        x: 0,
+        y: 0,
+        width: capture.terminalScene.viewport.width,
+        height: capture.terminalScene.viewport.height
+      }
     },
     cta: story.cta ?? null,
     completion: story.completion ?? null
@@ -92,7 +104,7 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='${encodeURIComponent(story.theme.accent)}'/%3E%3Cpath d='M9 11h14M9 16h10M9 21h14' stroke='%23fffdf7' stroke-width='2.5'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="./styles.css?v=${assetRevision}">
   </head>
-  <body>
+  <body${story.welcome ? "" : ' data-initial-render="true"'}>
     <div class="demo-frame">
       <header class="frame-header" id="frame-header">
         <div class="frame-header-main" id="frame-header-main"></div>
@@ -101,8 +113,12 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
       <main>
         <section class="stage-card" id="stage-card" aria-label="Product demo">
           <div class="scene-shell" id="scene-shell">
-            <div class="scene-viewport" id="scene-viewport"></div>
-            <div class="step-backdrop" id="step-backdrop" aria-hidden="true" hidden></div>
+            <div class="scene-viewport" id="scene-viewport">
+              <div class="scene-scroll" id="scene-scroll">
+                <div class="scene-content" id="scene-content"></div>
+                <div class="step-backdrop" id="step-backdrop" aria-hidden="true" hidden></div>
+              </div>
+            </div>
             <button class="hotspot" id="hotspot" type="button"></button>
             <aside class="tooltip" id="tooltip" aria-live="polite">
               <div class="tooltip-meta" id="tooltip-meta"></div>
@@ -143,7 +159,7 @@ export function createPlayerFiles(capture: CaptureSource, story: StorySpec): Pla
             hidden
           >
             <div class="welcome-card">
-              <p class="welcome-kicker">Interactive demo</p>
+              <p class="welcome-kicker">Interactive HTML demo</p>
               <h1 id="welcome-title"></h1>
               <p id="welcome-body"></p>
               <button class="welcome-action" id="welcome-action" type="button"></button>
@@ -317,8 +333,48 @@ h1 {
   left: 0;
   top: 0;
   transform-origin: 0 0;
-  pointer-events: none;
+  overflow: hidden;
+  pointer-events: auto;
   user-select: text;
+  will-change: left, top, transform;
+  transition: filter 360ms ease;
+}
+
+.scene-viewport[data-camera-mode="focus"] {
+  transition:
+    left 620ms cubic-bezier(0.22, 0.72, 0.2, 1),
+    top 620ms cubic-bezier(0.22, 0.72, 0.2, 1),
+    transform 620ms cubic-bezier(0.22, 0.72, 0.2, 1),
+    filter 360ms ease;
+}
+
+.scene-scroll {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in srgb, var(--ink) 42%, transparent) transparent;
+  scrollbar-width: thin;
+  touch-action: pan-x pan-y;
+}
+
+.scene-content {
+  position: relative;
+  z-index: 1;
+  min-width: 100%;
+  min-height: 100%;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.scene-content [data-showkit-position-lock] {
+  will-change: translate;
+}
+
+body[data-player-state="welcome"] .scene-viewport {
+  filter: saturate(0.82) contrast(0.94) brightness(0.82);
 }
 
 .scene-viewport * {
@@ -589,8 +645,63 @@ main {
   left: 0;
   top: 0;
   transform-origin: 0 0;
-  pointer-events: none;
+  overflow: hidden;
+  pointer-events: auto;
   user-select: text;
+  will-change: left, top, transform;
+  transition: filter 360ms ease;
+}
+
+.scene-viewport[data-camera-mode="focus"] {
+  transition:
+    left 620ms cubic-bezier(0.22, 0.72, 0.2, 1),
+    top 620ms cubic-bezier(0.22, 0.72, 0.2, 1),
+    transform 620ms cubic-bezier(0.22, 0.72, 0.2, 1),
+    filter 360ms ease;
+}
+
+body[data-initial-render="true"] .scene-viewport,
+body[data-initial-render="true"] .progress-track > span,
+body[data-initial-render="true"] .hotspot,
+body[data-initial-render="true"] .hotspot::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+.scene-shell[data-camera-transitioning="true"] .hotspot,
+.scene-shell[data-camera-transitioning="true"] .tooltip,
+.scene-shell[data-camera-transitioning="true"] .step-backdrop {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scene-scroll {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: color-mix(in srgb, var(--ink) 42%, transparent) transparent;
+  scrollbar-width: thin;
+  touch-action: pan-x pan-y;
+}
+
+.scene-content {
+  position: relative;
+  z-index: 1;
+  min-width: 100%;
+  min-height: 100%;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.scene-content [data-showkit-position-lock] {
+  will-change: translate;
+}
+
+body[data-player-state="welcome"] .scene-viewport {
+  filter: saturate(0.82) contrast(0.94) brightness(0.82);
 }
 
 .step-backdrop {
@@ -622,8 +733,10 @@ main {
   z-index: 12;
   inset: 0;
   display: grid;
-  place-items: center;
-  padding: clamp(18px, 4vw, 56px);
+  align-items: center;
+  justify-items: start;
+  overflow: hidden;
+  padding: clamp(22px, 5vw, 72px);
 }
 
 .welcome-layer[hidden] {
@@ -635,30 +748,42 @@ main {
 }
 
 .welcome-layer[data-backdrop="light"] {
-  background: rgba(4, 8, 7, 0.24);
+  background:
+    linear-gradient(90deg, rgba(4, 8, 7, 0.72) 0%, rgba(4, 8, 7, 0.48) 38%, rgba(4, 8, 7, 0.12) 76%, rgba(4, 8, 7, 0.04) 100%);
 }
 
 .welcome-layer[data-backdrop="medium"] {
-  background: rgba(4, 8, 7, 0.48);
+  background:
+    linear-gradient(90deg, rgba(4, 8, 7, 0.86) 0%, rgba(4, 8, 7, 0.68) 40%, rgba(4, 8, 7, 0.24) 76%, rgba(4, 8, 7, 0.08) 100%);
 }
 
 .welcome-layer[data-backdrop="heavy"] {
-  background: rgba(4, 8, 7, 0.7);
+  background:
+    radial-gradient(circle at 78% 48%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 34%),
+    linear-gradient(90deg, rgba(4, 8, 7, 0.96) 0%, rgba(4, 8, 7, 0.9) 38%, rgba(4, 8, 7, 0.46) 70%, rgba(4, 8, 7, 0.18) 100%);
 }
 
 .welcome-card {
-  width: min(520px, 100%);
-  padding: clamp(24px, 4vw, 40px);
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, rgba(255, 255, 255, 0.55));
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--paper) 7%, white);
-  color: var(--ink);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.32);
+  width: min(560px, 48vw);
+  padding: clamp(26px, 3.8vw, 48px);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, rgba(255, 255, 255, 0.2));
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--ink) 88%, transparent);
+  color: color-mix(in srgb, var(--paper) 8%, white);
+  box-shadow: 0 32px 96px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(20px) saturate(1.08);
+  -webkit-backdrop-filter: blur(20px) saturate(1.08);
+  animation: welcome-card-enter 520ms cubic-bezier(0.22, 0.72, 0.2, 1) both;
+}
+
+@keyframes welcome-card-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .welcome-kicker {
-  margin: 0 0 10px;
-  color: color-mix(in srgb, var(--accent) 78%, var(--ink));
+  margin: 0 0 14px;
+  color: color-mix(in srgb, var(--accent) 86%, white);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
   font-weight: 720;
@@ -669,34 +794,36 @@ main {
 .welcome-card h1 {
   margin: 0;
   font-family: var(--font-heading);
-  font-size: clamp(26px, 4vw, 42px);
-  letter-spacing: -0.035em;
-  line-height: 1.05;
+  font-size: clamp(32px, 4.6vw, 58px);
+  font-weight: 680;
+  letter-spacing: -0.05em;
+  line-height: 0.98;
 }
 
 .welcome-card > p:not(.welcome-kicker) {
-  max-width: 44ch;
-  margin: 16px 0 0;
-  color: color-mix(in srgb, var(--ink) 72%, transparent);
-  font-size: 15px;
-  line-height: 1.55;
+  max-width: 48ch;
+  margin: 20px 0 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: clamp(14px, 1.35vw, 17px);
+  line-height: 1.58;
 }
 
 .welcome-action {
-  min-height: 42px;
-  margin-top: 26px;
-  padding: 10px 16px;
-  border: 1px solid var(--ink);
-  border-radius: 10px;
-  background: var(--ink);
-  color: color-mix(in srgb, var(--paper) 8%, white);
-  font-size: 13px;
+  min-height: 46px;
+  margin-top: 30px;
+  padding: 11px 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 84%, white);
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 14px;
   font-weight: 720;
   cursor: pointer;
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .welcome-action:hover {
-  background: color-mix(in srgb, var(--ink) 90%, var(--accent));
+  background: color-mix(in srgb, var(--accent) 88%, white);
 }
 
 .scene-viewport * {
@@ -1258,6 +1385,25 @@ body[data-chrome-mode="frame"] .control-button:hover {
 @media (max-width: 720px) {
   :root { --container-radius: 13px; }
   body[data-chrome-mode="frame"] .demo-frame { padding: 6px; }
+  .welcome-layer {
+    justify-items: center;
+    padding: 18px;
+  }
+  .welcome-layer[data-backdrop="light"],
+  .welcome-layer[data-backdrop="medium"],
+  .welcome-layer[data-backdrop="heavy"] {
+    background:
+      radial-gradient(circle at 50% 18%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 34%),
+      rgba(4, 8, 7, 0.8);
+  }
+  .welcome-card {
+    width: min(520px, 100%);
+    padding: clamp(24px, 7vw, 36px);
+    border-radius: 18px;
+  }
+  .welcome-card h1 {
+    font-size: clamp(28px, 9vw, 44px);
+  }
   .showkit-watermark { right: 6px; bottom: 6px; font-size: 9px; }
   .chrome-dock {
     min-height: 32px;
@@ -1415,6 +1561,8 @@ const PLAYER_JS = `(() => {
     chromeParts: document.getElementById("chrome-parts"),
     shell: document.getElementById("scene-shell"),
     viewport: document.getElementById("scene-viewport"),
+    scroll: document.getElementById("scene-scroll"),
+    content: document.getElementById("scene-content"),
     stepBackdrop: document.getElementById("step-backdrop"),
     hotspot: document.getElementById("hotspot"),
     tooltip: document.getElementById("tooltip"),
@@ -1443,10 +1591,16 @@ const PLAYER_JS = `(() => {
   sceneFontStyle.id = "scene-font-faces";
   document.head.append(sceneFontStyle);
   let current = -1;
-  let renderedViewport = { width: 1280, height: 720 };
+  let renderedViewport = { width: 1440, height: 900 };
+  let renderedScroll = { x: 0, y: 0, width: 1440, height: 900 };
   let renderedScale = 1;
   let overlayFrame = 0;
   let overlayTimer = 0;
+  let overlayTrackUntil = 0;
+  let overlayRevealAt = 0;
+  let overlayRevealTimer = 0;
+  let renderRevision = 0;
+  let animatedCameraRevision = -1;
   let completionSplitLayout = false;
   const defaultChrome = {
     mode: "overlay",
@@ -1462,6 +1616,10 @@ const PLAYER_JS = `(() => {
   };
   const chrome = demo.player?.chrome ?? defaultChrome;
   const navigation = demo.player?.navigation ?? "controls";
+  const camera = demo.player?.camera ?? "fit";
+  const hasWelcome = Boolean(demo.welcome);
+  const firstState = hasWelcome ? -1 : 0;
+  current = firstState;
   const chromePartElements = {
     title: elements.demoTitle,
     goal: elements.demoGoal,
@@ -1481,10 +1639,12 @@ const PLAYER_JS = `(() => {
   document.documentElement.style.setProperty("--paper", demo.theme.paper);
   document.documentElement.style.setProperty("--font-heading", demo.theme.fonts.heading);
   document.documentElement.style.setProperty("--font-body", demo.theme.fonts.body);
-  elements.welcome.dataset.backdrop = demo.welcome.backdrop;
-  elements.welcomeTitle.textContent = demo.welcome.title;
-  elements.welcomeBody.textContent = demo.welcome.body;
-  elements.welcomeAction.textContent = demo.welcome.actionLabel;
+  if (hasWelcome) {
+    elements.welcome.dataset.backdrop = demo.welcome.backdrop;
+    elements.welcomeTitle.textContent = demo.welcome.title;
+    elements.welcomeBody.textContent = demo.welcome.body;
+    elements.welcomeAction.textContent = demo.welcome.actionLabel;
+  }
 
   function configureChrome() {
     const overlayMode = chrome.mode === "overlay";
@@ -2090,10 +2250,13 @@ const PLAYER_JS = `(() => {
       placement = "split-bottom";
     }
     left = clamp(left, placementBounds.minLeft, placementBounds.maxLeft);
+    const previousTransition = elements.viewport.style.transition;
+    elements.viewport.style.transition = "none";
     renderedScale = scale;
     elements.viewport.style.left = Math.round(sceneLeft) + "px";
     elements.viewport.style.top = Math.round(sceneTop) + "px";
     elements.viewport.style.transform = "scale(" + scale + ")";
+    elements.viewport.getBoundingClientRect();
     const sceneObstacles = prominentSceneObstacles(shellRect);
     const sceneOverlap = sceneObstacles.reduce(
       (area, obstacle) =>
@@ -2116,9 +2279,14 @@ const PLAYER_JS = `(() => {
           tooltipRect.width,
           tooltipRect.height,
           obstacle
-        ),
+      ),
       0
     );
+    if (previousTransition) {
+      elements.viewport.style.transition = previousTransition;
+    } else {
+      elements.viewport.style.removeProperty("transition");
+    }
     return {
       placement,
       left,
@@ -2194,7 +2362,10 @@ const PLAYER_JS = `(() => {
     "y2",
     "data-showkit-anchor",
     "data-showkit-interaction-box",
+    "data-showkit-position-lock",
     "data-showkit-pseudo",
+    "data-showkit-scroll-x",
+    "data-showkit-scroll-y",
     "data-showkit-text",
     "data-showkit-scene-root"
   ]);
@@ -2267,6 +2438,15 @@ const PLAYER_JS = `(() => {
       ) continue;
       if (name === "open" && !(node.tag === "details" && value === "")) continue;
       if (
+        (name === "data-showkit-scroll-x" ||
+          name === "data-showkit-scroll-y") &&
+        !/^\\d{1,6}$/.test(value)
+      ) continue;
+      if (
+        name === "data-showkit-position-lock" &&
+        !["fixed", "sticky"].includes(value)
+      ) continue;
+      if (
         name === "src" &&
         !/^\\.\\/assets\\/[a-f0-9]{64}\\.(?:png|jpg|webp|avif|gif|svg)$/.test(value)
       ) continue;
@@ -2286,6 +2466,13 @@ const PLAYER_JS = `(() => {
     }
     for (const child of node.children) {
       element.append(createSceneNode(child, depth + 1));
+    }
+    if (
+      element.matches(
+        "a, button, input, select, textarea, summary, [role='button'], [role='link']"
+      )
+    ) {
+      element.setAttribute("tabindex", "-1");
     }
     return element;
   }
@@ -2609,6 +2796,55 @@ const PLAYER_JS = `(() => {
     elements.viewport.dataset.textMetricFitCount = String(metricFitCount);
   }
 
+  function restoreNestedScrollPositions() {
+    for (const element of elements.content.querySelectorAll(
+      "[data-showkit-scroll-x], [data-showkit-scroll-y]"
+    )) {
+      if (!(element instanceof HTMLElement)) continue;
+      const x = Number.parseInt(
+        element.getAttribute("data-showkit-scroll-x") ?? "0",
+        10
+      );
+      const y = Number.parseInt(
+        element.getAttribute("data-showkit-scroll-y") ?? "0",
+        10
+      );
+      if (Number.isFinite(x)) element.scrollLeft = Math.max(0, x);
+      if (Number.isFinite(y)) element.scrollTop = Math.max(0, y);
+    }
+  }
+
+  function updatePositionLocks() {
+    for (const element of elements.content.querySelectorAll(
+      "[data-showkit-position-lock]"
+    )) {
+      if (!(element instanceof HTMLElement || element instanceof SVGElement)) {
+        continue;
+      }
+      let x = elements.scroll.scrollLeft - renderedScroll.x;
+      let y = elements.scroll.scrollTop - renderedScroll.y;
+      let ancestor = element.parentElement;
+      while (ancestor && ancestor !== elements.content) {
+        const initialX = Number.parseInt(
+          ancestor.getAttribute("data-showkit-scroll-x") ?? "0",
+          10
+        );
+        const initialY = Number.parseInt(
+          ancestor.getAttribute("data-showkit-scroll-y") ?? "0",
+          10
+        );
+        if (ancestor.hasAttribute("data-showkit-scroll-x")) {
+          x += ancestor.scrollLeft - (Number.isFinite(initialX) ? initialX : 0);
+        }
+        if (ancestor.hasAttribute("data-showkit-scroll-y")) {
+          y += ancestor.scrollTop - (Number.isFinite(initialY) ? initialY : 0);
+        }
+        ancestor = ancestor.parentElement;
+      }
+      element.style.translate = Math.round(x) + "px " + Math.round(y) + "px";
+    }
+  }
+
   function replaceScene(scene) {
     elements.viewport.dataset.textLayout = "pending";
     sceneFontStyle.textContent = (scene.fontFaces ?? [])
@@ -2640,9 +2876,15 @@ const PLAYER_JS = `(() => {
           "}"
       )
       .join("\\n");
-    elements.viewport.replaceChildren(...scene.nodes.map(createSceneNode));
+    elements.content.style.width = renderedScroll.width + "px";
+    elements.content.style.height = renderedScroll.height + "px";
+    elements.content.replaceChildren(...scene.nodes.map(createSceneNode));
+    elements.scroll.scrollLeft = renderedScroll.x;
+    elements.scroll.scrollTop = renderedScroll.y;
+    restoreNestedScrollPositions();
+    updatePositionLocks();
     sceneLayoutObserver.disconnect();
-    for (const element of elements.viewport.querySelectorAll("*")) {
+    for (const element of elements.content.querySelectorAll("*")) {
       sceneLayoutObserver.observe(element);
     }
     if (document.fonts) {
@@ -2660,6 +2902,12 @@ const PLAYER_JS = `(() => {
 
   function positionOverlay() {
     const shellRect = elements.shell.getBoundingClientRect();
+    if (overlayRevealAt > 0 && performance.now() >= overlayRevealAt) {
+      overlayRevealAt = 0;
+      window.clearTimeout(overlayRevealTimer);
+      overlayRevealTimer = 0;
+      delete elements.shell.dataset.cameraTransitioning;
+    }
     if (current < 0) {
       elements.stepBackdrop.hidden = true;
       elements.hotspot.hidden = true;
@@ -2740,12 +2988,13 @@ const PLAYER_JS = `(() => {
       return;
     }
     const interactionElement = visibleInteractionElement(anchor);
+    const interactionRect = interactionElement.getBoundingClientRect();
     const sceneRect = intersectRect(
       elements.viewport.getBoundingClientRect(),
       shellRect
     );
     const anchorRect = sceneRect
-      ? intersectRect(interactionElement.getBoundingClientRect(), sceneRect)
+      ? intersectRect(interactionRect, sceneRect)
       : null;
     if (!anchorRect) {
       elements.stepBackdrop.hidden = true;
@@ -2753,6 +3002,7 @@ const PLAYER_JS = `(() => {
       elements.tooltip.hidden = true;
       return;
     }
+    elements.hotspot.hidden = false;
     const left = anchorRect.left - shellRect.left;
     const top = anchorRect.top - shellRect.top;
     const hotspotWidth = Math.max(24, anchorRect.width);
@@ -2783,12 +3033,35 @@ const PLAYER_JS = `(() => {
       : 7;
     elements.hotspot.style.borderRadius = Math.max(0, renderedRadius) + "px";
     if (step.tooltip.backdrop !== "off") {
-      elements.stepBackdrop.style.left = left + "px";
-      elements.stepBackdrop.style.top = top + "px";
-      elements.stepBackdrop.style.width = anchorRect.width + "px";
-      elements.stepBackdrop.style.height = anchorRect.height + "px";
+      const viewportRect = elements.viewport.getBoundingClientRect();
+      const transform = new DOMMatrixReadOnly(
+        getComputedStyle(elements.viewport).transform
+      );
+      const scaleX = Math.max(0.0001, Math.abs(transform.a));
+      const scaleY = Math.max(0.0001, Math.abs(transform.d));
+      const backdropWidth = interactionRect.width / scaleX;
+      const backdropHeight = interactionRect.height / scaleY;
+      elements.stepBackdrop.style.left =
+        (interactionRect.left - viewportRect.left) / scaleX +
+        elements.scroll.scrollLeft +
+        "px";
+      elements.stepBackdrop.style.top =
+        (interactionRect.top - viewportRect.top) / scaleY +
+        elements.scroll.scrollTop +
+        "px";
+      elements.stepBackdrop.style.width = backdropWidth + "px";
+      elements.stepBackdrop.style.height = backdropHeight + "px";
       elements.stepBackdrop.style.borderRadius =
-        Math.max(0, renderedRadius) + "px";
+        Math.max(
+          0,
+          Number.isFinite(anchorRadius)
+            ? Math.min(
+                backdropWidth / 2,
+                backdropHeight / 2,
+                anchorRadius
+              )
+            : 7
+        ) + "px";
       elements.stepBackdrop.style.visibility = "visible";
       elements.stepBackdrop.hidden = false;
     } else {
@@ -2974,47 +3247,125 @@ const PLAYER_JS = `(() => {
     elements.tooltip.style.visibility = "visible";
   }
 
-  function scheduleOverlayPosition() {
+  function finishCameraTransition() {
+    overlayRevealTimer = 0;
+    const remaining = overlayRevealAt - performance.now();
+    if (remaining > 0) {
+      overlayRevealTimer = window.setTimeout(
+        finishCameraTransition,
+        remaining + 24
+      );
+      return;
+    }
+    overlayRevealAt = 0;
+    delete elements.shell.dataset.cameraTransitioning;
+    positionOverlay();
+  }
+
+  function scheduleOverlayPosition(duration = 180) {
     window.cancelAnimationFrame(overlayFrame);
     window.clearTimeout(overlayTimer);
-    overlayFrame = window.requestAnimationFrame(() => {
+    overlayTrackUntil = Math.max(
+      overlayTrackUntil,
+      performance.now() + duration
+    );
+    const track = () => {
       positionOverlay();
-      overlayFrame = window.requestAnimationFrame(positionOverlay);
-    });
-    overlayTimer = window.setTimeout(positionOverlay, 120);
+      if (performance.now() < overlayTrackUntil) {
+        overlayFrame = window.requestAnimationFrame(track);
+      }
+    };
+    overlayFrame = window.requestAnimationFrame(track);
+    overlayTimer = window.setTimeout(positionOverlay, duration + 24);
+  }
+
+  function focusZoomFactor(step, shellWidth, shellHeight) {
+    if (
+      camera !== "focus" ||
+      !step?.target ||
+      shellWidth < 640 ||
+      shellHeight < 360
+    ) return 1;
+    const fittedHeight =
+      renderedViewport.height *
+      Math.min(shellWidth / renderedViewport.width, 1);
+    if (fittedHeight > shellHeight * 1.08) return 1;
+    const bounds = step.target.bounds;
+    const centerX = bounds.x + bounds.width / 2;
+    const centerY = bounds.y + bounds.height / 2;
+    const compactTarget =
+      bounds.width <= 0.18 &&
+      bounds.height <= 0.16 &&
+      bounds.width * bounds.height <= 0.018;
+    const nearEdge =
+      centerX < 0.22 ||
+      centerX > 0.78 ||
+      centerY < 0.14 ||
+      centerY > 0.86;
+    return compactTarget && nearEdge ? 1.18 : 1;
+  }
+
+  function focusedAxisPosition(center, low, high) {
+    if (center < low) return 0.28;
+    if (center > high) return 0.72;
+    return 0.5;
+  }
+
+  function fittedAxisPosition(desired, shellSize, contentSize) {
+    if (contentSize <= shellSize) return (shellSize - contentSize) / 2;
+    return clamp(desired, shellSize - contentSize, 0);
   }
 
   function scaleScene() {
     const overlayMode = chrome.mode === "overlay";
     completionSplitLayout = false;
+    const previousLeft = elements.viewport.style.left;
+    const previousTop = elements.viewport.style.top;
+    const previousTransform = elements.viewport.style.transform;
     elements.shell.scrollTop = 0;
     elements.shell.scrollLeft = 0;
     elements.viewport.style.width = renderedViewport.width + "px";
     elements.viewport.style.height = renderedViewport.height + "px";
     let scale;
+    let cameraZoom = 1;
     if (overlayMode) {
       elements.stage.style.maxWidth = "none";
       elements.frame.style.removeProperty("--stage-max-width");
       elements.shell.style.height = "100%";
       const shellWidth = elements.shell.clientWidth;
       const shellHeight = elements.shell.clientHeight;
-      scale = Math.min(shellWidth / renderedViewport.width, 1);
-      const contentHeight = renderedViewport.height * scale;
-      let top = contentHeight <= shellHeight
-        ? (shellHeight - contentHeight) / 2
-        : 0;
       const step = current >= 0 && current < demo.steps.length
         ? demo.steps[current]
         : undefined;
-      if (step && contentHeight > shellHeight) {
+      const baseScale = Math.min(shellWidth / renderedViewport.width, 1);
+      cameraZoom = focusZoomFactor(step, shellWidth, shellHeight);
+      scale = baseScale * cameraZoom;
+      const contentWidth = renderedViewport.width * scale;
+      const contentHeight = renderedViewport.height * scale;
+      let desiredLeft = (shellWidth - contentWidth) / 2;
+      let desiredTop = (shellHeight - contentHeight) / 2;
+      if (step) {
         const target = step.target.bounds;
-        const targetCenter = (target.y + target.height / 2) * contentHeight;
-        const desiredTop = shellHeight / 2 - targetCenter;
-        top = clamp(desiredTop, shellHeight - contentHeight, 0);
+        const centerX = target.x + target.width / 2;
+        const centerY = target.y + target.height / 2;
+        const focusX = focusedAxisPosition(centerX, 0.34, 0.66);
+        const focusY = focusedAxisPosition(centerY, 0.3, 0.7);
+        if (cameraZoom > 1) {
+          desiredLeft =
+            focusX * shellWidth - centerX * renderedViewport.width * scale;
+          desiredTop =
+            focusY * shellHeight - centerY * renderedViewport.height * scale;
+        } else if (contentHeight > shellHeight) {
+          desiredTop =
+            shellHeight / 2 - centerY * renderedViewport.height * scale;
+        }
       }
-      elements.viewport.style.left =
-        Math.round((shellWidth - renderedViewport.width * scale) / 2) + "px";
-      elements.viewport.style.top = Math.round(top) + "px";
+      elements.viewport.style.left = Math.round(
+        fittedAxisPosition(desiredLeft, shellWidth, contentWidth)
+      ) + "px";
+      elements.viewport.style.top = Math.round(
+        fittedAxisPosition(desiredTop, shellHeight, contentHeight)
+      ) + "px";
     } else {
       const reservedHeight =
         elements.frameHeader.getBoundingClientRect().height +
@@ -3035,9 +3386,34 @@ const PLAYER_JS = `(() => {
       elements.viewport.style.top = "0px";
     }
     renderedScale = scale;
+    elements.viewport.dataset.cameraMode = camera;
+    elements.viewport.dataset.camera = cameraZoom > 1 ? "focus" : "fit";
+    elements.viewport.dataset.cameraZoom = cameraZoom.toFixed(2);
     elements.viewport.style.transform = "scale(" + scale + ")";
+    const sceneMoves =
+      previousLeft !== elements.viewport.style.left ||
+      previousTop !== elements.viewport.style.top ||
+      previousTransform !== elements.viewport.style.transform;
+    if (
+      sceneMoves &&
+      current >= 0 &&
+      camera === "focus" &&
+      animatedCameraRevision !== renderRevision &&
+      !document.body.hasAttribute("data-initial-render") &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      animatedCameraRevision = renderRevision;
+      overlayRevealAt = performance.now() + 650;
+      elements.shell.dataset.cameraTransitioning = "true";
+      window.clearTimeout(overlayRevealTimer);
+      overlayRevealTimer = window.setTimeout(
+        finishCameraTransition,
+        Math.max(0, overlayRevealAt - performance.now()) + 24
+      );
+    }
+    updatePositionLocks();
     positionOverlay();
-    scheduleOverlayPosition();
+    scheduleOverlayPosition(camera === "focus" ? 700 : 220);
   }
 
   function renderCompletionActions() {
@@ -3063,7 +3439,8 @@ const PLAYER_JS = `(() => {
   }
 
   function render() {
-    const welcome = current < 0;
+    renderRevision += 1;
+    const welcome = hasWelcome && current < 0;
     const complete = current >= demo.steps.length;
     const step = welcome
       ? demo.steps[0]
@@ -3071,6 +3448,36 @@ const PLAYER_JS = `(() => {
         ? demo.terminal
         : demo.steps[current];
     renderedViewport = step.viewport;
+    const stepScroll = step.scroll ?? {
+      x: 0,
+      y: 0,
+      width: renderedViewport.width,
+      height: renderedViewport.height
+    };
+    const scrollWidth = Math.max(
+      renderedViewport.width,
+      Math.round(Number(stepScroll.width) || renderedViewport.width)
+    );
+    const scrollHeight = Math.max(
+      renderedViewport.height,
+      Math.round(Number(stepScroll.height) || renderedViewport.height)
+    );
+    renderedScroll = {
+      x: clamp(
+        Math.round(Number(stepScroll.x) || 0),
+        0,
+        Math.max(0, scrollWidth - renderedViewport.width)
+      ),
+      y: clamp(
+        Math.round(Number(stepScroll.y) || 0),
+        0,
+        Math.max(0, scrollHeight - renderedViewport.height)
+      ),
+      width: scrollWidth,
+      height: scrollHeight
+    };
+    elements.viewport.style.width = renderedViewport.width + "px";
+    elements.viewport.style.height = renderedViewport.height + "px";
     replaceScene(step);
     document.body.dataset.playerState = welcome
       ? "welcome"
@@ -3101,7 +3508,7 @@ const PLAYER_JS = `(() => {
     elements.next.hidden = complete || navigation !== "controls";
     elements.back.hidden =
       navigation !== "controls" || elements.back.dataset.chromeHidden === "true";
-    elements.back.disabled = false;
+    elements.back.disabled = !hasWelcome && current === 0;
     elements.count.textContent = complete
       ? "Complete"
       : "Step " + (current + 1) + " of " + demo.steps.length;
@@ -3170,12 +3577,14 @@ const PLAYER_JS = `(() => {
 
   function advance(moveFocus) {
     if (current < 0) {
+      document.body.removeAttribute("data-initial-render");
       current = 0;
       render();
       if (moveFocus) elements.hotspot.focus({ preventScroll: true });
       return;
     }
     if (current < demo.steps.length) {
+      document.body.removeAttribute("data-initial-render");
       current += 1;
       render();
       if (moveFocus) {
@@ -3198,25 +3607,52 @@ const PLAYER_JS = `(() => {
   });
   elements.next.addEventListener("click", () => advance(true));
   elements.back.addEventListener("click", () => {
-    current = Math.max(-1, current - 1);
+    current = Math.max(firstState, current - 1);
     render();
     if (current < 0) elements.welcomeAction.focus({ preventScroll: true });
     else elements.hotspot.focus({ preventScroll: true });
   });
   elements.restart.addEventListener("click", () => {
-    current = -1;
+    current = firstState;
+    if (hasWelcome) document.body.removeAttribute("data-initial-render");
+    else document.body.dataset.initialRender = "true";
     render();
-    elements.welcomeAction.focus({ preventScroll: true });
+    if (current < 0) elements.welcomeAction.focus({ preventScroll: true });
+    else elements.hotspot.focus({ preventScroll: true });
   });
   elements.welcomeAction.addEventListener("click", () => advance(true));
+  elements.scroll.addEventListener(
+    "scroll",
+    () => {
+      updatePositionLocks();
+      scheduleOverlayPosition(180);
+    },
+    { capture: true, passive: true }
+  );
+  elements.scroll.addEventListener(
+    "click",
+    (event) => {
+      if (event.target === elements.scroll) return;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
+  elements.scroll.addEventListener(
+    "dragstart",
+    (event) => event.preventDefault(),
+    true
+  );
   document.addEventListener("keydown", (event) => {
     if (event.key === "ArrowRight" && current < demo.steps.length) advance(false);
-    if (event.key === "ArrowLeft" && current >= 0) {
-      current = Math.max(-1, current - 1);
+    if (event.key === "ArrowLeft" && current > firstState) {
+      current = Math.max(firstState, current - 1);
       render();
     }
     if (event.key === "Home") {
-      current = -1;
+      current = firstState;
+      if (hasWelcome) document.body.removeAttribute("data-initial-render");
+      else document.body.dataset.initialRender = "true";
       render();
     }
   });

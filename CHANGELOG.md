@@ -5,6 +5,28 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.12 - 2026-08-11
+
+- Preserved the safely revealed document and nested-scroll range as selectable
+  semantic HTML, restored native scrolling plus fixed and sticky context, and
+  kept unrevealed content outside the capture.
+- Added optional deterministic focus zoom for compact edge targets and an
+  optional responsive welcome cover composed from the first live HTML scene.
+  Both are off by default: new demos start on step one with the scene fitted,
+  settled without entrance animation, and no per-step camera coordinates or
+  raster cover are authored.
+- Added a generic read-only `inspect` action for positioning and highlighting a
+  semantic target without selecting it or requiring a page-state mutation.
+- Raised the default new-demo capture viewport from 1280×720 to 1440×900 while
+  preserving exact viewports recorded by existing demos.
+- Added native-reference visual-fidelity coverage and stopped before persistence
+  when a page relies on an open native dialog that cannot be reproduced safely.
+- Removed committed production Firebase client configuration from the public
+  package. Hosted publishing now loads it from ShowKit's bound Hosting endpoint
+  and verifies the expected project and app before use.
+- Updated the installed ShowKit skill compatibility range to require
+  `@showkit/cli >=0.2.12 <0.3.0`.
+
 ## 0.2.11 - 2026-08-10
 
 - Recovered a missing Playwright hotspot name from bounded semantic sources and

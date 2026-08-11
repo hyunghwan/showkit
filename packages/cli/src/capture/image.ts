@@ -8,6 +8,106 @@ export type CapturedImageCrop = {
   height: number;
 };
 
+export type CapturedImageComparison = {
+  width: number;
+  height: number;
+  changedPixelCount: number;
+  changedPixelRatio: number;
+  meanAbsoluteChannelDelta: number;
+  maximumChannelDelta: number;
+};
+
+const maximumCapturedImageBytes = 16 * 1_048_576;
+const maximumCapturedImagePixels = 4096 * 4096;
+
+async function decodeCapturedImage(bytes: Uint8Array): Promise<{
+  pixels: Buffer;
+  width: number;
+  height: number;
+  channels: number;
+}> {
+  if (bytes.byteLength === 0 || bytes.byteLength > maximumCapturedImageBytes) {
+    throw new TypeError("The browser screenshot size is unsupported.");
+  }
+  const decoded = await sharp(Buffer.from(bytes), {
+    failOn: "error",
+    limitInputPixels: maximumCapturedImagePixels
+  })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  if (
+    decoded.info.width < 1 ||
+    decoded.info.height < 1 ||
+    decoded.info.width * decoded.info.height > maximumCapturedImagePixels ||
+    decoded.info.channels !== 4
+  ) {
+    throw new TypeError("The browser screenshot dimensions are unsupported.");
+  }
+  return {
+    pixels: decoded.data,
+    width: decoded.info.width,
+    height: decoded.info.height,
+    channels: decoded.info.channels
+  };
+}
+
+/**
+ * Compares two browser-native PNG buffers without writing either image to disk.
+ */
+export async function compareCapturedImages(input: {
+  actual: Uint8Array;
+  expected: Uint8Array;
+  channelThreshold?: number;
+}): Promise<CapturedImageComparison> {
+  const channelThreshold = input.channelThreshold ?? 16;
+  if (
+    !Number.isInteger(channelThreshold) ||
+    channelThreshold < 0 ||
+    channelThreshold > 255
+  ) {
+    throw new TypeError("The browser screenshot comparison threshold is invalid.");
+  }
+  const [actual, expected] = await Promise.all([
+    decodeCapturedImage(input.actual),
+    decodeCapturedImage(input.expected)
+  ]);
+  if (
+    actual.width !== expected.width ||
+    actual.height !== expected.height ||
+    actual.channels !== expected.channels
+  ) {
+    throw new TypeError("The browser screenshots must have identical dimensions.");
+  }
+
+  let changedPixelCount = 0;
+  let absoluteChannelDelta = 0;
+  let maximumChannelDelta = 0;
+  for (let offset = 0; offset < actual.pixels.length; offset += 4) {
+    let pixelMaximum = 0;
+    for (let channel = 0; channel < 4; channel += 1) {
+      const delta = Math.abs(
+        actual.pixels[offset + channel]! - expected.pixels[offset + channel]!
+      );
+      absoluteChannelDelta += delta;
+      pixelMaximum = Math.max(pixelMaximum, delta);
+      maximumChannelDelta = Math.max(maximumChannelDelta, delta);
+    }
+    if (pixelMaximum > channelThreshold) changedPixelCount += 1;
+  }
+
+  const pixelCount = actual.width * actual.height;
+  return {
+    width: actual.width,
+    height: actual.height,
+    changedPixelCount,
+    changedPixelRatio: changedPixelCount / pixelCount,
+    meanAbsoluteChannelDelta:
+      absoluteChannelDelta / (pixelCount * actual.channels),
+    maximumChannelDelta
+  };
+}
+
 export async function cropCapturedImage(input: {
   bytes: Uint8Array;
   left: number;
@@ -22,7 +122,7 @@ export async function cropCapturedImage(input: {
 }): Promise<CapturedImageCrop> {
   if (
     input.bytes.byteLength === 0 ||
-    input.bytes.byteLength > 16 * 1_048_576
+    input.bytes.byteLength > maximumCapturedImageBytes
   ) {
     throw new TypeError("The browser screenshot size is unsupported.");
   }
@@ -65,7 +165,7 @@ export async function cropCapturedImage(input: {
   }
   const source = sharp(Buffer.from(input.bytes), {
     failOn: "error",
-    limitInputPixels: 4096 * 4096
+    limitInputPixels: maximumCapturedImagePixels
   });
   const metadata = await source.metadata();
   if (!metadata.width || !metadata.height) {

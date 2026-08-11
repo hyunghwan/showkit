@@ -106,6 +106,7 @@ function scene(stepId, label, terminal = false) {
       }
     ],
     viewport: { width: 1280, height: 720 },
+    scroll: { x: 0, y: 0, width: 1280, height: 720 },
     ...(terminal
       ? {}
       : {
@@ -470,6 +471,7 @@ try {
         html: scene(options.anchorId.slice(3), target.name).html,
         nodes: scene(options.anchorId.slice(3), target.name).nodes,
         viewport: { width: 1280, height: 720 },
+        scroll: { x: 0, y: 0, width: 1280, height: 720 },
         target: {
           tag: "button",
           role: "button",

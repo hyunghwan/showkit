@@ -95,7 +95,10 @@ const ALLOWED_NODE_ATTRIBUTES = new Set([
   "y2",
   "data-showkit-anchor",
   "data-showkit-interaction-box",
+  "data-showkit-position-lock",
   "data-showkit-pseudo",
+  "data-showkit-scroll-x",
+  "data-showkit-scroll-y",
   "data-showkit-text",
   "data-showkit-scene-root"
 ]);
@@ -226,6 +229,19 @@ export function inspectCaptureContentPolicy(capture: CaptureSource): {
           sensitiveContent.push(value);
         }
         if (!isAllowedNodeAttribute(name) && !safeInputButtonValue) {
+          nodePolicyPassed = false;
+        }
+        if (
+          (name === "data-showkit-scroll-x" ||
+            name === "data-showkit-scroll-y") &&
+          !/^\d{1,6}$/.test(value)
+        ) {
+          nodePolicyPassed = false;
+        }
+        if (
+          name === "data-showkit-position-lock" &&
+          !["fixed", "sticky"].includes(value)
+        ) {
           nodePolicyPassed = false;
         }
         if (

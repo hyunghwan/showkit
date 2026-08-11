@@ -43,8 +43,9 @@ app. Follow the installed Browser or Chrome skill before controlling a browser.
   `DOMSnapshot`, or another CDP command, and never expose the capability object
   to page code or persistence.
 - Before locking the capture contract, use the viewport choice in `SKILL.md`.
-  If no exact size was requested, ask with the three documented presets; when
-  replacing a demo, recommend its manifest viewport. Adjust only the same
+  If no exact size was requested, use 1440 by 900 and state it; when replacing
+  a demo, keep its manifest viewport. Ask only when the person requested an
+  exact size that the selected source cannot provide. Adjust only the same
   claimed tab through a documented host window or viewport control, then read
   and record its exact CSS viewport. The verified value is the capture
   contract. Never resize by changing page HTML or by opening a replacement tab.
@@ -52,6 +53,10 @@ app. Follow the installed Browser or Chrome skill before controlling a browser.
   DOM state, or a consumed capability. Reload or navigate the same claimed tab
   to recreate the required state. If that cannot restore the state, stop.
 - Do not inspect browser history to guess the target URL.
+- Use `actionKind: "inspect"` for an evidence-grounded highlight that should
+  position and capture a semantic target without selecting it or requiring a
+  page-state mutation. Do not use it to conceal an action that would otherwise
+  need confirmation.
 - Do not read cookies, local storage, session storage, profiles, passwords,
   headers, or session stores.
 - Do not close an existing user tab. Close only a tab created for this capture.

@@ -105,7 +105,10 @@ The CLI re-hashes every regular non-symlink source file before atomic import.
 Report `sourceMode: "static-source"` and `replayLevel: "source-derived"`.
 This proves which source files were bound; it does not prove that a browser
 render matches. Compare the local preview with the intended rendered source
-before reporting visual fidelity as `checked`. Otherwise report `incomplete`.
+before reporting visual fidelity as `checked`. When both are renderable in the
+same Playwright browser, compare browser-native PNG buffers in memory after
+fonts are ready and two animation frames; keep every QA image out of the
+project and demo. Otherwise report `incomplete`.
 
 ## Claude Cowork and Claude Code browser routing
 
