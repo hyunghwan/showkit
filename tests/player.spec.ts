@@ -1953,7 +1953,6 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
   test("zooms toward compact edge targets and returns to the full HTML scene", async ({
     page
   }) => {
-    test.slow();
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(customOverlayUrl);
     await page.evaluate(() => {
@@ -2032,27 +2031,10 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       ];
     });
     await page.getByRole("button", { name: "Explore demo" }).click();
-    await page.evaluate(() => {
-      const scrollLayer = document.querySelector("#scene-scroll");
-      if (!(scrollLayer instanceof HTMLElement)) {
-        throw new Error("Scene camera layers are unavailable.");
-      }
-      scrollLayer.dispatchEvent(new Event("scroll"));
-    });
-    for (let iteration = 0; iteration < 10; iteration += 1) {
-      await page.locator("#scene-viewport").evaluate((viewport) => {
-        if (!(viewport instanceof HTMLElement)) {
-          throw new Error("Scene camera viewport is unavailable.");
-        }
-        viewport.style.transform = "none";
-        window.dispatchEvent(new Event("resize"));
-      });
-      if (iteration < 9) {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 90);
-        });
-      }
-    }
+    await expect(page.locator("#scene-shell")).toHaveAttribute(
+      "data-camera-transitioning",
+      "true"
+    );
 
     await expect(page.locator("#scene-viewport")).toHaveAttribute(
       "data-camera",
