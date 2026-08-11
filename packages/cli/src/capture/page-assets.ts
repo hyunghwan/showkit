@@ -705,6 +705,36 @@ export function decodePublicAssetBytes(
   }
 }
 
+export async function settleWithinDeadline<T>(
+  operation: Promise<T>,
+  deadline: number
+): Promise<
+  | { status: "completed"; value: T }
+  | { status: "failed" }
+  | { status: "timed-out" }
+> {
+  const settled = operation.then(
+    (value) => ({ status: "completed" as const, value }),
+    () => ({ status: "failed" as const })
+  );
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    void settled;
+    return { status: "timed-out" };
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      settled,
+      new Promise<{ status: "timed-out" }>((resolve) => {
+        timer = setTimeout(() => resolve({ status: "timed-out" }), remaining);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function downloadPublicAsset(
   rawUrl: string,
   redirectsRemaining = 3,
@@ -1547,7 +1577,7 @@ async function fontsFromObservedPublicMetrics(
 
   const browser = page.context().browser();
   if (!browser) return [];
-  const context = await browser.newContext({
+  const contextPromise = browser.newContext({
     javaScriptEnabled: true,
     serviceWorkers: "block",
     viewport: { width: 32, height: 32 },
@@ -1555,23 +1585,43 @@ async function fontsFromObservedPublicMetrics(
     locale: "en-US",
     timezoneId: "UTC"
   });
-  let externalRequestAttempted = false;
-  await context.route("**/*", async (route) => {
-    const protocol = new URL(route.request().url()).protocol;
-    if (protocol === "http:" || protocol === "https:") {
-      externalRequestAttempted = true;
+  const contextResult = await settleWithinDeadline(contextPromise, deadline);
+  if (contextResult.status !== "completed") {
+    if (contextResult.status === "timed-out") {
+      void contextPromise.then((lateContext) => lateContext.close()).catch(() => {});
     }
-    await route.abort();
-  });
-  const metricPage = await context.newPage();
+    return [];
+  }
+  const context = contextResult.value;
   const metricCache = new Map<string, number[][] | undefined>();
   const matched: VisibleFontSource[] = [];
   try {
-    await metricPage.setContent(
-      '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; font-src data:">',
-      { waitUntil: "load" }
+    let externalRequestAttempted = false;
+    const routeResult = await settleWithinDeadline(
+      context.route("**/*", async (route) => {
+        const protocol = new URL(route.request().url()).protocol;
+        if (protocol === "http:" || protocol === "https:") {
+          externalRequestAttempted = true;
+        }
+        await route.abort();
+      }),
+      deadline
     );
+    if (routeResult.status !== "completed") return [];
+    const pageResult = await settleWithinDeadline(context.newPage(), deadline);
+    if (pageResult.status !== "completed") return [];
+    const metricPage = pageResult.value;
+    const contentResult = await settleWithinDeadline(
+      metricPage.setContent(
+        '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; font-src data:">',
+        { waitUntil: "load" }
+      ),
+      deadline
+    );
+    if (contentResult.status !== "completed") return [];
+    faceLoop:
     for (const [faceIndex, face] of unmatchedFaces.entries()) {
+      if (Date.now() >= deadline) break;
       const matchingCandidates = new Map<
         string,
         { source: string; payload: AssetPayload }
@@ -1579,6 +1629,7 @@ async function fontsFromObservedPublicMetrics(
       for (const [candidateIndex, candidate] of [
         ...candidates.values()
       ].entries()) {
+        if (Date.now() >= deadline) break faceLoop;
         const cacheKey = [
           candidate.payload.sha256,
           face.style,
@@ -1589,61 +1640,69 @@ async function fontsFromObservedPublicMetrics(
         if (!metricCache.has(cacheKey)) {
           externalRequestAttempted = false;
           try {
-            metrics = await metricPage.evaluate(
-              async ({ base64, descriptor, family, samples }) => {
-                const loadedFace = new FontFace(
-                  family,
-                  `url(data:font/woff2;base64,${base64})`,
-                  descriptor
-                );
-                await loadedFace.load();
-                document.fonts.add(loadedFace);
-                try {
-                  const canvas =
-                    typeof OffscreenCanvas === "function"
-                      ? new OffscreenCanvas(1, 1)
-                      : document.createElement("canvas");
-                  const context = canvas.getContext("2d");
-                  if (!context) return undefined;
-                  const weight =
-                    descriptor.weight === "bold"
-                      ? "700"
-                      : /^[1-9]00$/.test(descriptor.weight)
-                        ? descriptor.weight
-                        : "400";
-                  const style = ["italic", "oblique"].includes(
-                    descriptor.style
-                  )
-                    ? descriptor.style
-                    : "normal";
-                  context.font = `${style} ${weight} 16px "${family}"`;
-                  const metricValue = (value: number): number =>
-                    Number.isFinite(value)
-                      ? Math.round(value * 1_024) / 1_024
-                      : 0;
-                  return samples.map((sample) => {
-                    const measured = context.measureText(sample);
-                    return [
-                      metricValue(measured.width),
-                      metricValue(measured.actualBoundingBoxAscent),
-                      metricValue(measured.actualBoundingBoxDescent)
-                    ];
-                  });
-                } finally {
-                  document.fonts.delete(loadedFace);
-                }
-              },
-              {
-                base64: candidate.payload.base64,
-                descriptor: {
-                  style: face.style,
-                  weight: face.weight,
-                  stretch: face.stretch
+            const metricResult = await settleWithinDeadline(
+              metricPage.evaluate(
+                async ({ base64, descriptor, family, samples }) => {
+                  const loadedFace = new FontFace(
+                    family,
+                    `url(data:font/woff2;base64,${base64})`,
+                    descriptor
+                  );
+                  await loadedFace.load();
+                  document.fonts.add(loadedFace);
+                  try {
+                    const canvas =
+                      typeof OffscreenCanvas === "function"
+                        ? new OffscreenCanvas(1, 1)
+                        : document.createElement("canvas");
+                    const context = canvas.getContext("2d");
+                    if (!context) return undefined;
+                    const weight =
+                      descriptor.weight === "bold"
+                        ? "700"
+                        : /^[1-9]00$/.test(descriptor.weight)
+                          ? descriptor.weight
+                          : "400";
+                    const style = ["italic", "oblique"].includes(
+                      descriptor.style
+                    )
+                      ? descriptor.style
+                      : "normal";
+                    context.font = `${style} ${weight} 16px "${family}"`;
+                    const metricValue = (value: number): number =>
+                      Number.isFinite(value)
+                        ? Math.round(value * 1_024) / 1_024
+                        : 0;
+                    return samples.map((sample) => {
+                      const measured = context.measureText(sample);
+                      return [
+                        metricValue(measured.width),
+                        metricValue(measured.actualBoundingBoxAscent),
+                        metricValue(measured.actualBoundingBoxDescent)
+                      ];
+                    });
+                  } finally {
+                    document.fonts.delete(loadedFace);
+                  }
                 },
-                family: `ShowKitCandidate${faceIndex}_${candidateIndex}`,
-                samples: FONT_METRIC_SAMPLES
-              }
+                {
+                  base64: candidate.payload.base64,
+                  descriptor: {
+                    style: face.style,
+                    weight: face.weight,
+                    stretch: face.stretch
+                  },
+                  family: `ShowKitCandidate${faceIndex}_${candidateIndex}`,
+                  samples: FONT_METRIC_SAMPLES
+                }
+              ),
+              deadline
             );
+            if (metricResult.status === "timed-out") break faceLoop;
+            metrics =
+              metricResult.status === "completed"
+                ? metricResult.value
+                : undefined;
           } catch {
             metrics = undefined;
           }
@@ -1672,7 +1731,7 @@ async function fontsFromObservedPublicMetrics(
       });
     }
   } finally {
-    await context.close();
+    await settleWithinDeadline(context.close(), deadline);
   }
   return matched;
 }
