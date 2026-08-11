@@ -867,6 +867,7 @@ test("matches Playwright's native table roles and accessible names", async ({
 });
 
 test("preserves safe live control state through capture and the final player", async ({
+  browser,
   page
 }) => {
   await page.setContent(`
@@ -1005,18 +1006,12 @@ test("preserves safe live control state through capture and the final player", a
       completion: null
     } as never
   );
-  const player = await page.context().newPage();
+  const playerContext = await browser.newContext({ bypassCSP: true });
+  const player = await playerContext.newPage();
   try {
     const playerErrors: string[] = [];
     player.on("pageerror", (error) => playerErrors.push(error.message));
-    const shell = files["index.html"]
-      .replace(
-        /<meta\s+http-equiv="Content-Security-Policy"[\s\S]*?>/i,
-        ""
-      )
-      .replace(/<link[^>]+styles\.css[^>]*>/i, "")
-      .replace(/<script[^>]+(?:story|player)\.js[^>]*><\/script>/gi, "");
-    await player.setContent(shell);
+    await player.setContent(files["index.html"]);
     await player.addStyleTag({ content: files["styles.css"] });
     await player.addScriptTag({ content: files["story.js"] });
     await player.addScriptTag({ content: files["player.js"] });
@@ -1044,7 +1039,7 @@ test("preserves safe live control state through capture and the final player", a
     await expect(viewport.locator('input[type="password"]')).toHaveValue("");
     await expect(viewport.locator('[title="deep-player-end"]')).toHaveCount(0);
   } finally {
-    await player.close();
+    await playerContext.close();
   }
 });
 
