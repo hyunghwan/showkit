@@ -1619,6 +1619,7 @@ const PLAYER_JS = `(() => {
   let overlayTrackUntil = 0;
   let overlayRevealAt = 0;
   let overlayRevealTimer = 0;
+  let lastCameraRevealTarget = null;
   let completionSplitLayout = false;
   const defaultChrome = {
     mode: "overlay",
@@ -3428,8 +3429,25 @@ const PLAYER_JS = `(() => {
       previousLeft !== elements.viewport.style.left ||
       previousTop !== elements.viewport.style.top ||
       previousTransform !== elements.viewport.style.transform;
+    const cameraRevealTarget = {
+      left: Number.parseFloat(elements.viewport.style.left),
+      top: Number.parseFloat(elements.viewport.style.top),
+      scale
+    };
+    const cameraTargetMovement = lastCameraRevealTarget
+      ? Math.max(
+          Math.abs(cameraRevealTarget.left - lastCameraRevealTarget.left),
+          Math.abs(cameraRevealTarget.top - lastCameraRevealTarget.top),
+          Math.abs(cameraRevealTarget.scale - lastCameraRevealTarget.scale) *
+            Math.max(renderedViewport.width, renderedViewport.height)
+        )
+      : Number.POSITIVE_INFINITY;
+    const cameraTargetMoves = sceneMoves && cameraTargetMovement >= 4;
+    if (!lastCameraRevealTarget || cameraTargetMoves) {
+      lastCameraRevealTarget = cameraRevealTarget;
+    }
     if (
-      sceneMoves &&
+      cameraTargetMoves &&
       current >= 0 &&
       camera === "focus" &&
       !document.body.hasAttribute("data-initial-render") &&
@@ -3474,6 +3492,7 @@ const PLAYER_JS = `(() => {
 
   function render() {
     clearCameraTransition(false);
+    lastCameraRevealTarget = null;
     const welcome = hasWelcome && current < 0;
     const complete = current >= demo.steps.length;
     const step = welcome
