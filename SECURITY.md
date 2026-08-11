@@ -24,6 +24,12 @@ as sensitive input.
   family, ShowKit compares four fixed, non-page text metric samples in a
   separate network-blocked context. It accepts only one unique content-hash
   match and reads at most 8 MB of candidate font bytes per matching pass.
+- A confirmed visible-session capture may replace an unavailable loaded text
+  font with ShowKit's fixed system font stack only when fixed non-page Latin,
+  Korean, and CJK metric samples remain within `0.8` through `1.25` on both
+  axes. The capture records `bounded-font-metric-fallback`, keeps the text
+  selectable, and still requires zero generated-HTML typography failures. This
+  exception never applies to icon fonts or an out-of-range text font.
 - Unsupported surfaces, sensitive-looking captured values, unresolved critical
   assets, full-scene images, and oversized captures stop before a publishable
   capture is written.

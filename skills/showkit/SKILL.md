@@ -283,6 +283,12 @@ without blocking the workflow.
 4. Reuse or create a Playwright spec that imports
    `@showkit/cli/playwright`, wraps product actions in `demo.step()`, and gives
    each step both its Playwright `target` and a serializable `captureTarget`.
+   Prefer the target's exact accessible name in `captureTarget.name`. When it
+   is not known, leave the name omitted instead of inventing a per-site
+   selector or visible-text workaround. ShowKit may recover a bounded semantic
+   name from that same target and still requires an exact Playwright identity.
+   Otherwise it stops with `capture-target-name-required` and asks for the exact
+   name.
    For a codebase-free live page, follow `examples/headed-chrome-live.md`.
    For an exact public HTTP or HTTPS URL opened in a fresh, signed-out context,
    add `pageAssetConsent: { mode: "public-page", consent: "requested" }` to
@@ -298,14 +304,19 @@ without blocking the workflow.
    Playwright capture defaults to `remoteAssetPolicy: "decorative-remove"`,
    which may remove only unresolved non-interactive decoration and records the
    exclusion. Use `remoteAssetPolicy: "strict"` when every decorative asset is
-   required. Targets, controls, and layout-critical assets always fail closed.
+   required. Outside the bounded system text-font exception below, targets,
+   controls, and layout-critical assets always fail closed.
    The public-page route uses a fresh credential-free downloader that rejects
    local and private addresses; do not replace it with page-context `fetch`.
    It may read bounded public CSS only to locate a visible WOFF2 font and may
    compare fixed non-page text metrics for bounded opaque public WOFF2
    candidates in a separate network-blocked context. Accept only one unique
    content-hash match and keep candidate reads within the documented limit. It
-   may render only an exact bounded static SVG background layer in a
+   may use ShowKit's fixed system font stack for an unavailable loaded text font
+   only in a confirmed visible-session capture and only when the fixed Latin,
+   Korean, and CJK metric samples remain within the documented bounds. This
+   exception never applies to icon fonts or out-of-range text fonts. It may
+   render only an exact bounded static SVG background layer in a
    JavaScript-disabled, network-blocked empty context. It never stores CSS, the
    source SVG, a data URL, a complete control, or a scene raster. Treat video,
    large canvas, maps, cross-origin frames, closed or interactive shadow
@@ -458,8 +469,10 @@ without blocking the workflow.
    as semantic HTML. Never render the complete control,
    a text region, or the full scene as an image. Stop on
    `UnsupportedSurface` when a layout-critical dependency cannot be reproduced
-   instead of building a demo with a fallback font, blank media region, native
-   replacement control, or substituted icon.
+   instead of building a demo with an unverified fallback font, blank media
+   region, native replacement control, or substituted icon. The only system
+   text-font exception is the confirmed and bounded rule in
+   `references/security.md`.
 9. Run `showkit capture session <safe-envelope.json> --json`. The CLI deletes
    the temporary envelope on success or failure.
 10. Create evidence-grounded demo content. Default `player.chrome.mode` to
@@ -497,7 +510,9 @@ without blocking the workflow.
     same zero-drift and zero-collision result. Read
     `data-text-metric-fit-count` as a diagnostic; a
     nonzero value is allowed only within the bounded fallback rule in
-    `references/visual-fidelity.md`. Follow
+    `references/visual-fidelity.md`. A captured scene that records
+    `bounded-font-metric-fallback` must still report zero typography failures;
+    the marker does not relax the acceptance budget. Follow
     the generic recovery ladder once. Do not hand-tune generated CSS, patch
     captured HTML, or add a site-specific rule. Report the visual fidelity
     status as `checked`, `incomplete`, or `blocked`; do not claim fidelity while

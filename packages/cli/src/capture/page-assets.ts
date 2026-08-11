@@ -709,7 +709,8 @@ async function downloadPublicAsset(
   rawUrl: string,
   redirectsRemaining = 3,
   previousProtocol?: string,
-  maxBytes = 1_048_576
+  maxBytes = 1_048_576,
+  deadline = Date.now() + 10_000
 ): Promise<DownloadedAsset | undefined> {
   const url = safeAssetUrl(rawUrl);
   if (
@@ -718,10 +719,34 @@ async function downloadPublicAsset(
   ) {
     return undefined;
   }
-  const resolved = await resolvedPublicAddress(url.hostname);
+  const dnsTimeRemaining = deadline - Date.now();
+  if (dnsTimeRemaining <= 0) return undefined;
+  const resolved = await new Promise<
+    { address: string; family: 4 | 6 } | undefined
+  >((resolve) => {
+    let settled = false;
+    const finish = (value: { address: string; family: 4 | 6 } | undefined) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(undefined), dnsTimeRemaining);
+    void resolvedPublicAddress(url.hostname).then(finish, () => finish(undefined));
+  });
   if (!resolved) return undefined;
+  const requestTimeRemaining = deadline - Date.now();
+  if (requestTimeRemaining <= 0) return undefined;
 
   return new Promise((resolve) => {
+    let settled = false;
+    let activeResponse: import("node:http").IncomingMessage | undefined;
+    const finish = (value: DownloadedAsset | undefined) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(wallClockTimer);
+      resolve(value);
+    };
     const request = (url.protocol === "https:" ? requestHttps : requestHttp)(
       url,
       {
@@ -745,6 +770,7 @@ async function downloadPublicAsset(
         }) as never
       },
       (response) => {
+        activeResponse = response;
         const status = response.statusCode ?? 0;
         const location = response.headers.location;
         if (
@@ -761,20 +787,21 @@ async function downloadPublicAsset(
             }
           })();
           if (!nextUrl) {
-            resolve(undefined);
+            finish(undefined);
             return;
           }
           void downloadPublicAsset(
             nextUrl,
             redirectsRemaining - 1,
             url.protocol,
-            maxBytes
-          ).then(resolve);
+            maxBytes,
+            deadline
+          ).then(finish, () => finish(undefined));
           return;
         }
         if (status < 200 || status >= 300) {
           response.resume();
-          resolve(undefined);
+          finish(undefined);
           return;
         }
         const declaredLength = Number(response.headers["content-length"] ?? "0");
@@ -783,7 +810,7 @@ async function downloadPublicAsset(
           declaredLength > maxBytes
         ) {
           response.destroy();
-          resolve(undefined);
+          finish(undefined);
           return;
         }
         const chunks: Buffer[] = [];
@@ -793,13 +820,14 @@ async function downloadPublicAsset(
           byteLength += bytes.byteLength;
           if (byteLength > maxBytes) {
             response.destroy();
+            finish(undefined);
             return;
           }
           chunks.push(bytes);
         });
         response.once("end", () => {
           if (byteLength === 0 || byteLength > maxBytes) {
-            resolve(undefined);
+            finish(undefined);
             return;
           }
           const bytes = decodePublicAssetBytes(
@@ -808,10 +836,10 @@ async function downloadPublicAsset(
             maxBytes
           );
           if (!bytes) {
-            resolve(undefined);
+            finish(undefined);
             return;
           }
-          resolve({
+          finish({
             bytes,
             contentType: String(response.headers["content-type"] ?? "")
               .split(";", 1)[0]!
@@ -819,12 +847,20 @@ async function downloadPublicAsset(
               .toLowerCase()
           });
         });
-        response.once("error", () => resolve(undefined));
-        response.once("aborted", () => resolve(undefined));
+        response.once("error", () => finish(undefined));
+        response.once("aborted", () => finish(undefined));
       }
     );
-    request.setTimeout(10_000, () => request.destroy());
-    request.once("error", () => resolve(undefined));
+    const wallClockTimer = setTimeout(() => {
+      activeResponse?.destroy();
+      request.destroy();
+      finish(undefined);
+    }, requestTimeRemaining);
+    request.setTimeout(Math.min(10_000, requestTimeRemaining), () => {
+      request.destroy();
+      finish(undefined);
+    });
+    request.once("error", () => finish(undefined));
     request.end();
   });
 }
@@ -1320,7 +1356,8 @@ export function importedStyleSheetsFromCss(
 }
 
 async function fontsFromUnreadableStyleSheets(
-  inventory: VisiblePageAssetInventory
+  inventory: VisiblePageAssetInventory,
+  deadline: number
 ): Promise<VisibleFontSource[]> {
   const families = new Set(
     inventory.visibleFontFamilies.map((family) =>
@@ -1336,6 +1373,7 @@ async function fontsFromUnreadableStyleSheets(
   const visited = new Set<string>();
   let aggregateCssBytes = 0;
   for (let cursor = 0; cursor < queue.length && visited.size < 32; cursor += 1) {
+    if (Date.now() >= deadline) break;
     const entry = queue[cursor];
     if (!entry || visited.has(entry.source) || entry.depth > 3) continue;
     visited.add(entry.source);
@@ -1345,7 +1383,8 @@ async function fontsFromUnreadableStyleSheets(
       entry.source,
       3,
       undefined,
-      remainingCssBytes
+      remainingCssBytes,
+      deadline
     );
     if (!download) continue;
     const contentType = download.contentType;
@@ -1449,7 +1488,8 @@ async function fontsFromObservedPublicMetrics(
   page: Page,
   inventory: VisiblePageAssetInventory,
   observedSources: string[],
-  knownFonts: VisibleFontSource[]
+  knownFonts: VisibleFontSource[],
+  deadline: number
 ): Promise<VisibleFontSource[]> {
   const normalizeFamily = (value: string): string =>
     value.trim().toLocaleLowerCase("en-US");
@@ -1486,13 +1526,15 @@ async function fontsFromObservedPublicMetrics(
   >();
   let candidateBytes = 0;
   for (const source of candidateSources) {
+    if (Date.now() >= deadline) break;
     const remainingBytes = 8 * 1_048_576 - candidateBytes;
     if (remainingBytes <= 0) break;
     const response = await downloadPublicAsset(
       source,
       3,
       undefined,
-      Math.min(1_048_576, remainingBytes)
+      Math.min(1_048_576, remainingBytes),
+      deadline
     );
     const payload = response
       ? payloadFromDownload(response, "font")
@@ -1660,8 +1702,12 @@ export async function preparePlaywrightPageAssets(
     (consent.mode === "public-page" && consent.consent === "requested") ||
     (consent.mode === "visible-session" && consent.consent === "confirmed");
   if (!consentValid) return { assets: [], fontFaces: [], replacements: [] };
+  const assetPreparationDeadline = Date.now() + 10_000;
 
-  const stylesheetFonts = await fontsFromUnreadableStyleSheets(inventory);
+  const stylesheetFonts = await fontsFromUnreadableStyleSheets(
+    inventory,
+    assetPreparationDeadline
+  );
   const observedFonts = fontsFromObservedPublicRequests(
     inventory,
     observedPublicFontSources
@@ -1675,7 +1721,8 @@ export async function preparePlaywrightPageAssets(
     page,
     inventory,
     observedPublicFontSources,
-    directlyMappedFonts
+    directlyMappedFonts,
+    assetPreparationDeadline
   );
   const allFonts = [...directlyMappedFonts, ...metricMatchedFonts].filter(
     (font, index, fonts) =>
@@ -1727,7 +1774,13 @@ export async function preparePlaywrightPageAssets(
       const item = requested[cursor];
       cursor += 1;
       if (!item) continue;
-      const download = await downloadPublicAsset(item.source);
+      const download = await downloadPublicAsset(
+        item.source,
+        3,
+        undefined,
+        1_048_576,
+        assetPreparationDeadline
+      );
       if (download && item.kind === "image") {
         downloadedImages.set(item.source, download);
       }
