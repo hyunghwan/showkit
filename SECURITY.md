@@ -51,6 +51,10 @@ as sensitive input.
 - `showkit publish` rechecks reports and file hashes before the installed CLI
   connects to ShowKit's fixed first-party hosted service. A failed check uploads
   nothing and leaves the previous published demo unchanged.
+- `pnpm security:scan` rejects credential-shaped values in source and public
+  exports without file-specific exceptions. The hosted CLI loads Firebase's
+  public web configuration from ShowKit's bound Firebase Hosting URL and checks
+  the expected project and app before using it.
 
 Passing ShowKit checks is not a security, compliance, or approval guarantee.
 

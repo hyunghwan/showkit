@@ -12,6 +12,7 @@ Describe what a ShowKit user can now do.
 
 ## Verification
 
+- [ ] `pnpm security:scan`
 - [ ] `pnpm audit:prod`
 - [ ] `pnpm check`
 - [ ] `pnpm build`

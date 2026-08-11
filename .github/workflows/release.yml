@@ -41,6 +41,7 @@ jobs:
             }
           '
       - run: pnpm install --frozen-lockfile
+      - run: pnpm security:scan
       - run: pnpm audit:prod
       - run: pnpm docs:check
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
