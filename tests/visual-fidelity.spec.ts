@@ -30,7 +30,14 @@ const channelFidelityLimits =
   process.platform === "linux"
     ? { scene: 0.02, focus: 0.08 }
     : { scene: 0.002, focus: 0.005 };
-const perceptualFidelityLimits = { scene: 0.002, focus: 0.005 };
+// Pixelmatch removes antialiasing-only edges, but Linux Chromium still produces
+// a small amount of font-raster variance across otherwise aligned text runs.
+// Keep critical product regions on the cross-platform budget below.
+const perceptualFidelityLimits =
+  process.platform === "linux"
+    ? { scene: 0.005, focus: 0.04 }
+    : { scene: 0.002, focus: 0.005 };
+const criticalPerceptualFidelityLimit = 0.005;
 const geometryTolerance = 0.75;
 
 type Rectangle = {
@@ -766,7 +773,7 @@ test("compares generated demo states with the native source render in memory", a
       perceptualFidelityLimits.focus
     );
     expect(Math.max(...criticalRegionRatios)).toBeLessThan(
-      perceptualFidelityLimits.focus
+      criticalPerceptualFidelityLimit
     );
 
     const projectFiles = await allFilePaths(path.join(projectDirectory, ".showkit"));
