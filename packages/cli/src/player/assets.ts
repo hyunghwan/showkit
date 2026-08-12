@@ -668,31 +668,15 @@ body[data-initial-render="true"] .hotspot::after {
   transition: none !important;
 }
 
-@keyframes showkit-camera-overlay-reveal {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes showkit-camera-interaction-restore {
-  from { pointer-events: none; }
-  to { pointer-events: auto; }
-}
-
-.scene-shell[data-camera-transitioning="true"] .hotspot {
-  animation:
-    showkit-camera-overlay-reveal 650ms step-end both,
-    showkit-camera-interaction-restore 650ms step-end both,
-    hotspot-attention 1.65s cubic-bezier(0.2, 0.75, 0.25, 1) infinite;
-}
-
-.scene-shell[data-camera-transitioning="true"] .tooltip {
-  animation:
-    showkit-camera-overlay-reveal 650ms step-end both,
-    showkit-camera-interaction-restore 650ms step-end both;
-}
-
+.scene-shell[data-camera-transitioning="true"] .hotspot,
+.scene-shell[data-camera-transitioning="true"] .tooltip,
 .scene-shell[data-camera-transitioning="true"] .step-backdrop {
-  animation: showkit-camera-overlay-reveal 650ms step-end both;
+  opacity: 0;
+}
+
+.scene-shell[data-camera-transitioning="true"] .hotspot,
+.scene-shell[data-camera-transitioning="true"] .tooltip {
+  pointer-events: none;
 }
 
 .scene-scroll {
@@ -1619,8 +1603,14 @@ const PLAYER_JS = `(() => {
   let overlayTrackUntil = 0;
   let overlayRevealAt = 0;
   let overlayRevealTimer = 0;
+  let cameraMotionStartedAt = 0;
+  let lastCameraMotionAt = 0;
   let lastCameraRevealTarget = null;
   let completionSplitLayout = false;
+  // WebKit can emit a long burst of resize targets. Wait for quiet, but never
+  // leave the guide controls hidden for the full lifetime of that burst.
+  const cameraOverlaySettleMs = 650;
+  const cameraOverlayMaxHideMs = 1600;
   const defaultChrome = {
     mode: "overlay",
     placements: {
@@ -2922,10 +2912,7 @@ const PLAYER_JS = `(() => {
   function positionOverlay() {
     const shellRect = elements.shell.getBoundingClientRect();
     if (overlayRevealAt > 0 && performance.now() >= overlayRevealAt) {
-      overlayRevealAt = 0;
-      window.clearTimeout(overlayRevealTimer);
-      overlayRevealTimer = 0;
-      delete elements.shell.dataset.cameraTransitioning;
+      finishCameraTransition(false);
     }
     if (current < 0) {
       elements.stepBackdrop.hidden = true;
@@ -3270,32 +3257,58 @@ const PLAYER_JS = `(() => {
     window.clearTimeout(overlayRevealTimer);
     overlayRevealTimer = 0;
     overlayRevealAt = 0;
+    cameraMotionStartedAt = 0;
+    lastCameraMotionAt = 0;
     delete elements.shell.dataset.cameraTransitioning;
     if (reposition) positionOverlay();
   }
 
-  function finishCameraTransition() {
+  function finishCameraTransition(reposition = true) {
+    window.clearTimeout(overlayRevealTimer);
     overlayRevealTimer = 0;
-    const remaining = overlayRevealAt - performance.now();
+    const now = performance.now();
+    const quietAt = lastCameraMotionAt + cameraOverlaySettleMs;
+    const maxHideAt = cameraMotionStartedAt + cameraOverlayMaxHideMs;
+    const revealAt = Math.min(quietAt, maxHideAt);
+    const remaining = revealAt - now;
     if (remaining > 0) {
+      overlayRevealAt = revealAt;
       overlayRevealTimer = window.setTimeout(
         finishCameraTransition,
         remaining + 24
       );
       return;
     }
-    clearCameraTransition();
+    delete elements.shell.dataset.cameraTransitioning;
+    if (now < quietAt) {
+      overlayRevealAt = quietAt;
+      overlayRevealTimer = window.setTimeout(
+        finishCameraTransition,
+        quietAt - now + 24
+      );
+      if (reposition) positionOverlay();
+      return;
+    }
+    clearCameraTransition(reposition);
   }
 
-  function finishOverlayReveal(event) {
-    if (
-      event.animationName !== "showkit-camera-overlay-reveal" ||
-      elements.shell.dataset.cameraTransitioning !== "true"
-    ) return;
-    clearCameraTransition();
+  function beginCameraTransition() {
+    const now = performance.now();
+    if (cameraMotionStartedAt === 0) cameraMotionStartedAt = now;
+    lastCameraMotionAt = now;
+    const maxHideAt = cameraMotionStartedAt + cameraOverlayMaxHideMs;
+    const canHide = now < maxHideAt;
+    overlayRevealAt = canHide
+      ? Math.min(now + cameraOverlaySettleMs, maxHideAt)
+      : now + cameraOverlaySettleMs;
+    window.clearTimeout(overlayRevealTimer);
+    if (canHide) elements.shell.dataset.cameraTransitioning = "true";
+    else delete elements.shell.dataset.cameraTransitioning;
+    overlayRevealTimer = window.setTimeout(
+      finishCameraTransition,
+      Math.max(0, overlayRevealAt - performance.now()) + 24
+    );
   }
-
-  elements.shell.addEventListener("animationend", finishOverlayReveal);
 
   function scheduleOverlayPosition(duration = 180) {
     window.cancelAnimationFrame(overlayFrame);
@@ -3453,15 +3466,7 @@ const PLAYER_JS = `(() => {
       !document.body.hasAttribute("data-initial-render") &&
       !window.matchMedia("(prefers-reduced-motion: reduce)").matches
     ) {
-      overlayRevealAt = performance.now() + 650;
-      window.clearTimeout(overlayRevealTimer);
-      delete elements.shell.dataset.cameraTransitioning;
-      void elements.shell.offsetWidth;
-      elements.shell.dataset.cameraTransitioning = "true";
-      overlayRevealTimer = window.setTimeout(
-        finishCameraTransition,
-        Math.max(0, overlayRevealAt - performance.now()) + 24
-      );
+      beginCameraTransition();
     }
     updatePositionLocks();
     positionOverlay();

@@ -2036,6 +2036,70 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "focus"
     );
     await page.setViewportSize({ width: 1260, height: 700 });
+    await page.evaluate(() => {
+      const testWindow = window as Window & {
+        __showkitCameraChurn?: { changes: number; timer: number };
+      };
+      const shell = document.querySelector("#scene-shell");
+      if (!(shell instanceof HTMLElement)) {
+        throw new Error("Scene shell is unavailable.");
+      }
+      let narrow = false;
+      const churn = { changes: 0, timer: 0 };
+      const moveCamera = () => {
+        narrow = !narrow;
+        shell.style.width = narrow ? "calc(100% - 12px)" : "100%";
+        churn.changes += 1;
+        window.dispatchEvent(new Event("resize"));
+      };
+      moveCamera();
+      churn.timer = window.setInterval(moveCamera, 80);
+      testWindow.__showkitCameraChurn = churn;
+    });
+    await expect(page.locator("#scene-shell")).toHaveAttribute(
+      "data-camera-transitioning",
+      "true"
+    );
+    await expect.poll(() =>
+      page.evaluate(() => {
+        const testWindow = window as Window & {
+          __showkitCameraChurn?: { changes: number; timer: number };
+        };
+        const hotspot = document.querySelector("#hotspot");
+        const tooltip = document.querySelector("#tooltip");
+        const churn = testWindow.__showkitCameraChurn;
+        if (
+          !(hotspot instanceof HTMLElement) ||
+          !(tooltip instanceof HTMLElement) ||
+          !churn
+        ) {
+          return false;
+        }
+        const hotspotStyle = getComputedStyle(hotspot);
+        const tooltipStyle = getComputedStyle(tooltip);
+        return (
+          churn.changes >= 22 &&
+          churn.timer !== 0 &&
+          Number(hotspotStyle.opacity) === 1 &&
+          hotspotStyle.pointerEvents === "auto" &&
+          Number(tooltipStyle.opacity) === 1 &&
+          tooltipStyle.pointerEvents === "auto"
+        );
+      })
+    ).toBe(true);
+    await page.evaluate(() => {
+      const testWindow = window as Window & {
+        __showkitCameraChurn?: { changes: number; timer: number };
+      };
+      const shell = document.querySelector("#scene-shell");
+      const churn = testWindow.__showkitCameraChurn;
+      if (churn) window.clearInterval(churn.timer);
+      if (shell instanceof HTMLElement) {
+        shell.style.removeProperty("width");
+        window.dispatchEvent(new Event("resize"));
+      }
+      delete testWindow.__showkitCameraChurn;
+    });
     await expect.poll(() =>
       page.evaluate(() => {
         const hotspot = document.querySelector("#hotspot");
