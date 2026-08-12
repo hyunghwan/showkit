@@ -1953,6 +1953,28 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
   test("zooms toward compact edge targets and returns to the full HTML scene", async ({
     page
   }) => {
+    const overlayInteractionState = () =>
+      page.evaluate(() => {
+        const hotspot = document.querySelector("#hotspot");
+        const tooltip = document.querySelector("#tooltip");
+        if (!(hotspot instanceof HTMLElement) || !(tooltip instanceof HTMLElement)) {
+          return null;
+        }
+        const hotspotStyle = getComputedStyle(hotspot);
+        const tooltipStyle = getComputedStyle(tooltip);
+        return {
+          hotspotOpacity: Number(hotspotStyle.opacity),
+          hotspotPointerEvents: hotspotStyle.pointerEvents,
+          tooltipOpacity: Number(tooltipStyle.opacity),
+          tooltipPointerEvents: tooltipStyle.pointerEvents
+        };
+      });
+    const visibleOverlayState = {
+      hotspotOpacity: 1,
+      hotspotPointerEvents: "auto",
+      tooltipOpacity: 1,
+      tooltipPointerEvents: "auto"
+    };
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(customOverlayUrl);
     await page.evaluate(() => {
@@ -2035,12 +2057,23 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera",
       "focus"
     );
-    await expect(page.locator("#scene-shell")).not.toHaveAttribute(
-      "data-camera-transitioning",
-      "true"
+    const shell = page.locator("#scene-shell");
+    await expect.poll(overlayInteractionState).toEqual(visibleOverlayState);
+    await shell.evaluate(async (element) => {
+      element.removeAttribute("data-camera-transitioning");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      element.setAttribute("data-camera-transitioning", "true");
+    });
+    await expect.poll(overlayInteractionState).toEqual({
+      hotspotOpacity: 0,
+      hotspotPointerEvents: "none",
+      tooltipOpacity: 0,
+      tooltipPointerEvents: "none"
+    });
+    await expect.poll(overlayInteractionState, { timeout: 3_000 }).toEqual(
+      visibleOverlayState
     );
     await page.setViewportSize({ width: 1260, height: 700 });
-    const shell = page.locator("#scene-shell");
     for (let iteration = 0; iteration < 24; iteration += 1) {
       await shell.evaluate((element, narrow) => {
         if (!(element instanceof HTMLElement)) {
@@ -2053,32 +2086,9 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
         setTimeout(resolve, 80);
       });
     }
-    await expect(shell).not.toHaveAttribute("data-camera-transitioning", "true");
-    const recoveredDuringChurn = await page.evaluate(() => {
-      const hotspot = document.querySelector("#hotspot");
-      const tooltip = document.querySelector("#tooltip");
-      if (
-        !(hotspot instanceof HTMLElement) ||
-        !(tooltip instanceof HTMLElement)
-      ) {
-        return null;
-      }
-      const hotspotStyle = getComputedStyle(hotspot);
-      const tooltipStyle = getComputedStyle(tooltip);
-      return {
-        hotspotOpacity: Number(hotspotStyle.opacity),
-        hotspotPointerEvents: hotspotStyle.pointerEvents,
-        tooltipOpacity: Number(tooltipStyle.opacity),
-        tooltipPointerEvents: tooltipStyle.pointerEvents
-      };
-    });
+    const recoveredDuringChurn = await overlayInteractionState();
     expect(recoveredDuringChurn).not.toBeNull();
-    expect(recoveredDuringChurn).toMatchObject({
-      hotspotOpacity: 1,
-      hotspotPointerEvents: "auto",
-      tooltipOpacity: 1,
-      tooltipPointerEvents: "auto"
-    });
+    expect(recoveredDuringChurn).toEqual(visibleOverlayState);
     await page.evaluate(() => {
       const shell = document.querySelector("#scene-shell");
       if (shell instanceof HTMLElement) {
@@ -2086,28 +2096,7 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
         window.dispatchEvent(new Event("resize"));
       }
     });
-    await expect.poll(() =>
-      page.evaluate(() => {
-        const hotspot = document.querySelector("#hotspot");
-        const tooltip = document.querySelector("#tooltip");
-        if (!(hotspot instanceof HTMLElement) || !(tooltip instanceof HTMLElement)) {
-          return null;
-        }
-        const hotspotStyle = getComputedStyle(hotspot);
-        const tooltipStyle = getComputedStyle(tooltip);
-        return {
-          hotspotOpacity: Number(hotspotStyle.opacity),
-          hotspotPointerEvents: hotspotStyle.pointerEvents,
-          tooltipOpacity: Number(tooltipStyle.opacity),
-          tooltipPointerEvents: tooltipStyle.pointerEvents
-        };
-      })
-    ).toEqual({
-      hotspotOpacity: 1,
-      hotspotPointerEvents: "auto",
-      tooltipOpacity: 1,
-      tooltipPointerEvents: "auto"
-    });
+    await expect.poll(overlayInteractionState).toEqual(visibleOverlayState);
     const cameraScale = () =>
       page.locator("#scene-viewport").evaluate((element) => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);

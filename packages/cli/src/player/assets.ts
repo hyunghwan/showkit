@@ -668,15 +668,31 @@ body[data-initial-render="true"] .hotspot::after {
   transition: none !important;
 }
 
-.scene-shell[data-camera-transitioning="true"] .hotspot,
-.scene-shell[data-camera-transitioning="true"] .tooltip,
-.scene-shell[data-camera-transitioning="true"] .step-backdrop {
-  opacity: 0;
+@keyframes showkit-camera-overlay-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.scene-shell[data-camera-transitioning="true"] .hotspot,
+@keyframes showkit-camera-interaction-restore {
+  from { pointer-events: none; }
+  to { pointer-events: auto; }
+}
+
+.scene-shell[data-camera-transitioning="true"] .hotspot {
+  animation:
+    showkit-camera-overlay-reveal 1600ms step-end both,
+    showkit-camera-interaction-restore 1600ms step-end both,
+    hotspot-attention 1.65s cubic-bezier(0.2, 0.75, 0.25, 1) infinite;
+}
+
 .scene-shell[data-camera-transitioning="true"] .tooltip {
-  pointer-events: none;
+  animation:
+    showkit-camera-overlay-reveal 1600ms step-end both,
+    showkit-camera-interaction-restore 1600ms step-end both;
+}
+
+.scene-shell[data-camera-transitioning="true"] .step-backdrop {
+  animation: showkit-camera-overlay-reveal 1600ms step-end both;
 }
 
 .scene-scroll {
