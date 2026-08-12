@@ -1953,6 +1953,7 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
   test("zooms toward compact edge targets and returns to the full HTML scene", async ({
     page
   }) => {
+    await page.clock.install();
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(customOverlayUrl);
     await page.evaluate(() => {
@@ -2035,6 +2036,12 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera",
       "focus"
     );
+    await page.clock.pauseAt(await page.evaluate(() => Date.now()));
+    await page.clock.runFor(700);
+    await expect(page.locator("#scene-shell")).not.toHaveAttribute(
+      "data-camera-transitioning",
+      "true"
+    );
     await page.setViewportSize({ width: 1260, height: 700 });
     await page.evaluate(() => {
       const testWindow = window as Window & {
@@ -2060,33 +2067,41 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera-transitioning",
       "true"
     );
-    await expect.poll(() =>
-      page.evaluate(() => {
-        const testWindow = window as Window & {
-          __showkitCameraChurn?: { changes: number; timer: number };
-        };
-        const hotspot = document.querySelector("#hotspot");
-        const tooltip = document.querySelector("#tooltip");
-        const churn = testWindow.__showkitCameraChurn;
-        if (
-          !(hotspot instanceof HTMLElement) ||
-          !(tooltip instanceof HTMLElement) ||
-          !churn
-        ) {
-          return false;
-        }
-        const hotspotStyle = getComputedStyle(hotspot);
-        const tooltipStyle = getComputedStyle(tooltip);
-        return (
-          churn.changes >= 22 &&
-          churn.timer !== 0 &&
-          Number(hotspotStyle.opacity) === 1 &&
-          hotspotStyle.pointerEvents === "auto" &&
-          Number(tooltipStyle.opacity) === 1 &&
-          tooltipStyle.pointerEvents === "auto"
-        );
-      })
-    ).toBe(true);
+    await page.clock.runFor(1800);
+    const recoveredDuringChurn = await page.evaluate(() => {
+      const testWindow = window as Window & {
+        __showkitCameraChurn?: { changes: number; timer: number };
+      };
+      const hotspot = document.querySelector("#hotspot");
+      const tooltip = document.querySelector("#tooltip");
+      const churn = testWindow.__showkitCameraChurn;
+      if (
+        !(hotspot instanceof HTMLElement) ||
+        !(tooltip instanceof HTMLElement) ||
+        !churn
+      ) {
+        return null;
+      }
+      const hotspotStyle = getComputedStyle(hotspot);
+      const tooltipStyle = getComputedStyle(tooltip);
+      return {
+        changes: churn.changes,
+        running: churn.timer !== 0,
+        hotspotOpacity: Number(hotspotStyle.opacity),
+        hotspotPointerEvents: hotspotStyle.pointerEvents,
+        tooltipOpacity: Number(tooltipStyle.opacity),
+        tooltipPointerEvents: tooltipStyle.pointerEvents
+      };
+    });
+    expect(recoveredDuringChurn).not.toBeNull();
+    expect(recoveredDuringChurn?.changes).toBeGreaterThanOrEqual(22);
+    expect(recoveredDuringChurn).toMatchObject({
+      running: true,
+      hotspotOpacity: 1,
+      hotspotPointerEvents: "auto",
+      tooltipOpacity: 1,
+      tooltipPointerEvents: "auto"
+    });
     await page.evaluate(() => {
       const testWindow = window as Window & {
         __showkitCameraChurn?: { changes: number; timer: number };
@@ -2100,6 +2115,7 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       }
       delete testWindow.__showkitCameraChurn;
     });
+    await page.clock.resume();
     await expect.poll(() =>
       page.evaluate(() => {
         const hotspot = document.querySelector("#hotspot");
