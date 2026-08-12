@@ -2036,7 +2036,6 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera",
       "focus"
     );
-    await page.clock.pauseAt(await page.evaluate(() => Date.now()));
     await page.clock.runFor(700);
     await expect(page.locator("#scene-shell")).not.toHaveAttribute(
       "data-camera-transitioning",
