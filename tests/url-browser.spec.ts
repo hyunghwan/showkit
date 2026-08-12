@@ -1919,6 +1919,83 @@ test("ignores hidden DOM updates while settling a visible target", async ({
   );
 });
 
+test("ignores non-rendered child-list churn under a visible parent", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main><button type="button">Review stable child list</button></main>
+  `);
+  const targetSpec = {
+    strategy: "role" as const,
+    role: "button",
+    name: "Review stable child list"
+  };
+  const target = page.getByRole("button", {
+    name: targetSpec.name,
+    exact: true
+  });
+  const adapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        async domSnapshot() {
+          return 'button "Review stable child list"';
+        },
+        async evaluate(pageFunction: (...args: any[]) => unknown, options: unknown) {
+          return page.evaluate(pageFunction as any, options as any);
+        },
+        locator(selector: string) {
+          return page.locator(selector);
+        },
+        getByRole(
+          role: string,
+          options?: { name?: string; exact?: boolean }
+        ) {
+          return page.getByRole(role as any, options);
+        }
+      },
+      async url() {
+        return page.url();
+      }
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+  await page.evaluate(() => {
+    let previous: HTMLScriptElement | undefined;
+    (window as any).__showkitHiddenChildTimer = setInterval(() => {
+      const current = document.createElement("script");
+      current.type = "application/json";
+      current.textContent = JSON.stringify({ revision: performance.now() });
+      document.body.append(current);
+      previous?.remove();
+      previous = current;
+      (window as any).__showkitHiddenChild = current;
+    }, 40);
+  });
+  try {
+    const playwrightStartedAt = performance.now();
+    const captured = await captureScene(page, {
+      target,
+      captureTarget: targetSpec,
+      anchorId: "sk-hidden-child-list-playwright"
+    });
+    expect(performance.now() - playwrightStartedAt).toBeLessThan(2_000);
+    expect(captured.scene.target).toEqual(
+      expect.objectContaining({ name: targetSpec.name })
+    );
+
+    const browserStartedAt = performance.now();
+    await expect(adapter.prepareTargetForCapture(targetSpec)).resolves.toBe(false);
+    expect(performance.now() - browserStartedAt).toBeLessThan(2_000);
+  } finally {
+    await page.evaluate(() => {
+      clearInterval((window as any).__showkitHiddenChildTimer);
+      (window as any).__showkitHiddenChild?.remove();
+    });
+  }
+});
+
 test("ignores a finite animation under a transparent ancestor", async ({
   page
 }) => {

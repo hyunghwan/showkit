@@ -747,21 +747,55 @@ async function settleVisibleAssetsInIsolatedWorld(
           else previouslyVisible.delete(element);
           return wasVisible || visible;
         };
+        const childNodeMayAffectRender = (node, target) => {
+          if (node instanceof Element) {
+            if (
+              node.localName === "style" ||
+              (node.localName === "link" &&
+                node.relList?.contains("stylesheet"))
+            ) {
+              return true;
+            }
+            if (changedVisibility(node)) return true;
+            const walker = document.createTreeWalker(
+              node,
+              NodeFilter.SHOW_ELEMENT
+            );
+            let visitedElements = 0;
+            let descendant = walker.nextNode();
+            while (descendant) {
+              visitedElements += 1;
+              if (visitedElements > maxElements) return true;
+              if (
+                descendant.localName === "style" ||
+                (descendant.localName === "link" &&
+                  descendant.relList?.contains("stylesheet")) ||
+                changedVisibility(descendant)
+              ) {
+                return true;
+              }
+              descendant = walker.nextNode();
+            }
+            return false;
+          }
+          if (node.nodeType === Node.TEXT_NODE) {
+            const parent = node.parentElement ?? target;
+            return parent ? changedVisibility(parent) : true;
+          }
+          return false;
+        };
         const mutationAffectsRender = (record) => {
           const target =
             record.target instanceof Element
               ? record.target
               : record.target.parentElement;
           if (!target) return true;
-          if (changedVisibility(target)) return true;
           if (record.type === "childList") {
-            return Array.from(record.addedNodes).some((node) => {
-              const element =
-                node instanceof Element ? node : node.parentElement;
-              return element ? changedVisibility(element) : false;
-            });
+            return [...record.addedNodes, ...record.removedNodes].some((node) =>
+              childNodeMayAffectRender(node, target)
+            );
           }
-          return false;
+          return changedVisibility(target);
         };
         mutationObserver = new MutationObserver((records) => {
           if (records.some(mutationAffectsRender)) changed();
