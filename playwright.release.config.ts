@@ -6,11 +6,19 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 30_000,
+  maxFailures: process.env.CI ? 1 : 0,
   expect: {
     timeout: 5_000
   },
   reporter: [["line"]],
   projects: [
+    {
+      name: "webkit",
+      use: {
+        ...devices["Desktop Safari"],
+        viewport: { width: 1440, height: 900 }
+      }
+    },
     {
       name: "chromium",
       use: {
@@ -22,13 +30,6 @@ export default defineConfig({
       name: "firefox",
       use: {
         ...devices["Desktop Firefox"],
-        viewport: { width: 1440, height: 900 }
-      }
-    },
-    {
-      name: "webkit",
-      use: {
-        ...devices["Desktop Safari"],
         viewport: { width: 1440, height: 900 }
       }
     }

@@ -668,15 +668,31 @@ body[data-initial-render="true"] .hotspot::after {
   transition: none !important;
 }
 
-.scene-shell[data-camera-transitioning="true"] .hotspot,
-.scene-shell[data-camera-transitioning="true"] .tooltip,
-.scene-shell[data-camera-transitioning="true"] .step-backdrop {
-  opacity: 0;
+@keyframes showkit-camera-overlay-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.scene-shell[data-camera-transitioning="true"] .hotspot,
+@keyframes showkit-camera-interaction-restore {
+  from { pointer-events: none; }
+  to { pointer-events: auto; }
+}
+
+.scene-shell[data-camera-transitioning="true"] .hotspot {
+  animation:
+    showkit-camera-overlay-reveal 1600ms step-end both,
+    showkit-camera-interaction-restore 1600ms step-end both,
+    hotspot-attention 1.65s cubic-bezier(0.2, 0.75, 0.25, 1) infinite;
+}
+
 .scene-shell[data-camera-transitioning="true"] .tooltip {
-  pointer-events: none;
+  animation:
+    showkit-camera-overlay-reveal 1600ms step-end both,
+    showkit-camera-interaction-restore 1600ms step-end both;
+}
+
+.scene-shell[data-camera-transitioning="true"] .step-backdrop {
+  animation: showkit-camera-overlay-reveal 1600ms step-end both;
 }
 
 .scene-scroll {
@@ -1603,8 +1619,10 @@ const PLAYER_JS = `(() => {
   let overlayTrackUntil = 0;
   let overlayRevealAt = 0;
   let overlayRevealTimer = 0;
+  let overlayHardRevealTimer = 0;
   let cameraMotionStartedAt = 0;
   let lastCameraMotionAt = 0;
+  let cameraOverlayRevealLocked = false;
   let lastCameraRevealTarget = null;
   let completionSplitLayout = false;
   // WebKit can emit a long burst of resize targets. Wait for quiet, but never
@@ -3253,17 +3271,24 @@ const PLAYER_JS = `(() => {
     elements.tooltip.style.visibility = "visible";
   }
 
-  function clearCameraTransition(reposition = true) {
+  function clearCameraTransition(reposition = true, lockReveal = true) {
     window.clearTimeout(overlayRevealTimer);
+    window.clearTimeout(overlayHardRevealTimer);
     overlayRevealTimer = 0;
+    overlayHardRevealTimer = 0;
     overlayRevealAt = 0;
     cameraMotionStartedAt = 0;
     lastCameraMotionAt = 0;
+    cameraOverlayRevealLocked = lockReveal;
     delete elements.shell.dataset.cameraTransitioning;
     if (reposition) positionOverlay();
   }
 
   function finishCameraTransition(reposition = true) {
+    if (cameraOverlayRevealLocked || cameraMotionStartedAt === 0) {
+      delete elements.shell.dataset.cameraTransitioning;
+      return;
+    }
     window.clearTimeout(overlayRevealTimer);
     overlayRevealTimer = 0;
     const now = performance.now();
@@ -3279,31 +3304,31 @@ const PLAYER_JS = `(() => {
       );
       return;
     }
-    delete elements.shell.dataset.cameraTransitioning;
-    if (now < quietAt) {
-      overlayRevealAt = quietAt;
-      overlayRevealTimer = window.setTimeout(
-        finishCameraTransition,
-        quietAt - now + 24
-      );
-      if (reposition) positionOverlay();
-      return;
-    }
     clearCameraTransition(reposition);
   }
 
   function beginCameraTransition() {
+    if (cameraOverlayRevealLocked) {
+      delete elements.shell.dataset.cameraTransitioning;
+      return;
+    }
     const now = performance.now();
-    if (cameraMotionStartedAt === 0) cameraMotionStartedAt = now;
+    if (cameraMotionStartedAt === 0) {
+      cameraMotionStartedAt = now;
+      overlayHardRevealTimer = window.setTimeout(
+        () => clearCameraTransition(),
+        cameraOverlayMaxHideMs + 24
+      );
+    }
     lastCameraMotionAt = now;
     const maxHideAt = cameraMotionStartedAt + cameraOverlayMaxHideMs;
-    const canHide = now < maxHideAt;
-    overlayRevealAt = canHide
-      ? Math.min(now + cameraOverlaySettleMs, maxHideAt)
-      : now + cameraOverlaySettleMs;
+    if (now >= maxHideAt) {
+      clearCameraTransition();
+      return;
+    }
+    overlayRevealAt = Math.min(now + cameraOverlaySettleMs, maxHideAt);
     window.clearTimeout(overlayRevealTimer);
-    if (canHide) elements.shell.dataset.cameraTransitioning = "true";
-    else delete elements.shell.dataset.cameraTransitioning;
+    elements.shell.dataset.cameraTransitioning = "true";
     overlayRevealTimer = window.setTimeout(
       finishCameraTransition,
       Math.max(0, overlayRevealAt - performance.now()) + 24
@@ -3496,7 +3521,7 @@ const PLAYER_JS = `(() => {
   }
 
   function render() {
-    clearCameraTransition(false);
+    clearCameraTransition(false, false);
     lastCameraRevealTarget = null;
     const welcome = hasWelcome && current < 0;
     const complete = current >= demo.steps.length;

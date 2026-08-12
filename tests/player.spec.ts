@@ -1953,6 +1953,28 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
   test("zooms toward compact edge targets and returns to the full HTML scene", async ({
     page
   }) => {
+    const overlayInteractionState = () =>
+      page.evaluate(() => {
+        const hotspot = document.querySelector("#hotspot");
+        const tooltip = document.querySelector("#tooltip");
+        if (!(hotspot instanceof HTMLElement) || !(tooltip instanceof HTMLElement)) {
+          return null;
+        }
+        const hotspotStyle = getComputedStyle(hotspot);
+        const tooltipStyle = getComputedStyle(tooltip);
+        return {
+          hotspotOpacity: Number(hotspotStyle.opacity),
+          hotspotPointerEvents: hotspotStyle.pointerEvents,
+          tooltipOpacity: Number(tooltipStyle.opacity),
+          tooltipPointerEvents: tooltipStyle.pointerEvents
+        };
+      });
+    const visibleOverlayState = {
+      hotspotOpacity: 1,
+      hotspotPointerEvents: "auto",
+      tooltipOpacity: 1,
+      tooltipPointerEvents: "auto"
+    };
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(customOverlayUrl);
     await page.evaluate(() => {
@@ -2035,93 +2057,46 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "data-camera",
       "focus"
     );
-    await page.setViewportSize({ width: 1260, height: 700 });
-    await page.evaluate(() => {
-      const testWindow = window as Window & {
-        __showkitCameraChurn?: { changes: number; timer: number };
-      };
-      const shell = document.querySelector("#scene-shell");
-      if (!(shell instanceof HTMLElement)) {
-        throw new Error("Scene shell is unavailable.");
-      }
-      let narrow = false;
-      const churn = { changes: 0, timer: 0 };
-      const moveCamera = () => {
-        narrow = !narrow;
-        shell.style.width = narrow ? "calc(100% - 12px)" : "100%";
-        churn.changes += 1;
-        window.dispatchEvent(new Event("resize"));
-      };
-      moveCamera();
-      churn.timer = window.setInterval(moveCamera, 80);
-      testWindow.__showkitCameraChurn = churn;
+    const shell = page.locator("#scene-shell");
+    await expect.poll(overlayInteractionState).toEqual(visibleOverlayState);
+    await shell.evaluate(async (element) => {
+      element.removeAttribute("data-camera-transitioning");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      element.setAttribute("data-camera-transitioning", "true");
     });
-    await expect(page.locator("#scene-shell")).toHaveAttribute(
-      "data-camera-transitioning",
-      "true"
+    await expect.poll(overlayInteractionState).toEqual({
+      hotspotOpacity: 0,
+      hotspotPointerEvents: "none",
+      tooltipOpacity: 0,
+      tooltipPointerEvents: "none"
+    });
+    await expect.poll(overlayInteractionState, { timeout: 3_000 }).toEqual(
+      visibleOverlayState
     );
-    await expect.poll(() =>
-      page.evaluate(() => {
-        const testWindow = window as Window & {
-          __showkitCameraChurn?: { changes: number; timer: number };
-        };
-        const hotspot = document.querySelector("#hotspot");
-        const tooltip = document.querySelector("#tooltip");
-        const churn = testWindow.__showkitCameraChurn;
-        if (
-          !(hotspot instanceof HTMLElement) ||
-          !(tooltip instanceof HTMLElement) ||
-          !churn
-        ) {
-          return false;
+    await page.setViewportSize({ width: 1260, height: 700 });
+    for (let iteration = 0; iteration < 24; iteration += 1) {
+      await shell.evaluate((element, narrow) => {
+        if (!(element instanceof HTMLElement)) {
+          throw new Error("Scene shell is unavailable.");
         }
-        const hotspotStyle = getComputedStyle(hotspot);
-        const tooltipStyle = getComputedStyle(tooltip);
-        return (
-          churn.changes >= 22 &&
-          churn.timer !== 0 &&
-          Number(hotspotStyle.opacity) === 1 &&
-          hotspotStyle.pointerEvents === "auto" &&
-          Number(tooltipStyle.opacity) === 1 &&
-          tooltipStyle.pointerEvents === "auto"
-        );
-      })
-    ).toBe(true);
+        element.style.width = narrow ? "calc(100% - 12px)" : "100%";
+        window.dispatchEvent(new Event("resize"));
+      }, iteration % 2 === 0);
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 80);
+      });
+    }
+    const recoveredDuringChurn = await overlayInteractionState();
+    expect(recoveredDuringChurn).not.toBeNull();
+    expect(recoveredDuringChurn).toEqual(visibleOverlayState);
     await page.evaluate(() => {
-      const testWindow = window as Window & {
-        __showkitCameraChurn?: { changes: number; timer: number };
-      };
       const shell = document.querySelector("#scene-shell");
-      const churn = testWindow.__showkitCameraChurn;
-      if (churn) window.clearInterval(churn.timer);
       if (shell instanceof HTMLElement) {
         shell.style.removeProperty("width");
         window.dispatchEvent(new Event("resize"));
       }
-      delete testWindow.__showkitCameraChurn;
     });
-    await expect.poll(() =>
-      page.evaluate(() => {
-        const hotspot = document.querySelector("#hotspot");
-        const tooltip = document.querySelector("#tooltip");
-        if (!(hotspot instanceof HTMLElement) || !(tooltip instanceof HTMLElement)) {
-          return null;
-        }
-        const hotspotStyle = getComputedStyle(hotspot);
-        const tooltipStyle = getComputedStyle(tooltip);
-        return {
-          hotspotOpacity: Number(hotspotStyle.opacity),
-          hotspotPointerEvents: hotspotStyle.pointerEvents,
-          tooltipOpacity: Number(tooltipStyle.opacity),
-          tooltipPointerEvents: tooltipStyle.pointerEvents
-        };
-      })
-    ).toEqual({
-      hotspotOpacity: 1,
-      hotspotPointerEvents: "auto",
-      tooltipOpacity: 1,
-      tooltipPointerEvents: "auto"
-    });
+    await expect.poll(overlayInteractionState).toEqual(visibleOverlayState);
     const cameraScale = () =>
       page.locator("#scene-viewport").evaluate((element) => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
