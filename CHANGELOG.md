@@ -5,6 +5,18 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.14 - 2026-08-12
+
+- Keep focus-camera hotspots, tooltips, and backdrops visible and interactive
+  after sustained WebKit resize and layout changes. An independent visual
+  fallback now restores the guide even if WebKit keeps the internal transition
+  marker active.
+- Verify real overlay opacity and pointer behavior during camera movement, run
+  WebKit first in the release browser gate, and stop that gate after its first
+  failure so regressions return evidence sooner.
+- Updated the installed ShowKit skill compatibility range to require
+  `@showkit/cli >=0.2.14 <0.3.0`.
+
 ## 0.2.13 - 2026-08-12
 
 - Wait for visible fonts, images, DOM and layout changes, and finite animations
