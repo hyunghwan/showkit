@@ -3257,7 +3257,6 @@ const PLAYER_JS = `(() => {
     window.clearTimeout(overlayRevealTimer);
     overlayRevealTimer = 0;
     overlayRevealAt = 0;
-    cameraMotionStartedAt = 0;
     lastCameraMotionAt = 0;
     delete elements.shell.dataset.cameraTransitioning;
     if (reposition) positionOverlay();
@@ -3497,6 +3496,7 @@ const PLAYER_JS = `(() => {
 
   function render() {
     clearCameraTransition(false);
+    cameraMotionStartedAt = 0;
     lastCameraRevealTarget = null;
     const welcome = hasWelcome && current < 0;
     const complete = current >= demo.steps.length;

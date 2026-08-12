@@ -2049,13 +2049,11 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
         element.style.width = narrow ? "calc(100% - 12px)" : "100%";
         window.dispatchEvent(new Event("resize"));
       }, iteration % 2 === 0);
-      if (iteration === 0) {
-        await expect(shell).toHaveAttribute("data-camera-transitioning", "true");
-      }
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 80);
       });
     }
+    await expect(shell).not.toHaveAttribute("data-camera-transitioning", "true");
     const recoveredDuringChurn = await page.evaluate(() => {
       const hotspot = document.querySelector("#hotspot");
       const tooltip = document.querySelector("#tooltip");
