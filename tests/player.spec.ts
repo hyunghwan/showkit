@@ -2058,21 +2058,6 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       "focus"
     );
     const shell = page.locator("#scene-shell");
-    await expect.poll(overlayInteractionState).toEqual(visibleOverlayState);
-    await shell.evaluate(async (element) => {
-      element.removeAttribute("data-camera-transitioning");
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      element.setAttribute("data-camera-transitioning", "true");
-    });
-    await expect.poll(overlayInteractionState).toEqual({
-      hotspotOpacity: 0,
-      hotspotPointerEvents: "none",
-      tooltipOpacity: 0,
-      tooltipPointerEvents: "none"
-    });
-    await expect.poll(overlayInteractionState, { timeout: 3_000 }).toEqual(
-      visibleOverlayState
-    );
     await page.setViewportSize({ width: 1260, height: 700 });
     for (let iteration = 0; iteration < 24; iteration += 1) {
       await shell.evaluate((element, narrow) => {
@@ -2097,6 +2082,20 @@ test("reports an interrupted source flow", async ({ page, demo }) => {
       }
     });
     await expect.poll(overlayInteractionState).toEqual(visibleOverlayState);
+    await shell.evaluate(async (element) => {
+      element.removeAttribute("data-camera-transitioning");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      element.setAttribute("data-camera-transitioning", "true");
+    });
+    await expect.poll(overlayInteractionState).toEqual({
+      hotspotOpacity: 0,
+      hotspotPointerEvents: "none",
+      tooltipOpacity: 0,
+      tooltipPointerEvents: "none"
+    });
+    await expect.poll(overlayInteractionState, { timeout: 3_000 }).toEqual(
+      visibleOverlayState
+    );
     const cameraScale = () =>
       page.locator("#scene-viewport").evaluate((element) => {
         const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);

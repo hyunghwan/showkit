@@ -3280,13 +3280,13 @@ const PLAYER_JS = `(() => {
     cameraMotionStartedAt = 0;
     lastCameraMotionAt = 0;
     cameraOverlayRevealLocked = lockReveal;
-    delete elements.shell.dataset.cameraTransitioning;
+    elements.shell.removeAttribute("data-camera-transitioning");
     if (reposition) positionOverlay();
   }
 
   function finishCameraTransition(reposition = true) {
     if (cameraOverlayRevealLocked || cameraMotionStartedAt === 0) {
-      delete elements.shell.dataset.cameraTransitioning;
+      elements.shell.removeAttribute("data-camera-transitioning");
       return;
     }
     window.clearTimeout(overlayRevealTimer);
@@ -3309,7 +3309,7 @@ const PLAYER_JS = `(() => {
 
   function beginCameraTransition() {
     if (cameraOverlayRevealLocked) {
-      delete elements.shell.dataset.cameraTransitioning;
+      elements.shell.removeAttribute("data-camera-transitioning");
       return;
     }
     const now = performance.now();
@@ -3328,7 +3328,9 @@ const PLAYER_JS = `(() => {
     }
     overlayRevealAt = Math.min(now + cameraOverlaySettleMs, maxHideAt);
     window.clearTimeout(overlayRevealTimer);
-    elements.shell.dataset.cameraTransitioning = "true";
+    if (!elements.shell.hasAttribute("data-camera-transitioning")) {
+      elements.shell.setAttribute("data-camera-transitioning", "true");
+    }
     overlayRevealTimer = window.setTimeout(
       finishCameraTransition,
       Math.max(0, overlayRevealAt - performance.now()) + 24
