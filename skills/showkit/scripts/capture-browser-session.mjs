@@ -524,6 +524,15 @@ function browserError(cli, code, details) {
             "Use a page state where pageAssets exposes the original image bytes, or remove that control from the captured range. Do not substitute the icon."
         }
       : code === "UnsupportedSurface" &&
+          details?.category === "infinite-animation"
+        ? {
+            exitCode: 2,
+            message:
+              "A visible infinite animation cannot be captured deterministically. No captured page was saved. Your previous captured product flow has not changed.",
+            recovery:
+              "Pause or remove the visible infinite animation, then capture the flow again."
+          }
+      : code === "UnsupportedSurface" &&
           details?.category === "font-asset-required"
         ? {
             exitCode: 2,
@@ -1026,23 +1035,233 @@ async function releaseCapturedPageChange(tab, token) {
     .catch(() => undefined);
 }
 
-async function waitForCapturedPageVisuals(tab) {
+function unstableBrowserRenderError() {
+  const error = new Error(
+    "The page did not reach a stable HTML state before capture. No captured page was saved."
+  );
+  error.code = "UnsupportedSurface";
+  error.exitCode = 2;
+  error.recovery =
+    "Wait for visible animations and page updates to finish, then capture the flow again.";
+  error.details = { category: "unstable-render-state" };
+  return error;
+}
+
+async function waitForCapturedPageVisuals(tab, minimumSettleMs = 320) {
   if (typeof tab.playwright.evaluate !== "function") return;
-  const stable = await tab.playwright.evaluate(async () => {
+  let hostTimer;
+  const hostTimeout = new Promise((_resolve, reject) => {
+    hostTimer = setTimeout(
+      () => reject(unstableBrowserRenderError()),
+      5_500
+    );
+  });
+  const settleCall = Promise.resolve().then(() => tab.playwright.evaluate(async (settleOptions) => {
     const timeoutMs = 5_000;
     const deadline = Date.now() + timeoutMs;
     const startedAt = Date.now();
-    const minimumSettleMs = 320;
+    const boundedMinimumSettleMs =
+      settleOptions?.minimumSettleMs === 220 ? 220 : 320;
     const quietWindowMs = 220;
+    const maxElements = 10_000;
+    const maxVisibleImages = 64;
+    const maxAnimations = 2_000;
+    const allElements = document.getElementsByTagName("*");
+    if (allElements.length > maxElements) {
+      return "element-limit";
+    }
     let revision = 0;
     let lastChangeAt = startedAt;
     const changed = () => {
       revision += 1;
       lastChangeAt = Date.now();
     };
-    const mutationObserver =
+    const intersectsViewport = (element) => {
+      const rectangle = element.getBoundingClientRect();
+      return (
+        rectangle.width > 0 &&
+        rectangle.height > 0 &&
+        rectangle.bottom > 0 &&
+        rectangle.right > 0 &&
+        rectangle.top < window.innerHeight &&
+        rectangle.left < window.innerWidth
+      );
+    };
+    const isEffectivelyVisible = (element) => {
+      let visibilityChecked = false;
+      try {
+        if (typeof element.checkVisibility === "function") {
+          visibilityChecked = true;
+          if (!element.checkVisibility({
+            checkOpacity: true,
+            checkVisibilityCSS: true,
+            contentVisibilityAuto: true,
+            opacityProperty: true,
+            visibilityProperty: true
+          })) {
+            return false;
+          }
+        }
+      } catch {
+        visibilityChecked = false;
+      }
+      if (!visibilityChecked) {
+        let current = element;
+        while (current instanceof Element) {
+          const style = getComputedStyle(current);
+          if (
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            style.visibility === "collapse" ||
+            Number.parseFloat(style.opacity || "1") <= 0
+          ) {
+            return false;
+          }
+          current = current.parentElement;
+        }
+      }
+      return intersectsViewport(element);
+    };
+    const animationTargetElement = (animation) => {
+      const effect = animation.effect;
+      const target = effect?.target;
+      return (
+        target instanceof Element
+          ? target
+          : target?.element instanceof Element
+            ? target.element
+            : undefined
+      );
+    };
+    const animationPseudoElement = (animation) => {
+      const effect = animation.effect;
+      const pseudo = effect?.pseudoElement ?? effect?.target?.type;
+      return ["::before", "::after"].includes(pseudo) ? pseudo : undefined;
+    };
+    const animationMayAffectCapturedPixels = (
+      animation,
+      activeElementAnimationTargets
+    ) => {
+      const targetElement = animationTargetElement(animation);
+      if (!targetElement) return true;
+      // Current opacity and geometry are animation phases, not proof that
+      // future frames cannot paint. Only a static ancestor that removes the
+      // whole target subtree from rendering is a safe fast-path exemption.
+      let current = animationPseudoElement(animation)
+        ? targetElement
+        : targetElement.parentElement;
+      while (current instanceof Element) {
+        const computed = getComputedStyle(current);
+        if (
+          (computed.display === "none" ||
+            Number.parseFloat(computed.opacity || "1") <= 0) &&
+          !activeElementAnimationTargets.has(current)
+        ) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+    let mutationObserver;
+    const observedShadowRoots = new WeakSet();
+    let observedShadowRootCount = 0;
+    let observedShadowRootLimitExceeded = false;
+    const observeShadowRoot = (shadowRoot) => {
+      if (!mutationObserver || observedShadowRoots.has(shadowRoot)) return;
+      observedShadowRootCount += 1;
+      if (observedShadowRootCount > maxElements) {
+        observedShadowRootLimitExceeded = true;
+        return;
+      }
+      observedShadowRoots.add(shadowRoot);
+      mutationObserver.observe(shadowRoot, {
+        attributes: true,
+        characterData: true,
+        childList: true,
+        subtree: true
+      });
+      changed();
+    };
+    const activeAnimations = () => {
+      const animations = [];
+      const seenAnimations = new Set();
+      const seenRoots = new Set();
+      const pendingRoots = [{ root: document, depth: 0 }];
+      let visitedElements = 0;
+      let shadowDepthExceeded = false;
+      while (pendingRoots.length > 0) {
+        const current = pendingRoots.pop();
+        if (!current || seenRoots.has(current.root)) continue;
+        seenRoots.add(current.root);
+        if (typeof current.root.getAnimations === "function") {
+          for (const animation of current.root.getAnimations()) {
+            if (seenAnimations.has(animation)) continue;
+            seenAnimations.add(animation);
+            animations.push(animation);
+            if (animations.length > maxAnimations * 10) return animations;
+          }
+        }
+        const walker = document.createTreeWalker(
+          current.root,
+          NodeFilter.SHOW_ELEMENT
+        );
+        let element = walker.nextNode();
+        while (element) {
+          visitedElements += 1;
+          if (visitedElements > maxElements) {
+            return { limit: "element-limit" };
+          }
+          if (element.shadowRoot) {
+            observeShadowRoot(element.shadowRoot);
+            if (current.depth >= 64) shadowDepthExceeded = true;
+            else {
+              pendingRoots.push({
+                root: element.shadowRoot,
+                depth: current.depth + 1
+              });
+            }
+          }
+          element = walker.nextNode();
+        }
+      }
+      if (observedShadowRootLimitExceeded) {
+        return { limit: "shadow-root-limit" };
+      }
+      if (shadowDepthExceeded) return { limit: "shadow-depth-limit" };
+      return animations;
+    };
+    const previouslyVisible = new WeakSet();
+    for (const element of allElements) {
+      if (isEffectivelyVisible(element)) previouslyVisible.add(element);
+    }
+    const changedVisibility = (element) => {
+      const wasVisible = previouslyVisible.has(element);
+      const visible = isEffectivelyVisible(element);
+      if (visible) previouslyVisible.add(element);
+      else previouslyVisible.delete(element);
+      return wasVisible || visible;
+    };
+    const mutationAffectsRender = (record) => {
+      const target =
+        record.target instanceof Element
+          ? record.target
+          : record.target.parentElement;
+      if (!target) return true;
+      if (changedVisibility(target)) return true;
+      if (record.type === "childList") {
+        return Array.from(record.addedNodes).some((node) => {
+          const element = node instanceof Element ? node : node.parentElement;
+          return element ? changedVisibility(element) : false;
+        });
+      }
+      return false;
+    };
+    mutationObserver =
       typeof window.MutationObserver === "function"
-        ? new window.MutationObserver(changed)
+        ? new window.MutationObserver((records) => {
+            if (records.some(mutationAffectsRender)) changed();
+          })
         : undefined;
     mutationObserver?.observe(document.documentElement, {
       attributes: true,
@@ -1050,6 +1269,11 @@ async function waitForCapturedPageVisuals(tab) {
       childList: true,
       subtree: true
     });
+    const initialAnimationScan = activeAnimations();
+    if (!Array.isArray(initialAnimationScan)) {
+      mutationObserver?.disconnect();
+      return initialAnimationScan.limit;
+    }
     const resizeObserver =
       typeof window.ResizeObserver === "function"
         ? new window.ResizeObserver(changed)
@@ -1057,43 +1281,52 @@ async function waitForCapturedPageVisuals(tab) {
     resizeObserver?.observe(document.documentElement);
     if (document.body) resizeObserver?.observe(document.body);
     const bounded = (promise) =>
-      Promise.race([
-        promise,
-        new Promise((resolve) =>
-          setTimeout(() => resolve(undefined), Math.max(0, deadline - Date.now()))
-        )
-      ]);
-    const visibleImages = () =>
-      Array.from(document.images).filter((image) => {
-        const rectangle = image.getBoundingClientRect();
-        const style = getComputedStyle(image);
-        return (
-          rectangle.width > 0 &&
-          rectangle.height > 0 &&
-          rectangle.bottom > 0 &&
-          rectangle.right > 0 &&
-          rectangle.top < window.innerHeight &&
-          rectangle.left < window.innerWidth &&
-          style.display !== "none" &&
-          style.visibility !== "hidden" &&
-          style.visibility !== "collapse" &&
-          Number.parseFloat(style.opacity || "1") > 0
+      new Promise((resolve) => {
+        let complete = false;
+        const finish = (value) => {
+          if (complete) return;
+          complete = true;
+          clearTimeout(timer);
+          resolve(value);
+        };
+        const timer = setTimeout(
+          () => finish(undefined),
+          Math.max(0, deadline - Date.now())
         );
+        Promise.resolve(promise).then(finish, () => finish(undefined));
       });
+    const visibleImages = () => {
+      const images = [];
+      for (const image of document.images) {
+        if (!isEffectivelyVisible(image)) continue;
+        images.push(image);
+        if (images.length > maxVisibleImages) break;
+      }
+      return images;
+    };
     const nextFrame = () =>
       typeof window.requestAnimationFrame === "function"
-        ? Promise.race([
-            new Promise((resolve) =>
-              window.requestAnimationFrame(() => resolve(true))
-            ),
-            new Promise((resolve) => setTimeout(() => resolve(false), 100))
-          ])
+        ? new Promise((resolve) => {
+            let complete = false;
+            const finish = (value) => {
+              if (complete) return;
+              complete = true;
+              clearTimeout(timer);
+              if (value === false) window.cancelAnimationFrame(frame);
+              resolve(value);
+            };
+            const frame = window.requestAnimationFrame(() => finish(true));
+            const timer = setTimeout(() => finish(false), 100);
+          })
         : new Promise((resolve) => setTimeout(() => resolve(false), 16));
     try {
       if (document.fonts?.ready) await bounded(document.fonts.ready);
+      if (allElements.length > maxElements) return "element-limit";
+      const initialImages = visibleImages();
+      if (initialImages.length > maxVisibleImages) return "image-limit";
       await bounded(
         Promise.all(
-          visibleImages().map((image) =>
+          initialImages.map((image) =>
             typeof image.decode === "function"
               ? image.decode().catch(() => undefined)
               : Promise.resolve()
@@ -1103,62 +1336,85 @@ async function waitForCapturedPageVisuals(tab) {
       let previousSignature;
       let stableFrames = 0;
       while (Date.now() < deadline) {
+        const preFrameAnimations = activeAnimations();
+        if (!Array.isArray(preFrameAnimations)) {
+          return preFrameAnimations.limit;
+        }
+        if (preFrameAnimations.length > maxAnimations * 10) {
+          return "animation-scan-limit";
+        }
         await nextFrame();
+        if (allElements.length > maxElements) return "element-limit";
         const now = Date.now();
+        if (now >= deadline) return false;
         const images = visibleImages();
+        if (images.length > maxVisibleImages) return "image-limit";
         const readyImages = images.filter(
-          (image) =>
-            image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+          (image) => image.complete
         ).length;
-        const activeFiniteAnimations =
-          typeof document.getAnimations === "function"
-            ? document.getAnimations().filter((animation) => {
-                if (!["pending", "running"].includes(animation.playState)) {
-                  return false;
-                }
-                const timing = animation.effect?.getComputedTiming?.();
-                const endTime = Number(timing?.endTime);
-                if (!Number.isFinite(endTime) || endTime > timeoutMs) {
-                  return false;
-                }
-                const target = animation.effect?.target;
-                if (!(target instanceof Element)) return true;
-                const rectangle = target.getBoundingClientRect();
-                const style = getComputedStyle(target);
-                return (
-                  rectangle.width > 0 &&
-                  rectangle.height > 0 &&
-                  rectangle.bottom > 0 &&
-                  rectangle.right > 0 &&
-                  rectangle.top < window.innerHeight &&
-                  rectangle.left < window.innerWidth &&
-                  style.display !== "none" &&
-                  style.visibility !== "hidden" &&
-                  Number.parseFloat(style.opacity || "1") > 0
-                );
-              }).length
-            : 0;
+        let sourceSignal = 0;
+        for (const image of images) {
+          const source = image.currentSrc || image.src || "";
+          sourceSignal = (sourceSignal + source.length * 31) % 2_147_483_647;
+        }
+        const animations = activeAnimations();
+        if (!Array.isArray(animations)) return animations.limit;
+        if (animations.length > maxAnimations * 10) {
+          return "animation-scan-limit";
+        }
+        let visibleAnimationCount = 0;
+        let visibleInfiniteAnimation = false;
+        const activeElementAnimationTargets = new WeakSet();
+        for (const animation of animations) {
+          if (!["pending", "running"].includes(animation.playState)) continue;
+          const targetElement = animationTargetElement(animation);
+          if (targetElement && !animationPseudoElement(animation)) {
+            activeElementAnimationTargets.add(targetElement);
+          }
+        }
+        const activeFiniteAnimations = animations.filter((animation) => {
+          if (!["pending", "running"].includes(animation.playState)) {
+            return false;
+          }
+          const timing = animation.effect?.getComputedTiming?.();
+          const endTime = Number(timing?.endTime);
+          const visible = animationMayAffectCapturedPixels(
+            animation,
+            activeElementAnimationTargets
+          );
+          if (!visible) return false;
+          visibleAnimationCount += 1;
+          if (visibleAnimationCount > maxAnimations) return false;
+          if (!Number.isFinite(endTime)) {
+            visibleInfiniteAnimation = true;
+            return false;
+          }
+          return true;
+        });
+        if (visibleAnimationCount > maxAnimations) return "animation-limit";
+        if (visibleInfiniteAnimation) return "infinite-animation";
+        const activeFiniteAnimationCount = activeFiniteAnimations.length;
         const signature = [
           revision,
           images.length,
           readyImages,
-          activeFiniteAnimations,
-          document.body?.childElementCount ?? 0,
-          document.body?.scrollWidth ?? 0,
-          document.body?.scrollHeight ?? 0
+          sourceSignal,
+          activeFiniteAnimationCount,
+          document.documentElement.scrollWidth,
+          document.documentElement.scrollHeight
         ].join(":");
         if (signature === previousSignature) {
           stableFrames += 1;
         } else {
           stableFrames = 0;
-          lastChangeAt = now;
         }
         previousSignature = signature;
         if (
-          stableFrames >= 2 &&
+          stableFrames >= 3 &&
           readyImages === images.length &&
-          activeFiniteAnimations === 0 &&
-          now - startedAt >= minimumSettleMs &&
+          activeFiniteAnimationCount === 0 &&
+          document.readyState === "complete" &&
+          now - startedAt >= boundedMinimumSettleMs &&
           now - lastChangeAt >= quietWindowMs
         ) {
           return true;
@@ -1169,13 +1425,48 @@ async function waitForCapturedPageVisuals(tab) {
       mutationObserver?.disconnect();
       resizeObserver?.disconnect();
     }
-  });
-  if (stable === false) {
-    throw new Error("The page did not reach a stable HTML state before capture.");
+  }, { minimumSettleMs, __showkitVisualSettle: true }));
+  let stable;
+  try {
+    stable = await Promise.race([settleCall, hostTimeout]);
+  } finally {
+    clearTimeout(hostTimer);
+  }
+  if ([
+    "element-limit",
+    "image-limit",
+    "animation-limit",
+    "animation-scan-limit",
+    "shadow-depth-limit",
+    "shadow-root-limit"
+  ].includes(stable)) {
+    const error = new Error(
+      "The visible page exceeds a bounded capture limit. No captured page was saved."
+    );
+    error.code = "CaptureTooLarge";
+    error.exitCode = 2;
+    error.recovery =
+      "Reduce the number of visible elements, images, or animations, then capture the flow again.";
+    error.details = { category: stable };
+    throw error;
+  }
+  if (stable === "infinite-animation") {
+    const error = new Error(
+      "A visible infinite animation cannot be captured deterministically. No captured page was saved."
+    );
+    error.code = "UnsupportedSurface";
+    error.exitCode = 2;
+    error.recovery =
+      "Pause or remove the visible infinite animation, then capture the flow again.";
+    error.details = { category: "infinite-animation" };
+    throw error;
+  }
+  if (stable !== true) {
+    throw unstableBrowserRenderError();
   }
 }
 
-async function positionCapturedTarget(locatorTab, evaluationTab, target) {
+async function positionCapturedTarget(locatorTab, target) {
   const status = await viewportLocatorFor(locatorTab, target);
   if (status.count !== 1 || typeof status.locator?.evaluate !== "function") {
     return false;
@@ -1211,7 +1502,6 @@ async function positionCapturedTarget(locatorTab, evaluationTab, target) {
       return true;
     })
     .catch(() => false);
-  if (moved) await waitForCapturedPageVisuals(evaluationTab);
   return moved;
 }
 
@@ -2247,6 +2537,15 @@ export function createCodexBrowserAdapter({
           : undefined
     }
   };
+  let pageVisualsSettled = false;
+  const settlePageVisuals = async (minimumSettleMs = 320) => {
+    await waitForCapturedPageVisuals(runtimeTab, minimumSettleMs);
+    pageVisualsSettled = true;
+  };
+  const consumeSettledVisuals = async (minimumSettleMs = 320) => {
+    if (!pageVisualsSettled) await settlePageVisuals(minimumSettleMs);
+    pageVisualsSettled = false;
+  };
   const hasDomAccess =
     tab?.playwright &&
     typeof tab.playwright.domSnapshot === "function" &&
@@ -2588,7 +2887,10 @@ export function createCodexBrowserAdapter({
       );
     },
     async prepareTargetForCapture(target) {
-      return positionCapturedTarget(tab, runtimeTab, target);
+      const moved = await positionCapturedTarget(tab, target);
+      if (moved) pageVisualsSettled = false;
+      if (!pageVisualsSettled) await settlePageVisuals(220);
+      return moved;
     },
     async evaluateTarget(target, pageFunction, options, transferReaderFunction) {
       if (typeof evaluatePage !== "function") {
@@ -2597,6 +2899,7 @@ export function createCodexBrowserAdapter({
         );
       }
       await viewportLocatorFor(tab, target);
+      await consumeSettledVisuals(220);
       const pageOptions = {
         ...options,
         scopeTarget: target,
@@ -2618,6 +2921,7 @@ export function createCodexBrowserAdapter({
         context,
         pageAssets
       );
+      pageVisualsSettled = false;
       return [...pageAssets, ...renderedIcons];
     },
     async performAction(target, actionKind) {
@@ -2657,7 +2961,7 @@ export function createCodexBrowserAdapter({
               timeoutMs: 20_000
             });
           }
-          await waitForCapturedPageVisuals(runtimeTab);
+          await settlePageVisuals();
           return;
         }
       }
@@ -2676,7 +2980,7 @@ export function createCodexBrowserAdapter({
             waitUntil: "domcontentloaded"
           }
         );
-        await waitForCapturedPageVisuals(runtimeTab);
+        await settlePageVisuals();
         return;
       }
       const beforeUrl = await tab.url();
@@ -2711,7 +3015,7 @@ export function createCodexBrowserAdapter({
         while (Date.now() < deadline) {
           const afterUrl = await tab.url();
           if (afterUrl !== beforeUrl) {
-            await waitForCapturedPageVisuals(runtimeTab);
+            await settlePageVisuals();
             if (await changedFromBaseline()) return;
           }
           const signal = await waitForCapturedPageChange(
@@ -2722,7 +3026,7 @@ export function createCodexBrowserAdapter({
           );
           if (!signal?.available) {
             if (await changedFromBaseline()) {
-              await waitForCapturedPageVisuals(runtimeTab);
+              await settlePageVisuals();
               if (await changedFromBaseline()) return;
             }
             break;
@@ -2730,7 +3034,7 @@ export function createCodexBrowserAdapter({
           revision = signal.revision;
           if (!signal.changed) break;
           if (await changedFromBaseline()) {
-            await waitForCapturedPageVisuals(runtimeTab);
+            await settlePageVisuals();
             if (await changedFromBaseline()) return;
           }
         }
@@ -2750,6 +3054,7 @@ export function createCodexBrowserAdapter({
       if ((await body.count()) !== 1) {
         throw new Error("Browser body is unavailable.");
       }
+      await consumeSettledVisuals();
       const pageOptions = {
         ...options,
         scopeSelector: "body",

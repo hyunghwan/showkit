@@ -43,7 +43,7 @@ type CachedIsolatedWorld = {
 
 const isolatedWorlds = new WeakMap<Page, Promise<CachedIsolatedWorld>>();
 
-async function cachedIsolatedWorld(page: Page): Promise<CachedIsolatedWorld> {
+function cachedIsolatedWorld(page: Page): Promise<CachedIsolatedWorld> {
   const existing = isolatedWorlds.get(page);
   if (existing) return existing;
   const created = (async (): Promise<CachedIsolatedWorld> => {
@@ -64,12 +64,12 @@ async function cachedIsolatedWorld(page: Page): Promise<CachedIsolatedWorld> {
     return world;
   })();
   isolatedWorlds.set(page, created);
-  try {
-    return await created;
-  } catch (error) {
-    isolatedWorlds.delete(page);
-    throw error;
-  }
+  void created.catch(() => {
+    if (isolatedWorlds.get(page) === created) {
+      isolatedWorlds.delete(page);
+    }
+  });
+  return created;
 }
 
 async function ensureExecutionContext(
@@ -314,7 +314,15 @@ function policyError(blocker: SceneKernelBlocker): ShowKitError {
   };
   const definition =
     blocker.code === "UnsupportedSurface" &&
-    blocker.category === "remote-asset"
+    blocker.category === "infinite-animation"
+      ? {
+          message:
+            "A visible infinite animation cannot be captured deterministically. No captured page was saved.",
+          recovery:
+            "Pause or remove the visible infinite animation, then capture the flow again."
+        }
+      : blocker.code === "UnsupportedSurface" &&
+          blocker.category === "remote-asset"
       ? {
           message:
             "A visible control depends on an image the browser could not bundle. No captured page was saved.",
@@ -471,94 +479,518 @@ async function visiblePageAssetInventory(
   }
 }
 
-async function settleVisibleAssetsInIsolatedWorld(page: Page): Promise<void> {
+function unstableRenderStateError(): ShowKitError {
+  return new ShowKitError({
+    code: "UnsupportedSurface",
+    message:
+      "[SHOWKIT:UnsupportedSurface] The page did not reach a stable HTML state before capture. No captured page was saved. [SHOWKIT-CATEGORY:unstable-render-state]",
+    exitCode: EXIT_CODES.validation,
+    recovery:
+      "Wait for visible animations and page updates to finish, then capture the flow again.",
+    details: { category: "unstable-render-state" }
+  });
+}
+
+async function withRenderStateDeadline<T>(
+  operation: () => Promise<T>,
+  deadlineAt = performance.now() + 5_500
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(unstableRenderStateError()),
+      Math.max(0, deadlineAt - performance.now())
+    );
+  });
   try {
-    const world = await cachedIsolatedWorld(page);
+    return await Promise.race([Promise.resolve().then(operation), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function withRenderSettleDeadline<T>(
+  page: Page,
+  operation: (
+    world: CachedIsolatedWorld,
+    executionContextId: number
+  ) => Promise<T>,
+  deadlineAt = performance.now() + 5_500
+): Promise<T> {
+  let world: CachedIsolatedWorld | undefined;
+  let pendingWorld: Promise<CachedIsolatedWorld> | undefined;
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      if (!pendingWorld || isolatedWorlds.get(page) === pendingWorld) {
+        isolatedWorlds.delete(page);
+      }
+      if (world) {
+        void world.session.detach().catch(() => undefined);
+      } else if (pendingWorld) {
+        void pendingWorld
+          .then((lateWorld) => lateWorld.session.detach())
+          .catch(() => undefined);
+      }
+      reject(unstableRenderStateError());
+    }, Math.max(0, deadlineAt - performance.now()));
+  });
+  const work = (async () => {
+    pendingWorld = cachedIsolatedWorld(page);
+    world = await pendingWorld;
+    if (timedOut) throw unstableRenderStateError();
     const executionContextId = await ensureExecutionContext(page, world);
-    await world.session.send("Runtime.callFunctionOn", {
-      functionDeclaration: `async function() {
-        const delay = (milliseconds) =>
-          new Promise((resolve) => setTimeout(resolve, milliseconds));
-        await Promise.race([
-          document.fonts?.ready ?? Promise.resolve(),
-          delay(1500)
-        ]);
+    if (timedOut) throw unstableRenderStateError();
+    return operation(world, executionContextId);
+  })();
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function settleVisibleAssetsInIsolatedWorld(
+  page: Page,
+  minimumSettleMs: 220 | 320 = 320,
+  deadlineAt?: number
+): Promise<void> {
+  try {
+    const response = (await withRenderSettleDeadline(
+      page,
+      (world, executionContextId) => world.session.send("Runtime.callFunctionOn", {
+      functionDeclaration: `async function(minimumSettleMs) {
+        const timeoutMs = 5000;
+        const quietWindowMs = 220;
+        const maxElements = 10000;
+        const maxVisibleImages = 64;
+        const maxAnimations = 2000;
         const startedAt = performance.now();
-        const timeoutAt = startedAt + 3000;
-        const minimumWaitMs = 1500;
+        const timeoutAt = startedAt + timeoutMs;
+        const allElements = document.getElementsByTagName("*");
+        if (allElements.length > maxElements) {
+          return "element-limit";
+        }
         let revision = 0;
+        let lastChangeAt = startedAt;
         let stableChecks = 0;
         let previousSignature = "";
-        const observer = new MutationObserver(() => {
+        const changed = () => {
           revision += 1;
-        });
-        observer.observe(document.documentElement, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ["src", "srcset", "style"]
-        });
-        try {
-          while (performance.now() < timeoutAt) {
-            await delay(50);
-            const visibleImages = Array.from(document.images).filter((image) => {
-              const rectangle = image.getBoundingClientRect();
-              const computed = getComputedStyle(image);
-              return (
-                rectangle.width > 0 &&
-                rectangle.height > 0 &&
-                rectangle.bottom > 0 &&
-                rectangle.right > 0 &&
-                rectangle.top < innerHeight &&
-                rectangle.left < innerWidth &&
-                computed.display !== "none" &&
-                computed.visibility !== "hidden"
-              );
+          lastChangeAt = performance.now();
+        };
+        const intersectsViewport = (element) => {
+          const rectangle = element.getBoundingClientRect();
+          return (
+            rectangle.width > 0 &&
+            rectangle.height > 0 &&
+            rectangle.bottom > 0 &&
+            rectangle.right > 0 &&
+            rectangle.top < innerHeight &&
+            rectangle.left < innerWidth
+          );
+        };
+        const isEffectivelyVisible = (element) => {
+          let visibilityChecked = false;
+          try {
+            if (typeof element.checkVisibility === "function") {
+              visibilityChecked = true;
+              if (!element.checkVisibility({
+                checkOpacity: true,
+                checkVisibilityCSS: true,
+                contentVisibilityAuto: true,
+                opacityProperty: true,
+                visibilityProperty: true
+              })) {
+                return false;
+              }
+            }
+          } catch {
+            visibilityChecked = false;
+          }
+          if (!visibilityChecked) {
+            let current = element;
+            while (current instanceof Element) {
+              const computed = getComputedStyle(current);
+              if (
+                computed.display === "none" ||
+                computed.visibility === "hidden" ||
+                computed.visibility === "collapse" ||
+                Number.parseFloat(computed.opacity || "1") <= 0
+              ) {
+                return false;
+              }
+              current = current.parentElement;
+            }
+          }
+          return intersectsViewport(element);
+        };
+        const animationTargetElement = (animation) => {
+          const effect = animation.effect;
+          const target = effect?.target;
+          return (
+            target instanceof Element
+              ? target
+              : target?.element instanceof Element
+                ? target.element
+                : undefined
+          );
+        };
+        const animationPseudoElement = (animation) => {
+          const effect = animation.effect;
+          const pseudo = effect?.pseudoElement ?? effect?.target?.type;
+          return ["::before", "::after"].includes(pseudo) ? pseudo : undefined;
+        };
+        const animationMayAffectCapturedPixels = (
+          animation,
+          activeElementAnimationTargets
+        ) => {
+          const targetElement = animationTargetElement(animation);
+          if (!targetElement) return true;
+          // Current opacity and geometry are animation phases, not proof that
+          // future frames cannot paint. Only a static ancestor that removes the
+          // whole target subtree from rendering is a safe fast-path exemption.
+          let current = animationPseudoElement(animation)
+            ? targetElement
+            : targetElement.parentElement;
+          while (current instanceof Element) {
+            const computed = getComputedStyle(current);
+            if (
+              (computed.display === "none" ||
+                Number.parseFloat(computed.opacity || "1") <= 0) &&
+              !activeElementAnimationTargets.has(current)
+            ) {
+              return false;
+            }
+            current = current.parentElement;
+          }
+          return true;
+        };
+        let mutationObserver;
+        const observedShadowRoots = new WeakSet();
+        let observedShadowRootCount = 0;
+        let observedShadowRootLimitExceeded = false;
+        const observeShadowRoot = (shadowRoot) => {
+          if (!mutationObserver || observedShadowRoots.has(shadowRoot)) return;
+          observedShadowRootCount += 1;
+          if (observedShadowRootCount > maxElements) {
+            observedShadowRootLimitExceeded = true;
+            return;
+          }
+          observedShadowRoots.add(shadowRoot);
+          mutationObserver.observe(shadowRoot, {
+            attributes: true,
+            characterData: true,
+            childList: true,
+            subtree: true
+          });
+          changed();
+        };
+        const activeAnimations = () => {
+          const animations = [];
+          const seenAnimations = new Set();
+          const seenRoots = new Set();
+          const pendingRoots = [{ root: document, depth: 0 }];
+          let visitedElements = 0;
+          let shadowDepthExceeded = false;
+          while (pendingRoots.length > 0) {
+            const current = pendingRoots.pop();
+            if (!current || seenRoots.has(current.root)) continue;
+            seenRoots.add(current.root);
+            if (typeof current.root.getAnimations === "function") {
+              for (const animation of current.root.getAnimations()) {
+                if (seenAnimations.has(animation)) continue;
+                seenAnimations.add(animation);
+                animations.push(animation);
+                if (animations.length > maxAnimations * 10) return animations;
+              }
+            }
+            const walker = document.createTreeWalker(
+              current.root,
+              NodeFilter.SHOW_ELEMENT
+            );
+            let element = walker.nextNode();
+            while (element) {
+              visitedElements += 1;
+              if (visitedElements > maxElements) {
+                return { limit: "element-limit" };
+              }
+              if (element.shadowRoot) {
+                observeShadowRoot(element.shadowRoot);
+                if (current.depth >= 64) shadowDepthExceeded = true;
+                else {
+                  pendingRoots.push({
+                    root: element.shadowRoot,
+                    depth: current.depth + 1
+                  });
+                }
+              }
+              element = walker.nextNode();
+            }
+          }
+          if (observedShadowRootLimitExceeded) {
+            return { limit: "shadow-root-limit" };
+          }
+          if (shadowDepthExceeded) return { limit: "shadow-depth-limit" };
+          return animations;
+        };
+        const previouslyVisible = new WeakSet();
+        for (const element of allElements) {
+          if (isEffectivelyVisible(element)) previouslyVisible.add(element);
+        }
+        const changedVisibility = (element) => {
+          const wasVisible = previouslyVisible.has(element);
+          const visible = isEffectivelyVisible(element);
+          if (visible) previouslyVisible.add(element);
+          else previouslyVisible.delete(element);
+          return wasVisible || visible;
+        };
+        const mutationAffectsRender = (record) => {
+          const target =
+            record.target instanceof Element
+              ? record.target
+              : record.target.parentElement;
+          if (!target) return true;
+          if (changedVisibility(target)) return true;
+          if (record.type === "childList") {
+            return Array.from(record.addedNodes).some((node) => {
+              const element =
+                node instanceof Element ? node : node.parentElement;
+              return element ? changedVisibility(element) : false;
             });
+          }
+          return false;
+        };
+        mutationObserver = new MutationObserver((records) => {
+          if (records.some(mutationAffectsRender)) changed();
+        });
+        mutationObserver.observe(document.documentElement, {
+          attributes: true,
+          characterData: true,
+          childList: true,
+          subtree: true
+        });
+        // Shadow-tree mutations do not cross the root boundary. Discover the
+        // same bounded roots used by animation settling, then observe each one.
+        const initialAnimationScan = activeAnimations();
+        if (!Array.isArray(initialAnimationScan)) {
+          mutationObserver.disconnect();
+          return initialAnimationScan.limit;
+        }
+        const resizeObserver =
+          typeof ResizeObserver === "function"
+            ? new ResizeObserver(changed)
+            : undefined;
+        resizeObserver?.observe(document.documentElement);
+        if (document.body) resizeObserver?.observe(document.body);
+        const bounded = (promise) =>
+          new Promise((resolve) => {
+            let complete = false;
+            const finish = (value) => {
+              if (complete) return;
+              complete = true;
+              clearTimeout(timer);
+              resolve(value);
+            };
+            const timer = setTimeout(
+              () => finish(undefined),
+              Math.max(0, timeoutAt - performance.now())
+            );
+            Promise.resolve(promise).then(finish, () => finish(undefined));
+          });
+        const visibleImages = () => {
+          const images = [];
+          for (const image of document.images) {
+            if (!isEffectivelyVisible(image)) continue;
+            images.push(image);
+            if (images.length > maxVisibleImages) break;
+          }
+          return images;
+        };
+        const nextFrame = () =>
+          typeof requestAnimationFrame === "function"
+            ? new Promise((resolve) => {
+                let complete = false;
+                const finish = (value) => {
+                  if (complete) return;
+                  complete = true;
+                  clearTimeout(timer);
+                  if (value === false) cancelAnimationFrame(frame);
+                  resolve(value);
+                };
+                const frame = requestAnimationFrame(() => finish(true));
+                const timer = setTimeout(() => finish(false), 100);
+              })
+            : new Promise((resolve) => setTimeout(() => resolve(false), 16));
+        try {
+          await bounded(document.fonts?.ready ?? Promise.resolve());
+          if (allElements.length > maxElements) return "element-limit";
+          const initialImages = visibleImages();
+          if (initialImages.length > maxVisibleImages) return "image-limit";
+          await bounded(
+            Promise.all(
+              initialImages.map((image) =>
+                typeof image.decode === "function"
+                  ? image.decode().catch(() => undefined)
+                  : Promise.resolve()
+              )
+            )
+          );
+          while (performance.now() < timeoutAt) {
+            const preFrameAnimations = activeAnimations();
+            if (!Array.isArray(preFrameAnimations)) {
+              return preFrameAnimations.limit;
+            }
+            if (preFrameAnimations.length > maxAnimations * 10) {
+              return "animation-scan-limit";
+            }
+            await nextFrame();
+            if (allElements.length > maxElements) return "element-limit";
+            const now = performance.now();
+            if (now >= timeoutAt) return "unstable";
+            const images = visibleImages();
+            if (images.length > maxVisibleImages) return "image-limit";
             let sourceSignal = 0;
             let readyCount = 0;
-            for (const image of visibleImages) {
+            for (const image of images) {
               const source = image.currentSrc || image.src || "";
               sourceSignal = (sourceSignal + source.length * 31) % 2147483647;
-              if (image.complete && image.naturalWidth > 0) readyCount += 1;
+              if (image.complete) readyCount += 1;
             }
+            const animations = activeAnimations();
+            if (!Array.isArray(animations)) return animations.limit;
+            if (animations.length > maxAnimations * 10) {
+              return "animation-scan-limit";
+            }
+            let visibleAnimationCount = 0;
+            let visibleInfiniteAnimation = false;
+            const activeElementAnimationTargets = new WeakSet();
+            for (const animation of animations) {
+              if (!["pending", "running"].includes(animation.playState)) continue;
+              const targetElement = animationTargetElement(animation);
+              if (targetElement && !animationPseudoElement(animation)) {
+                activeElementAnimationTargets.add(targetElement);
+              }
+            }
+            const activeFiniteAnimations = animations.filter((animation) => {
+              if (!["pending", "running"].includes(animation.playState)) {
+                return false;
+              }
+              const timing = animation.effect?.getComputedTiming?.();
+              const endTime = Number(timing?.endTime);
+              const visible = animationMayAffectCapturedPixels(
+                animation,
+                activeElementAnimationTargets
+              );
+              if (!visible) return false;
+              visibleAnimationCount += 1;
+              if (visibleAnimationCount > maxAnimations) return false;
+              if (!Number.isFinite(endTime)) {
+                visibleInfiniteAnimation = true;
+                return false;
+              }
+              return true;
+            });
+            if (visibleAnimationCount > maxAnimations) {
+              return "animation-limit";
+            }
+            if (visibleInfiniteAnimation) return "infinite-animation";
+            const activeFiniteAnimationCount = activeFiniteAnimations.length;
             const signature = [
               revision,
-              document.querySelectorAll("*").length,
-              visibleImages.length,
+              images.length,
               readyCount,
               sourceSignal,
+              activeFiniteAnimationCount,
               document.documentElement.scrollWidth,
               document.documentElement.scrollHeight
             ].join("|");
             stableChecks = signature === previousSignature ? stableChecks + 1 : 0;
             previousSignature = signature;
-            const minimumWaitComplete =
-              performance.now() - startedAt >= minimumWaitMs;
-            const visibleImagesReady = readyCount === visibleImages.length;
+            const visibleImagesReady = readyCount === images.length;
             if (
-              minimumWaitComplete &&
+              now - startedAt >= minimumSettleMs &&
+              now - lastChangeAt >= quietWindowMs &&
               document.readyState === "complete" &&
               visibleImagesReady &&
+              activeFiniteAnimationCount === 0 &&
               stableChecks >= 3
             ) {
-              break;
+              // Four matching frame signatures already include more than the
+              // two consecutive stable renders required by the QA contract.
+              return "stable";
             }
           }
+          return "unstable";
         } finally {
-          observer.disconnect();
+          mutationObserver.disconnect();
+          resizeObserver?.disconnect();
         }
-        await new Promise((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(resolve))
-        );
-        return true;
       }`,
       executionContextId,
-      arguments: [],
+      arguments: [{ value: minimumSettleMs }],
       awaitPromise: true,
       returnByValue: true,
       userGesture: false
-    });
+      }),
+      deadlineAt
+    )) as {
+      result?: { value?: unknown };
+      exceptionDetails?: { text?: string };
+    };
+    if (response.exceptionDetails) {
+      throw new Error(
+        response.exceptionDetails.text ??
+          "The page render state could not be checked before capture."
+      );
+    }
+    const settleStatus = response.result?.value;
+    if (
+      [
+        "element-limit",
+        "image-limit",
+        "animation-limit",
+        "animation-scan-limit",
+        "shadow-depth-limit",
+        "shadow-root-limit"
+      ].includes(
+        String(settleStatus)
+      )
+    ) {
+      throw new ShowKitError({
+        code: "CaptureTooLarge",
+        message:
+          "[SHOWKIT:CaptureTooLarge] The visible page exceeds a bounded capture limit. No captured page was saved.",
+        exitCode: EXIT_CODES.validation,
+        recovery:
+          "Reduce the number of visible elements, images, or animations, then capture the flow again.",
+        details: { category: String(settleStatus) }
+      });
+    }
+    if (settleStatus === "infinite-animation") {
+      throw new ShowKitError({
+        code: "UnsupportedSurface",
+        message:
+          "[SHOWKIT:UnsupportedSurface] A visible infinite animation cannot be captured deterministically. No captured page was saved. [SHOWKIT-CATEGORY:infinite-animation]",
+        exitCode: EXIT_CODES.validation,
+        recovery:
+          "Pause or remove the visible infinite animation, then capture the flow again.",
+        details: { category: "infinite-animation" }
+      });
+    }
+    if (settleStatus !== "stable") {
+      throw new ShowKitError({
+        code: "UnsupportedSurface",
+        message:
+          "[SHOWKIT:UnsupportedSurface] The page did not reach a stable HTML state before capture. No captured page was saved. [SHOWKIT-CATEGORY:unstable-render-state]",
+        exitCode: EXIT_CODES.validation,
+        recovery:
+          "Wait for visible animations and page updates to finish, then capture the flow again.",
+        details: { category: "unstable-render-state" }
+      });
+    }
   } catch (error) {
     if (error instanceof ShowKitError) throw error;
     throw browserIsolationError(error);
@@ -568,7 +1000,8 @@ async function settleVisibleAssetsInIsolatedWorld(page: Page): Promise<void> {
 async function preparedAssetsForScene(
   page: Page,
   consent: PageAssetConsent,
-  observedPublicFontSources: string[] | (() => string[]) = []
+  observedPublicFontSources: string[] | (() => string[]) = [],
+  initialSettleDeadlineAt?: number
 ): Promise<Awaited<ReturnType<typeof preparePlaywrightPageAssets>>> {
   const assets = new Map<string, AssetPayload>();
   const fontFaces = new Map<string, SceneFontFace>();
@@ -601,7 +1034,11 @@ async function preparedAssetsForScene(
     return [...sources];
   };
 
-  await settleVisibleAssetsInIsolatedWorld(page);
+  await settleVisibleAssetsInIsolatedWorld(
+    page,
+    320,
+    initialSettleDeadlineAt
+  );
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const inventory = await visiblePageAssetInventory(page);
     const signature = JSON.stringify({
@@ -893,33 +1330,44 @@ export async function captureScene(
   assets: AssetPayload[];
   excludedSurfaces: string[];
 }> {
+  const initialRenderDeadlineAt = performance.now() + 5_500;
   const targetOptions = options?.target ? options : undefined;
-  if (targetOptions && (await targetOptions.target.count()) !== 1) {
+  const targetReadiness = targetOptions
+    ? await withRenderStateDeadline(
+        async () => {
+          const count = await targetOptions.target.count();
+          return {
+            count,
+            visible: count === 1 && (await targetOptions.target.isVisible())
+          };
+        },
+        initialRenderDeadlineAt
+      )
+    : { count: 0, visible: false };
+  if (targetOptions && targetReadiness.count !== 1) {
     throw new ShowKitError({
       code: targetOptions.targetErrorCode ?? "TargetMissing",
       message: `[SHOWKIT:${targetOptions.targetErrorCode ?? "TargetMissing"}] ShowKit requires exactly one visible semantic target.`,
       recovery: "Refresh the page state and narrow the target to one visible semantic element."
     });
   }
-  let locatorBounds = targetOptions
-    ? await visibleInteractionBounds(page, targetOptions.target)
-    : undefined;
-  if (targetOptions && !locatorBounds) {
-    throw new ShowKitError({
-      code: targetOptions.targetErrorCode ?? "TargetMissing",
-      message: `[SHOWKIT:${targetOptions.targetErrorCode ?? "TargetMissing"}] ShowKit requires one visible semantic target.`,
-      exitCode: EXIT_CODES.validation,
-      recovery: "Refresh the page state and select one visible semantic element.",
-      details: { category: "target-locator-unavailable" }
-    });
-  }
+  const concreteTargetReady = targetReadiness.visible;
   let preparedAssets = options?.pageAssetConsent
     ? await preparedAssetsForScene(
         page,
         options.pageAssetConsent,
-        options.observedPublicFontSources
+        options.observedPublicFontSources,
+        initialRenderDeadlineAt
       )
     : { assets: [], fontFaces: [], replacements: [] };
+  await settleVisibleAssetsInIsolatedWorld(
+    page,
+    concreteTargetReady ? 220 : 320,
+    options?.pageAssetConsent ? undefined : initialRenderDeadlineAt
+  );
+  let locatorBounds:
+    | Awaited<ReturnType<typeof visibleInteractionBounds>>
+    | undefined = undefined;
   if (targetOptions) {
     locatorBounds = await visibleInteractionBounds(page, targetOptions.target);
     if (!locatorBounds) {
@@ -937,43 +1385,43 @@ export async function captureScene(
     evaluateInIsolatedWorld(
       page,
       kernelOptions({
-      targetPresent: Boolean(targetOptions),
-      stepIndex: options?.stepIndex ?? 0,
-      ...(targetOptions?.anchorId ? { anchorId: targetOptions.anchorId } : {}),
-      ...(targetOptions?.captureTarget
-        ? { scopeTarget: targetOptions.captureTarget }
-        : {}),
-      scrollCapture: "revealed",
-      ...(options?.remoteAssetPolicy
-        ? { remoteAssetPolicy: options.remoteAssetPolicy }
-        : {}),
-      ...(options?.pageAssetConsent
-        ? { pageAssetConsent: options.pageAssetConsent }
-        : {}),
-      ...(preparedAssets.fontFaces.length > 0
-        ? { fontFaces: preparedAssets.fontFaces }
-        : {}),
-      ...(preparedAssets.replacements.length > 0
-        ? {
-            remoteAssetReplacements: preparedAssets.replacements.map(
-              (replacement) => ({
-                source: replacement.source,
-                ...(replacement.captureKind
-                  ? { captureKind: replacement.captureKind }
-                  : {}),
-                ...(replacement.match ? { match: replacement.match } : {}),
-                payload: {
-                  sha256: replacement.payload.sha256,
-                  mimeType: replacement.payload.mimeType,
-                  byteLength: replacement.payload.byteLength
-                }
-              })
-            )
-          }
-        : {}),
-      ...(options?.targetErrorCode
-        ? { targetErrorCode: options.targetErrorCode }
-        : {})
+        targetPresent: Boolean(targetOptions),
+        stepIndex: options?.stepIndex ?? 0,
+        ...(targetOptions?.anchorId ? { anchorId: targetOptions.anchorId } : {}),
+        ...(targetOptions?.captureTarget
+          ? { scopeTarget: targetOptions.captureTarget }
+          : {}),
+        scrollCapture: "revealed",
+        ...(options?.remoteAssetPolicy
+          ? { remoteAssetPolicy: options.remoteAssetPolicy }
+          : {}),
+        ...(options?.pageAssetConsent
+          ? { pageAssetConsent: options.pageAssetConsent }
+          : {}),
+        ...(preparedAssets.fontFaces.length > 0
+          ? { fontFaces: preparedAssets.fontFaces }
+          : {}),
+        ...(preparedAssets.replacements.length > 0
+          ? {
+              remoteAssetReplacements: preparedAssets.replacements.map(
+                (replacement) => ({
+                  source: replacement.source,
+                  ...(replacement.captureKind
+                    ? { captureKind: replacement.captureKind }
+                    : {}),
+                  ...(replacement.match ? { match: replacement.match } : {}),
+                  payload: {
+                    sha256: replacement.payload.sha256,
+                    mimeType: replacement.payload.mimeType,
+                    byteLength: replacement.payload.byteLength
+                  }
+                })
+              )
+            }
+          : {}),
+        ...(options?.targetErrorCode
+          ? { targetErrorCode: options.targetErrorCode }
+          : {})
       })
     );
   let result = await extractPreparedScene();
@@ -1000,9 +1448,11 @@ export async function captureScene(
         options.pageAssetConsent,
         options.observedPublicFontSources
       );
-    } else {
-      await settleVisibleAssetsInIsolatedWorld(page);
     }
+    await settleVisibleAssetsInIsolatedWorld(
+      page,
+      concreteTargetReady ? 220 : 320
+    );
     if (targetOptions) {
       locatorBounds = await visibleInteractionBounds(page, targetOptions.target);
       if (!locatorBounds) {

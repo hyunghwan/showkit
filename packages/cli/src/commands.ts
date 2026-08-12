@@ -669,8 +669,24 @@ export async function captureFailure(
       : "InternalError";
     const defaultDefinition = definitions[code]!;
     const definition =
-      code === "DemoFixtureSetupFailed" &&
-      diagnostic.category?.startsWith("capture-viewport-")
+      code === "UnsupportedSurface" &&
+      diagnostic.category === "unstable-render-state"
+        ? {
+            message:
+              "The page did not reach a stable HTML state. No captured page was saved.",
+            recovery:
+              "Wait for visible animations and page updates to finish, then capture the flow again."
+          }
+        : code === "UnsupportedSurface" &&
+            diagnostic.category === "infinite-animation"
+        ? {
+            message:
+              "A visible infinite animation cannot be captured deterministically. No captured page was saved.",
+            recovery:
+              "Pause or remove the visible infinite animation, then capture the flow again."
+          }
+        : code === "DemoFixtureSetupFailed" &&
+            diagnostic.category?.startsWith("capture-viewport-")
         ? {
             message:
               "The Playwright viewport does not match the capture contract. No captured page was saved.",

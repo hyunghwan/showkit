@@ -1327,24 +1327,61 @@ export async function extractSceneKernel(
         : redactPatternMatches(value)
       : value;
 
-  const lightDomElements = [
-    pageDocument.body,
-    ...Array.from(pageDocument.body.querySelectorAll("*"))
-  ];
+  const maximumCapturedElements = 10_000;
+  const maximumShadowDepth = 64;
+  const lightDomElements: Element[] = [];
   const openShadowHosts: Element[] = [];
   const openShadowElements: Element[] = [];
-  const collectOpenShadowElements = (elements: Element[]): void => {
-    for (const element of elements) {
-      if (!element.shadowRoot) continue;
-      openShadowHosts.push(element);
-      const descendants = Array.from(
-        element.shadowRoot.querySelectorAll("*")
-      );
-      openShadowElements.push(...descendants);
-      collectOpenShadowElements(descendants);
+  const pendingElements: Array<{
+    element: Element;
+    shadowDepth: number;
+    shadowTree: boolean;
+  }> = [{ element: pageDocument.body, shadowDepth: 0, shadowTree: false }];
+  let elementLimitExceeded = false;
+  let shadowDepthExceeded = false;
+  while (pendingElements.length > 0) {
+    const current = pendingElements.pop()!;
+    if (current.shadowDepth > maximumShadowDepth) {
+      shadowDepthExceeded = true;
+      break;
     }
-  };
-  collectOpenShadowElements(lightDomElements);
+    if (current.shadowTree) openShadowElements.push(current.element);
+    else lightDomElements.push(current.element);
+    if (lightDomElements.length + openShadowElements.length > maximumCapturedElements) {
+      elementLimitExceeded = true;
+      break;
+    }
+    if (current.element.nextElementSibling) {
+      pendingElements.push({
+        element: current.element.nextElementSibling,
+        shadowDepth: current.shadowDepth,
+        shadowTree: current.shadowTree
+      });
+    }
+    if (current.element.firstElementChild) {
+      pendingElements.push({
+        element: current.element.firstElementChild,
+        shadowDepth: current.shadowDepth,
+        shadowTree: current.shadowTree
+      });
+    }
+    if (current.element.shadowRoot) {
+      openShadowHosts.push(current.element);
+      if (current.element.shadowRoot.firstElementChild) {
+        pendingElements.push({
+          element: current.element.shadowRoot.firstElementChild,
+          shadowDepth: current.shadowDepth + 1,
+          shadowTree: true
+        });
+      }
+    }
+  }
+  if (elementLimitExceeded) {
+    return blocked("CaptureTooLarge", "element-limit");
+  }
+  if (shadowDepthExceeded) {
+    return blocked("CaptureTooLarge", "shadow-depth-limit");
+  }
   const allElements = [...lightDomElements, ...openShadowElements];
   const hiddenInputsPresent = allElements.some((element) =>
     element.matches('input[type="hidden"]')
@@ -1600,14 +1637,18 @@ export async function extractSceneKernel(
     );
   };
   const isCapturedVisualSurface = (element: Element): boolean => {
-    const computed = computedFor(element);
-    if (
-      computed.display === "none" ||
-      computed.visibility === "hidden" ||
-      computed.visibility === "collapse" ||
-      Number.parseFloat(computed.opacity || "1") === 0
-    ) {
-      return false;
+    const elementVisibility = computedFor(element).visibility;
+    if (["hidden", "collapse"].includes(elementVisibility)) return false;
+    let current: Element | null = element;
+    while (current) {
+      const currentComputed = computedFor(current);
+      if (
+        currentComputed.display === "none" ||
+        Number.parseFloat(currentComputed.opacity || "1") <= 0
+      ) {
+        return false;
+      }
+      current = parentElementOrHost(current);
     }
     const rectangle = rectangleFor(element);
     return (
@@ -1615,6 +1656,22 @@ export async function extractSceneKernel(
       rectangle.height > 0 &&
       insideCapturedScrollExtent(element, rectangle)
     );
+  };
+  const subtreeMayAffectCapturedPixels = (element: Element): boolean => {
+    const elementVisibility = computedFor(element).visibility;
+    if (["hidden", "collapse"].includes(elementVisibility)) return false;
+    let current: Element | null = element;
+    while (current) {
+      const currentComputed = computedFor(current);
+      if (
+        currentComputed.display === "none" ||
+        Number.parseFloat(currentComputed.opacity || "1") <= 0
+      ) {
+        return false;
+      }
+      current = parentElementOrHost(current);
+    }
+    return true;
   };
   const nonVisualUnsupportedElements = allElements.filter(
     (element) =>
@@ -1633,6 +1690,138 @@ export async function extractSceneKernel(
   );
   if (unsupportedElement) {
     return blocked("UnsupportedSurface", unsupportedElement.tagName.toLowerCase());
+  }
+  const openNativePopover = allElements.find((element) => {
+    try {
+      return (
+        element.matches(":popover-open") &&
+        isCapturedVisualSurface(element)
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (openNativePopover) {
+    return blocked("UnsupportedSurface", "popover");
+  }
+  const indeterminateCheckbox = allElements.find((element) => {
+    if (element.tagName.toLowerCase() !== "input") return false;
+    if ((element.getAttribute("type") ?? "text").toLowerCase() !== "checkbox") {
+      return false;
+    }
+    return (
+      (element as HTMLInputElement).indeterminate === true &&
+      isCapturedVisualSurface(element)
+    );
+  });
+  if (indeterminateCheckbox) {
+    return blocked("UnsupportedSurface", "indeterminate-control");
+  }
+  const hasIndividualTransform = (computed: CSSStyleDeclaration): boolean =>
+    ["rotate", "scale", "translate"].some((property) => {
+      const value = computed.getPropertyValue(property).trim();
+      return value !== "" && value !== "none";
+    });
+  const unsupportedIndividualTransform = allElements.find(
+    (element) =>
+      hasIndividualTransform(computedFor(element)) &&
+      isCapturedVisualSurface(element)
+  );
+  if (unsupportedIndividualTransform) {
+    return blocked("UnsupportedSurface", "individual-transform");
+  }
+  const unsupportedPseudoIndividualTransform = allElements.find((element) => {
+    if (!subtreeMayAffectCapturedPixels(element)) return false;
+    return (["::before", "::after"] as const).some((pseudo) => {
+      const computed = window.getComputedStyle(element, pseudo);
+      if (!hasIndividualTransform(computed)) return false;
+      const content = computed.getPropertyValue("content").trim();
+      const hasVisualContent =
+        !["", "none", "normal"].includes(content) ||
+        computed.getPropertyValue("background-image").trim() !== "none" ||
+        computed.getPropertyValue("mask-image").trim() !== "none" ||
+        computed.getPropertyValue("-webkit-mask-image").trim() !== "none" ||
+        (Number.parseFloat(computed.width || "0") > 0 &&
+          Number.parseFloat(computed.height || "0") > 0);
+      const hostRectangle = rectangleFor(element);
+      const individualTranslation = computed
+        .getPropertyValue("translate")
+        .trim();
+      const translatedPosition = (() => {
+        if (["", "none"].includes(individualTranslation)) {
+          return { x: 0, y: 0 };
+        }
+        const values = individualTranslation.split(/\s+/).filter(Boolean);
+        const parsePixels = (value: string | undefined): number | undefined => {
+          if (!value || value === "0") return 0;
+          if (!/^-?(?:\d+|\d*\.\d+)px$/.test(value)) return undefined;
+          const parsed = Number.parseFloat(value);
+          return Number.isFinite(parsed) ? parsed : undefined;
+        };
+        const x = parsePixels(values[0]);
+        const y = parsePixels(values[1] ?? "0");
+        return x === undefined || y === undefined ? undefined : { x, y };
+      })();
+      const hasUnboundedBoxTransform = ["rotate", "scale"].some((property) => {
+        const value = computed.getPropertyValue(property).trim();
+        return !["", "none"].includes(value);
+      });
+      const positionedOutsideCapturedExtent =
+        translatedPosition !== undefined &&
+        !hasUnboundedBoxTransform &&
+        ["absolute", "fixed"].includes(computed.position) &&
+        Number.parseFloat(computed.width || "0") > 0 &&
+        Number.parseFloat(computed.height || "0") > 0 &&
+        (() => {
+          const inset = (property: "left" | "top", base: number): number => {
+            const value = computed.getPropertyValue(property).trim();
+            if (value === "" || value === "auto") return base;
+            const parsed = Number.parseFloat(value);
+            return Number.isFinite(parsed) ? base + parsed : base;
+          };
+          const left =
+            inset("left", computed.position === "fixed" ? 0 : hostRectangle.left) +
+            translatedPosition.x;
+          const top =
+            inset("top", computed.position === "fixed" ? 0 : hostRectangle.top) +
+            translatedPosition.y;
+          const width = Number.parseFloat(computed.width || "0");
+          const height = Number.parseFloat(computed.height || "0");
+          return (
+            left + width <= 0 ||
+            top + height <= 0 ||
+            left >= window.innerWidth ||
+            top >= window.innerHeight
+          );
+        })();
+      return (
+        hasVisualContent &&
+        !positionedOutsideCapturedExtent &&
+        computed.display !== "none" &&
+        computed.visibility !== "hidden" &&
+        computed.visibility !== "collapse" &&
+        Number.parseFloat(computed.opacity || "1") > 0
+      );
+    });
+  });
+  if (unsupportedPseudoIndividualTransform) {
+    return blocked("UnsupportedSurface", "individual-transform");
+  }
+  const unsupportedTableBorderModel = allElements.find((element) => {
+    if (element.tagName.toLowerCase() !== "table") return false;
+    if (!isCapturedVisualSurface(element)) return false;
+    const computed = computedFor(element);
+    const borderCollapse = computed
+      .getPropertyValue("border-collapse")
+      .trim();
+    const borderSpacing = computed.getPropertyValue("border-spacing").trim();
+    return (
+      borderCollapse === "collapse" ||
+      !["2px", "2px 2px"].includes(borderSpacing)
+    );
+  });
+  if (unsupportedTableBorderModel) {
+    return blocked("UnsupportedSurface", "table-border-model");
   }
 
   const imageBearingCss = (value: string): boolean =>
@@ -2599,6 +2788,8 @@ export async function extractSceneKernel(
     "align-content",
     "align-items",
     "align-self",
+    "backdrop-filter",
+    "background-clip",
     "background-color",
     "background-image",
     "background-position",
@@ -2704,6 +2895,7 @@ export async function extractSceneKernel(
     "width",
     "word-break",
     "unicode-bidi",
+    "-webkit-text-fill-color",
     "-webkit-appearance",
     "-webkit-mask-image",
     "-webkit-mask-position",
@@ -2744,7 +2936,8 @@ export async function extractSceneKernel(
     "text-transform",
     "unicode-bidi",
     "white-space",
-    "word-break"
+    "word-break",
+    "-webkit-text-fill-color"
   ]);
   const zeroDefaultPrefixes = [
     "margin-",
@@ -2756,6 +2949,8 @@ export async function extractSceneKernel(
     ["align-content", "normal"],
     ["align-items", "normal"],
     ["align-self", "auto"],
+    ["backdrop-filter", "none"],
+    ["background-clip", "border-box"],
     ["background-color", "rgba(0, 0, 0, 0)"],
     ["background-image", "none"],
     ["background-position", "0% 0%"],

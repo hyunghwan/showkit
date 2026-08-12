@@ -31,7 +31,9 @@
     "@showkit/cli": "workspace:*",
     "@types/node": "^24.0.0",
     "ajv": "8.20.0",
+    "pixelmatch": "7.2.0",
     "semver": "7.8.5",
+    "sharp": "0.35.3",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
   }

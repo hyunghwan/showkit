@@ -294,8 +294,84 @@
         "same-run browser-native source and replay screenshots compared in memory",
         "full-scene changed pixel ratio below 0.2% at 1280x720",
         "focused target changed pixel ratio below 0.5%",
+        "declared layout-critical image, mark, and control regions below 0.5%",
         "outline, accent color, object position, and text shadow preserved",
         "0 QA screenshot files"
+      ]
+    },
+    {
+      "id": "render-state-settling",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "first isolated extraction waits for a visible finite layout animation",
+        "captured target geometry matches the settled source geometry",
+        "visible semantic target fast path observes mutation and resize quiet windows",
+        "visible infinite animations fail closed and hidden animations do not consume the settle budget",
+        "hidden DOM updates do not consume the visible render quiet window",
+        "visible finite animation beyond the settle budget fails closed",
+        "0 screenshot fallback files"
+      ]
+    },
+    {
+      "id": "render-state-settling-persistence",
+      "purpose": "assurance",
+      "spec": "demo-apps/assurance/render-settle-timeout.demo.ts",
+      "expectedSignals": [
+        "UnsupportedSurface unstable-render-state",
+        "0 publishable capture files",
+        "0 screenshot fallback files"
+      ]
+    },
+    {
+      "id": "css-visual-capabilities",
+      "purpose": "assurance",
+      "spec": "tests/visual-fidelity.spec.ts",
+      "expectedSignals": [
+        "backdrop filter matches the native source region",
+        "background-clipped text matches the native source region",
+        "an injected QA-only mismatch reports changed property names without values",
+        "0 QA screenshot files"
+      ]
+    },
+    {
+      "id": "native-table-border-model",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "UnsupportedSurface table-border-model",
+        "collapsed and non-default separated table borders are not silently flattened",
+        "0 screenshot fallback files"
+      ]
+    },
+    {
+      "id": "individual-transform-longhands",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "UnsupportedSurface individual-transform",
+        "element and pseudo-element transform longhands are not silently flattened",
+        "0 screenshot fallback files"
+      ]
+    },
+    {
+      "id": "native-popover",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "UnsupportedSurface popover",
+        "native top-layer state is not silently flattened",
+        "0 screenshot fallback files"
+      ]
+    },
+    {
+      "id": "indeterminate-control-state",
+      "purpose": "assurance",
+      "spec": "tests/url-browser.spec.ts",
+      "expectedSignals": [
+        "UnsupportedSurface indeterminate-control",
+        "mixed checkbox state is not serialized as unchecked",
+        "0 screenshot fallback files"
       ]
     },
     {

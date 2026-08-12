@@ -44,6 +44,17 @@ test("captures 25 steps under 30 seconds", async () => {
         totalMs: expect.any(Number)
       })
     );
+    const capturePerformance = capture.capturePerformance as {
+      htmlSceneCount: number;
+      sceneExtractionMs: number;
+    };
+    console.log(
+      `SHOWKIT_CAPTURE_PERFORMANCE ${JSON.stringify(capture.capturePerformance)}`
+    );
+    expect(
+      capturePerformance.sceneExtractionMs /
+        capturePerformance.htmlSceneCount
+    ).toBeLessThan(340);
     expect(
       await readFile(String(capture.path), "utf8")
     ).not.toContain("capturePerformance");

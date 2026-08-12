@@ -42,6 +42,9 @@ not a promise to clone every website or to produce pixel-identical output.
    fonts, and completed finite layout animations. Re-check the URL and visible
    semantic state after settling. A transient state that returns to the
    pre-action state is a failed action, not a captured product state.
+   When exactly one requested semantic target is already visible, treat that
+   target as the concrete ready signal and do not add another generic delay
+   after the quiet window and consecutive stable renders have both passed.
 4. Inspect a bounded dependency summary for only the visible capture range:
    non-generic fonts; image, background-image, mask-image, and list-image
    dependencies; inline SVG and `use` references; visible pseudo-element
@@ -55,6 +58,11 @@ not a promise to clone every website or to produce pixel-identical output.
    unverified fallback font, blank media region, or full-scene screenshot. The
    only system text-font exception is the confirmed and bounded rule in
    `security.md`.
+   Until native table layout has its own source-versus-replay proof, also stop
+   with `table-border-model` for visible collapsed borders or non-default table
+   spacing instead of flattening those relationships into absolute boxes.
+   Preserve `-webkit-text-fill-color` when it carries the visible fill for
+   background-clipped text; retaining `background-clip` alone is insufficient.
 
 Layout-critical means its absence changes recognition, meaning, target
 affordance, text wrapping, control geometry, or the primary layout. A purely
@@ -119,21 +127,30 @@ content consent required for capture. Keep them out of the project, captured
 product flow, demo, and publish payload. A screenshot is never capture input or
 a scene fallback.
 
+During extractor development, compare one brand-neutral representative step
+first and report only changed property names and geometry deltas. Use that as a
+fast preflight, then run the complete multi-step workflow before making a final
+fidelity claim. The preflight never weakens the final acceptance budget.
+
 When the source and preview can run in the same Playwright browser, use the
 browser's native PNG screenshot buffers as a same-run QA oracle. Lock the
 browser engine and process, operating system, device pixel ratio, CSS viewport,
 zoom, locale, timezone, color scheme, and available fonts. Hide only ShowKit's
 known tooltip, hotspot, backdrop, watermark, and player controls, then wait for
-`document.fonts.ready`, a checked HTML typography audit, and two animation
-frames. Compare the source and replay buffers in memory; do not create baseline,
-actual, or diff image files. Cross-browser or cross-machine screenshots are
-diagnostic evidence, not a deterministic pixel gate.
+`document.fonts.ready`, a checked HTML typography audit, and two consecutive
+matching browser renders. Compare the source and replay buffers in memory; do
+not create baseline, actual, or diff image files. Cross-browser or cross-machine
+screenshots are diagnostic evidence, not a deterministic pixel gate.
 
 A reusable extractor or player change must pass the brand-neutral same-run
 assurance fixture with no more than `0.2%` changed full-scene pixels and no more
-than `0.5%` changed pixels in the padded active-target region, using a
-per-channel anti-aliasing tolerance of `16`. These limits are a regression gate
-for the controlled fixture, not a pixel-identity claim for arbitrary products.
+than `0.5%` changed pixels in the padded active-target and declared
+layout-critical regions. Use pixelmatch's perceptual threshold `0.1` with
+anti-aliased edge pixels excluded. Keep the per-channel tolerance `16`
+comparison as a diagnostic for raw platform rasterization variance; a relaxed
+platform diagnostic does not replace the perceptual gate. These limits are a
+regression gate for the controlled fixture, not a pixel-identity claim for
+arbitrary products.
 
 Check all of the following:
 

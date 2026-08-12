@@ -965,6 +965,1557 @@ test("captures in isolated worlds without HTML element constructors", async ({
   expect(captured.scene.html).toContain("Add a note");
 });
 
+test("waits for a finite layout animation before the first isolated capture", async ({
+  page
+}) => {
+  await page.goto("http://127.0.0.1:4173/assurance/render-settle.html");
+  const target = page.getByRole("button", {
+    name: "Review settled state",
+    exact: true
+  });
+
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review settled state"
+    },
+    anchorId: "sk-render-settle"
+  });
+  const capturedTarget = captured.scene.target;
+  if (!capturedTarget) throw new Error("Expected a captured target.");
+
+  const settledSource = await target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    const track = element.parentElement?.getBoundingClientRect();
+    return {
+      activeAnimationCount: document
+        .getAnimations()
+        .filter((animation) => ["pending", "running"].includes(animation.playState))
+        .length,
+      left: rectangle.left,
+      trackLeft: track?.left ?? 0
+    };
+  });
+  const capturedLeft =
+    capturedTarget.bounds.x * captured.scene.viewport.width;
+
+  expect(settledSource.activeAnimationCount).toBe(0);
+  expect(settledSource.left - settledSource.trackLeft).toBeGreaterThan(150);
+  expect(Math.abs(capturedLeft - settledSource.left)).toBeLessThan(0.75);
+});
+
+test("fails closed when a visible finite animation exceeds the settle budget", async ({
+  page
+}) => {
+  test.setTimeout(15_000);
+  await page.goto("http://127.0.0.1:4173/assurance/render-settle.html");
+  const target = page.getByRole("button", {
+    name: "Review settled state",
+    exact: true
+  });
+  await target.evaluate((element) => {
+    element.style.animationDuration = "8s";
+  });
+
+  await expect(
+    captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review settled state"
+      },
+      anchorId: "sk-render-settle-timeout"
+    })
+  ).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "unstable-render-state" }
+  });
+});
+
+test("bounds a cold isolated-world setup with the render deadline", async () => {
+  test.setTimeout(10_000);
+  let detachCount = 0;
+  let sessionCount = 0;
+  const never = new Promise<never>(() => undefined);
+  const stalledSession = {
+    async send(method: string) {
+      if (method === "Page.getFrameTree") {
+        return { frameTree: { frame: { id: "showkit-timeout-frame" } } };
+      }
+      if (method === "Page.createIsolatedWorld") return never;
+      throw new Error(`Unexpected CDP method: ${method}`);
+    },
+    async detach() {
+      detachCount += 1;
+    }
+  };
+  const freshSession = {
+    async send() {
+      throw new Error("fresh session reached");
+    },
+    async detach() {
+      detachCount += 1;
+    }
+  };
+  const frame = {};
+  const mockPage: any = {
+    context: () => ({
+      newCDPSession: async () =>
+        ++sessionCount === 1 ? stalledSession : freshSession
+    }),
+    mainFrame: () => frame,
+    on: () => mockPage,
+    once: () => mockPage
+  };
+
+  const startedAt = performance.now();
+  await expect(captureScene(mockPage)).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "unstable-render-state" }
+  });
+  expect(performance.now() - startedAt).toBeLessThan(7_000);
+  expect(detachCount).toBe(1);
+
+  await expect(captureScene(mockPage)).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: {
+      category: "browser-isolation-unavailable",
+      reason: "fresh session reached"
+    }
+  });
+  expect(sessionCount).toBe(2);
+});
+
+test("cleans up an isolated session that resolves after the render deadline", async () => {
+  test.setTimeout(10_000);
+  let detachCount = 0;
+  let resolveSession: ((session: any) => void) | undefined;
+  const lateSession = new Promise<any>((resolve) => {
+    resolveSession = resolve;
+  });
+  const mockPage: any = {
+    context: () => ({ newCDPSession: () => lateSession }),
+    mainFrame: () => ({}),
+    on: () => mockPage,
+    once: () => mockPage
+  };
+
+  await expect(captureScene(mockPage)).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "unstable-render-state" }
+  });
+  resolveSession?.({
+    async send() {
+      throw new Error("The late session must not be used.");
+    },
+    async detach() {
+      detachCount += 1;
+    }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(detachCount).toBe(1);
+});
+
+test("bounds stalled semantic target readiness before render settling", async () => {
+  test.setTimeout(10_000);
+  const never = new Promise<never>(() => undefined);
+  const startedAt = performance.now();
+
+  await expect(captureScene({} as any, {
+    target: { count: () => never } as any,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review stalled target"
+    },
+    anchorId: "sk-stalled-target"
+  })).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "unstable-render-state" }
+  });
+  expect(performance.now() - startedAt).toBeLessThan(7_000);
+});
+
+test("keeps the target fast path open until its mutation quiet window completes", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main style="height:720px;position:relative;width:1280px">
+      <button
+        id="review"
+        style="height:48px;left:24px;position:absolute;top:180px;width:180px"
+        type="button"
+      >Review ready state</button>
+    </main>
+    <script>
+      setTimeout(() => {
+        document.querySelector("#review").style.left = "324px";
+      }, 160);
+    </script>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review ready state",
+    exact: true
+  });
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review ready state"
+    },
+    anchorId: "sk-target-ready-window"
+  });
+  const sourceLeft = await target.evaluate(
+    (element) => element.getBoundingClientRect().left
+  );
+  const capturedTarget = captured.scene.target;
+  if (!capturedTarget) throw new Error("Expected a captured target.");
+  expect(sourceLeft).toBeGreaterThan(300);
+  expect(capturedTarget.bounds.x * captured.scene.viewport.width).toBeCloseTo(
+    sourceLeft,
+    1
+  );
+});
+
+test("keeps the target fast path open for a ResizeObserver-only layout change", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      html, body { box-sizing: border-box; margin: 0; width: 100%; }
+      body { padding-left: 24px; }
+      button { height: 48px; width: 180px; }
+    </style>
+    <button id="review" type="button">Review resized state</button>
+    <script>
+      setTimeout(() => {
+        const sheet = document.styleSheets[0];
+        sheet.insertRule("body { padding-left: 324px; }", sheet.cssRules.length);
+      }, 160);
+    </script>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review resized state",
+    exact: true
+  });
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review resized state"
+    },
+    anchorId: "sk-resize-observer-window"
+  });
+  const sourceLeft = await target.evaluate(
+    (element) => element.getBoundingClientRect().left
+  );
+  const capturedTarget = captured.scene.target;
+  if (!capturedTarget) throw new Error("Expected a captured target.");
+  expect(sourceLeft).toBeGreaterThan(300);
+  expect(capturedTarget.bounds.x * captured.scene.viewport.width).toBeCloseTo(
+    sourceLeft,
+    1
+  );
+});
+
+test("fails closed for visible infinite animations", async ({ page }) => {
+  await page.setContent(`
+    <style>
+      @keyframes pulse { from { opacity: 0.8; } to { opacity: 1; } }
+      @keyframes move { from { transform: translateX(0); } to { transform: translateX(200px); } }
+      #decorative { animation: pulse 20s linear infinite; }
+      #hidden { animation: move 8s linear forwards; display: none; }
+      button { height: 48px; width: 180px; }
+    </style>
+    <div id="decorative">Live status</div>
+    <div id="hidden">Hidden animation</div>
+    <button type="button">Review durable state</button>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review durable state",
+    exact: true
+  });
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review durable state"
+    },
+    anchorId: "sk-infinite-animation"
+  })).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "infinite-animation" }
+  });
+});
+
+test("classifies infinite animations independently of their current phase", async ({
+  page
+}) => {
+  for (const [delay, expectedOpacity] of [
+    ["0s", 0],
+    ["-6s", 1]
+  ] as const) {
+    await page.setContent(`
+      <style>
+        @keyframes phase-pulse {
+          0%, 49% { opacity: 0; }
+          51%, 100% { opacity: 1; }
+        }
+        #animated {
+          animation: phase-pulse 10s linear ${delay} infinite;
+          height: 40px;
+          width: 80px;
+        }
+      </style>
+      <div id="animated">Live status</div>
+      <button type="button">Review phase-independent state</button>
+    `);
+    expect(
+      await page.locator("#animated").evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).opacity)
+      )
+    ).toBe(expectedOpacity);
+    const target = page.getByRole("button", {
+      name: "Review phase-independent state",
+      exact: true
+    });
+    await expect(captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review phase-independent state"
+      },
+      anchorId: `sk-phase-independent-${expectedOpacity}`
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "infinite-animation" }
+    });
+  }
+});
+
+test("detects phase-invariant element and pseudo animations in open shadow roots", async ({
+  page
+}) => {
+  test.setTimeout(20_000);
+  const targetSpec = {
+    strategy: "role" as const,
+    role: "button",
+    name: "Review shadow animation"
+  };
+  const browserAdapter = () =>
+    createCodexBrowserAdapter({
+      tab: {
+        playwright: {
+          async domSnapshot() {
+            return 'button "Review shadow animation"';
+          },
+          async evaluate(pageFunction: (...args: any[]) => unknown, options: unknown) {
+            return page.evaluate(pageFunction as any, options as any);
+          },
+          locator(selector: string) {
+            return page.locator(selector);
+          },
+          getByRole(
+            role: string,
+            options?: { name?: string; exact?: boolean }
+          ) {
+            return page.getByRole(role as any, options);
+          }
+        },
+        async url() {
+          return page.url();
+        }
+      },
+      browserSurface: "iab",
+      browserName: "Codex Browser",
+      viewport: { width: 1280, height: 720 }
+    });
+
+  for (const pseudo of [false, true]) {
+    for (const [delay, expectedOpacity] of [
+      ["0s", 0],
+      ["-6s", 1]
+    ] as const) {
+      await page.setContent(`
+        <div id="shadow-host"></div>
+        <button type="button">Review shadow animation</button>
+      `);
+      await page.locator("#shadow-host").evaluate((host, options) => {
+        const root = host.attachShadow({ mode: "open" });
+        const selector = options.pseudo ? ".animated::before" : ".animated";
+        root.innerHTML = `
+          <style>
+            @keyframes shadow-pulse {
+              0%, 49% { opacity: 0; }
+              51%, 100% { opacity: 1; }
+            }
+            ${selector} {
+              animation: shadow-pulse 10s linear ${options.delay} infinite;
+              display: block;
+              height: 40px;
+              width: 80px;
+            }
+            .animated::before { content: ""; background: #7d4be2; }
+          </style>
+          <span class="animated">Live shadow status</span>
+        `;
+      }, { pseudo, delay });
+      const animationState = await page.locator("#shadow-host").evaluate(
+        (host, isPseudo) => {
+          const root = host.shadowRoot!;
+          const animated = root.querySelector(".animated")!;
+          return {
+            documentAnimations: document.getAnimations().length,
+            opacity: Number.parseFloat(
+              getComputedStyle(animated, isPseudo ? "::before" : null).opacity
+            ),
+            shadowAnimations: root.getAnimations().length
+          };
+        },
+        pseudo
+      );
+      expect(animationState).toEqual({
+        documentAnimations: 0,
+        opacity: expectedOpacity,
+        shadowAnimations: 1
+      });
+      const target = page.getByRole("button", {
+        name: targetSpec.name,
+        exact: true
+      });
+      await expect(captureScene(page, {
+        target,
+        captureTarget: targetSpec,
+        anchorId: `sk-shadow-animation-${pseudo ? "pseudo" : "element"}-${expectedOpacity}`
+      })).rejects.toMatchObject({
+        code: "UnsupportedSurface",
+        details: { category: "infinite-animation" }
+      });
+      await expect(
+        browserAdapter().prepareTargetForCapture(targetSpec)
+      ).rejects.toMatchObject({
+        code: "UnsupportedSurface",
+        details: { category: "infinite-animation" }
+      });
+    }
+  }
+});
+
+test("fails closed for continuous text mutations inside an open shadow root", async ({
+  page
+}) => {
+  test.setTimeout(15_000);
+  const targetSpec = {
+    strategy: "role" as const,
+    role: "button",
+    name: "Review shadow mutation"
+  };
+  const browserAdapter = () =>
+    createCodexBrowserAdapter({
+      tab: {
+        playwright: {
+          async domSnapshot() {
+            return 'button "Review shadow mutation"';
+          },
+          async evaluate(pageFunction: (...args: any[]) => unknown, options: unknown) {
+            return page.evaluate(pageFunction as any, options as any);
+          },
+          locator(selector: string) {
+            return page.locator(selector);
+          },
+          getByRole(
+            role: string,
+            options?: { name?: string; exact?: boolean }
+          ) {
+            return page.getByRole(role as any, options);
+          }
+        },
+        async url() {
+          return page.url();
+        }
+      },
+      browserSurface: "iab",
+      browserName: "Codex Browser",
+      viewport: { width: 1280, height: 720 }
+    });
+  await page.setContent(`
+    <div id="shadow-host"></div>
+    <button type="button">Review shadow mutation</button>
+  `);
+  const target = page.getByRole("button", {
+    name: targetSpec.name,
+    exact: true
+  });
+  const startContinuousMutation = () =>
+    page.locator("#shadow-host").evaluate((host) => {
+      const root = host.attachShadow({ mode: "open" });
+      root.innerHTML = '<span style="display:block;width:80px">AA</span>';
+      const status = root.querySelector("span")!;
+      let revision = 0;
+      (window as any).__showkitShadowMutationTimer = setInterval(() => {
+        status.textContent = revision++ % 2 === 0 ? "BB" : "AA";
+      }, 40);
+    });
+  const resetHost = async () => {
+    await page.evaluate(() => clearInterval(
+      (window as any).__showkitShadowMutationTimer
+    ));
+    await page.locator("#shadow-host").evaluate((host) =>
+      host.replaceWith(host.cloneNode())
+    );
+  };
+
+  await startContinuousMutation();
+  try {
+    await expect(captureScene(page, {
+      target,
+      captureTarget: targetSpec,
+      anchorId: "sk-shadow-mutation-playwright"
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "unstable-render-state" }
+    });
+  } finally {
+    await resetHost();
+  }
+
+  await startContinuousMutation();
+  try {
+    await expect(
+      browserAdapter().prepareTargetForCapture(targetSpec)
+    ).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "unstable-render-state" }
+    });
+  } finally {
+    await resetHost();
+  }
+});
+
+test("restarts the quiet window for a dynamically attached shadow root", async ({
+  page
+}) => {
+  const targetSpec = {
+    strategy: "role" as const,
+    role: "button",
+    name: "Review dynamic shadow state"
+  };
+  const browserAdapter = () =>
+    createCodexBrowserAdapter({
+      tab: {
+        playwright: {
+          async domSnapshot() {
+            return 'button "Review dynamic shadow state"';
+          },
+          async evaluate(pageFunction: (...args: any[]) => unknown, options: unknown) {
+            return page.evaluate(pageFunction as any, options as any);
+          },
+          locator(selector: string) {
+            return page.locator(selector);
+          },
+          getByRole(
+            role: string,
+            options?: { name?: string; exact?: boolean }
+          ) {
+            return page.getByRole(role as any, options);
+          }
+        },
+        async url() {
+          return page.url();
+        }
+      },
+      browserSurface: "iab",
+      browserName: "Codex Browser",
+      viewport: { width: 1280, height: 720 }
+    });
+  await page.setContent(`
+    <div id="shadow-host" style="display:block;height:18px;width:80px"></div>
+    <button type="button">Review dynamic shadow state</button>
+  `);
+  const target = page.getByRole("button", {
+    name: targetSpec.name,
+    exact: true
+  });
+  const scheduleFiniteShadowState = () =>
+    page.locator("#shadow-host").evaluate((host) => {
+      (window as any).__showkitShadowAttachTimer = setTimeout(() => {
+        const root = host.attachShadow({ mode: "open" });
+        root.innerHTML = '<span style="display:block;width:80px">AA</span>';
+        const status = root.querySelector("span")!;
+        (window as any).__showkitShadowMutationTimer = setTimeout(() => {
+          status.textContent = "BB";
+        }, 100);
+      }, 200);
+    });
+  const resetHost = async () => {
+    await page.evaluate(() => {
+      clearTimeout((window as any).__showkitShadowAttachTimer);
+      clearTimeout((window as any).__showkitShadowMutationTimer);
+    });
+    await page.locator("#shadow-host").evaluate((host) =>
+      host.replaceWith(host.cloneNode())
+    );
+  };
+
+  await scheduleFiniteShadowState();
+  const playwrightStartedAt = performance.now();
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: targetSpec,
+    anchorId: "sk-dynamic-shadow-playwright"
+  });
+  expect(performance.now() - playwrightStartedAt).toBeGreaterThan(450);
+  expect(captured.scene.html).toContain("BB");
+  await resetHost();
+
+  await scheduleFiniteShadowState();
+  const browserStartedAt = performance.now();
+  await expect(
+    browserAdapter().prepareTargetForCapture(targetSpec)
+  ).resolves.toBe(false);
+  expect(performance.now() - browserStartedAt).toBeGreaterThan(450);
+  expect(await page.locator("#shadow-host").evaluate((host) =>
+    host.shadowRoot?.textContent
+  )).toContain("BB");
+  await resetHost();
+});
+
+test("classifies infinite pseudo animations by their rendered pseudo surface", async ({
+  page
+}) => {
+  for (const hostStyle of [
+    "display:contents",
+    "position:relative;width:0;height:0"
+  ]) {
+    await page.setContent(`
+      <style>
+        @keyframes pseudo-pulse { from { opacity: 0.2; } to { opacity: 0.9; } }
+        #badge { ${hostStyle}; }
+        #badge::before {
+          content: "";
+          display: block;
+          position: fixed;
+          left: 40px;
+          top: 40px;
+          width: 40px;
+          height: 40px;
+          background: #7d4be2;
+          animation: pseudo-pulse 8s linear infinite;
+        }
+      </style>
+      <div id="badge"></div>
+      <button type="button">Review pseudo animation</button>
+    `);
+    const target = page.getByRole("button", {
+      name: "Review pseudo animation",
+      exact: true
+    });
+    await expect(captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review pseudo animation"
+      },
+      anchorId: "sk-visible-pseudo-animation"
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "infinite-animation" }
+    });
+  }
+
+  for (const [delay, expectedOpacity] of [
+    ["0s", 0],
+    ["-6s", 1]
+  ] as const) {
+    await page.setContent(`
+      <style>
+        @keyframes pseudo-phase {
+          0%, 49% { opacity: 0; }
+          51%, 100% { opacity: 1; }
+        }
+        #translated::before {
+          content: "";
+          position: fixed;
+          left: -9999px;
+          top: 40px;
+          width: 40px;
+          height: 40px;
+          background: #7d4be2;
+          transform: translateX(10079px);
+          animation: pseudo-phase 10s linear ${delay} infinite;
+        }
+      </style>
+      <div id="translated"></div>
+      <button type="button">Review transformed pseudo animation</button>
+    `);
+    expect(
+      await page.locator("#translated").evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element, "::before").opacity)
+      )
+    ).toBe(expectedOpacity);
+    const target = page.getByRole("button", {
+      name: "Review transformed pseudo animation",
+      exact: true
+    });
+    await expect(captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review transformed pseudo animation"
+      },
+      anchorId: `sk-transformed-pseudo-${expectedOpacity}`
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "infinite-animation" }
+    });
+  }
+
+  await page.setContent(`
+    <style>
+      @keyframes pseudo-pulse { from { opacity: 0.2; } to { opacity: 0.9; } }
+      #hidden { display: none; }
+      #hidden::before {
+        content: "";
+        position: fixed;
+        left: 40px;
+        top: 0;
+        width: 40px;
+        height: 40px;
+        background: #7d4be2;
+        animation: pseudo-pulse 8s linear infinite;
+      }
+    </style>
+    <div id="hidden"></div>
+    <button type="button">Review hidden pseudo animation</button>
+  `);
+  const hiddenTarget = page.getByRole("button", {
+    name: "Review hidden pseudo animation",
+    exact: true
+  });
+  const captured = await captureScene(page, {
+    target: hiddenTarget,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review hidden pseudo animation"
+    },
+    anchorId: "sk-hidden-pseudo-animation"
+  });
+  expect(captured.scene.target).toEqual(
+    expect.objectContaining({ name: "Review hidden pseudo animation" })
+  );
+});
+
+test("runs the browser-session settle kernel against real pseudo animations", async ({
+  page
+}) => {
+  const browserAdapter = () =>
+    createCodexBrowserAdapter({
+      tab: {
+        playwright: {
+          async domSnapshot() {
+            return 'button "Review browser pseudo animation"';
+          },
+          async evaluate(pageFunction: (...args: any[]) => unknown, options: unknown) {
+            return page.evaluate(pageFunction as any, options as any);
+          },
+          locator(selector: string) {
+            return page.locator(selector);
+          },
+          getByRole(
+            role: string,
+            options?: { name?: string; exact?: boolean }
+          ) {
+            return page.getByRole(role as any, options);
+          }
+        },
+        async url() {
+          return page.url();
+        }
+      },
+      browserSurface: "iab",
+      browserName: "Codex Browser",
+      viewport: { width: 1280, height: 720 }
+    });
+  const target = {
+    strategy: "role" as const,
+    role: "button",
+    name: "Review browser pseudo animation"
+  };
+
+  await page.setContent(`
+    <style>
+      @keyframes pseudo-pulse {
+        0%, 49% { opacity: 0; }
+        51%, 100% { opacity: 0.9; }
+      }
+      #badge { display: contents; }
+      #badge::before {
+        content: "";
+        position: fixed;
+        left: -9999px;
+        top: 40px;
+        width: 40px;
+        height: 40px;
+        background: #7d4be2;
+        transform: translateX(10079px);
+        animation: pseudo-pulse 10s linear infinite;
+      }
+    </style>
+    <div id="badge"></div>
+    <button type="button">Review browser pseudo animation</button>
+  `);
+  await expect(
+    browserAdapter().prepareTargetForCapture(target)
+  ).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "infinite-animation" }
+  });
+
+  await page.locator("#badge").evaluate((element) => element.remove());
+  await expect(
+    browserAdapter().prepareTargetForCapture(target)
+  ).resolves.toBe(false);
+});
+
+test("keeps Playwright and browser-session finite-animation readiness aligned", async ({
+  page
+}) => {
+  test.setTimeout(15_000);
+  const browserAdapter = createCodexBrowserAdapter({
+    tab: {
+      playwright: {
+        async domSnapshot() {
+          return 'button "Review readiness parity"';
+        },
+        async evaluate(pageFunction: (...args: any[]) => unknown, options: unknown) {
+          return page.evaluate(pageFunction as any, options as any);
+        },
+        locator(selector: string) {
+          return page.locator(selector);
+        },
+        getByRole(
+          role: string,
+          options?: { name?: string; exact?: boolean }
+        ) {
+          return page.getByRole(role as any, options);
+        }
+      },
+      async url() {
+        return page.url();
+      }
+    },
+    browserSurface: "iab",
+    browserName: "Codex Browser",
+    viewport: { width: 1280, height: 720 }
+  });
+  await page.setContent(`
+    <style>
+      @keyframes finite-pulse { from { opacity: 0.8; } to { opacity: 1; } }
+      #status { animation: finite-pulse 4.7s linear forwards; }
+    </style>
+    <div id="status">Settling status</div>
+    <button type="button">Review readiness parity</button>
+  `);
+  const targetSpec = {
+    strategy: "role" as const,
+    role: "button",
+    name: "Review readiness parity"
+  };
+  const target = page.getByRole("button", {
+    name: targetSpec.name,
+    exact: true
+  });
+
+  const [captured, positioned] = await Promise.all([
+    captureScene(page, {
+      target,
+      captureTarget: targetSpec,
+      anchorId: "sk-readiness-parity"
+    }),
+    browserAdapter.prepareTargetForCapture(targetSpec)
+  ]);
+  expect(captured.scene.target).toEqual(
+    expect.objectContaining({ name: targetSpec.name })
+  );
+  expect(positioned).toBe(false);
+});
+
+test("ignores infinite animations when their rendered target is hidden", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      @keyframes pulse { from { opacity: 0.8; } to { opacity: 1; } }
+      #hidden { animation: pulse 20s linear infinite; display: none; }
+      button { height: 48px; width: 180px; }
+    </style>
+    <div id="hidden">Hidden animation</div>
+    <button type="button">Review hidden animation state</button>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review hidden animation state",
+    exact: true
+  });
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review hidden animation state"
+    },
+    anchorId: "sk-hidden-infinite-animation"
+  });
+  expect(captured.scene.target).toEqual(
+    expect.objectContaining({ name: "Review hidden animation state" })
+  );
+});
+
+test("ignores hidden DOM updates while settling a visible target", async ({
+  page
+}) => {
+  await page.setContent(`
+    <main><button type="button">Review visible state</button></main>
+    <div hidden id="background-status">0</div>
+    <script>
+      let revision = 0;
+      window.__hiddenUpdateTimer = setInterval(() => {
+        document.querySelector("#background-status").textContent = String(++revision);
+      }, 40);
+    </script>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review visible state",
+    exact: true
+  });
+  const startedAt = performance.now();
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review visible state"
+    },
+    anchorId: "sk-hidden-updates"
+  });
+  await page.evaluate(() => {
+    clearInterval(
+      (window as typeof window & { __hiddenUpdateTimer: number })
+        .__hiddenUpdateTimer
+    );
+  });
+  expect(performance.now() - startedAt).toBeLessThan(2_000);
+  expect(captured.scene.target).toEqual(
+    expect.objectContaining({ name: "Review visible state" })
+  );
+});
+
+test("ignores a finite animation under a transparent ancestor", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      @keyframes hidden-move { to { transform: translateX(200px); } }
+      #transparent { opacity: 0; }
+      #animated { animation: hidden-move 8s linear forwards; }
+    </style>
+    <div id="transparent"><div id="animated">Hidden motion</div></div>
+    <button type="button">Review visible state</button>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review visible state",
+    exact: true
+  });
+  const startedAt = performance.now();
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review visible state"
+    },
+    anchorId: "sk-transparent-ancestor-animation"
+  });
+  expect(performance.now() - startedAt).toBeLessThan(2_000);
+  expect(captured.scene.target).toEqual(
+    expect.objectContaining({ name: "Review visible state" })
+  );
+});
+
+test("bounds visible image settling before decoding an oversized page", async ({
+  page
+}) => {
+  const image =
+    '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="height:4px;width:4px">';
+  await page.setContent(`
+    <main>${image.repeat(65)}<button type="button">Review image limit</button></main>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review image limit",
+    exact: true
+  });
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review image limit"
+    },
+    anchorId: "sk-visible-image-limit"
+  })).rejects.toMatchObject({
+    code: "CaptureTooLarge",
+    details: { category: "image-limit" }
+  });
+});
+
+test("bounds an oversized element tree before extraction", async ({ page }) => {
+  await page.setContent(`
+    <main id="root"><button type="button">Review element limit</button></main>
+    <script>
+      const fragment = document.createDocumentFragment();
+      for (let index = 0; index < 10_001; index += 1) {
+        fragment.append(document.createElement("span"));
+      }
+      document.querySelector("#root").append(fragment);
+    </script>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review element limit",
+    exact: true
+  });
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review element limit"
+    },
+    anchorId: "sk-element-limit"
+  })).rejects.toMatchObject({
+    code: "CaptureTooLarge",
+    details: { category: "element-limit" }
+  });
+});
+
+test("bounds open shadow trees before materializing their full descendants", async ({
+  page
+}) => {
+  await page.setContent(`
+    <div id="host"></div>
+    <button type="button">Review shadow element limit</button>
+  `);
+  await page.evaluate(() => {
+    const root = document.querySelector("#host")!.attachShadow({ mode: "open" });
+    const fragment = document.createDocumentFragment();
+    for (let index = 0; index < 10_001; index += 1) {
+      fragment.append(document.createElement("span"));
+    }
+    root.append(fragment);
+  });
+  const target = page.getByRole("button", {
+    name: "Review shadow element limit",
+    exact: true
+  });
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review shadow element limit"
+    },
+    anchorId: "sk-shadow-element-limit"
+  })).rejects.toMatchObject({
+    code: "CaptureTooLarge",
+    details: { category: "element-limit" }
+  });
+});
+
+test("bounds deeply nested open shadow trees", async ({ page }) => {
+  await page.setContent(`
+    <div id="host"></div>
+    <button type="button">Review shadow depth limit</button>
+  `);
+  await page.evaluate(() => {
+    let host = document.querySelector("#host")!;
+    for (let depth = 0; depth < 66; depth += 1) {
+      const root = host.attachShadow({ mode: "open" });
+      const child = document.createElement("div");
+      root.append(child);
+      host = child;
+    }
+  });
+  const target = page.getByRole("button", {
+    name: "Review shadow depth limit",
+    exact: true
+  });
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review shadow depth limit"
+    },
+    anchorId: "sk-shadow-depth-limit"
+  })).rejects.toMatchObject({
+    code: "CaptureTooLarge",
+    details: { category: "shadow-depth-limit" }
+  });
+});
+
+test("bounds visible animations while ignoring hidden animation volume", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      @keyframes fade { from { opacity: 0.8; } to { opacity: 1; } }
+      .animated {
+        animation: fade 4s linear forwards;
+        display: inline-block;
+        height: 1px;
+        width: 1px;
+      }
+      #hidden { display: none; }
+    </style>
+    <main id="visible"><button type="button">Review animation limit</button></main>
+    <div id="hidden"></div>
+  `);
+  await page.evaluate(() => {
+    for (const [selector, count] of [["#visible", 2_001], ["#hidden", 2_001]] as const) {
+      const root = document.querySelector(selector)!;
+      const fragment = document.createDocumentFragment();
+      for (let index = 0; index < count; index += 1) {
+        const element = document.createElement("span");
+        element.className = "animated";
+        element.textContent = ".";
+        fragment.append(element);
+      }
+      root.append(fragment);
+    }
+  });
+  const target = page.getByRole("button", {
+    name: "Review animation limit",
+    exact: true
+  });
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review animation limit"
+    },
+    anchorId: "sk-animation-limit"
+  })).rejects.toMatchObject({
+    code: "CaptureTooLarge",
+    details: { category: "animation-limit" }
+  });
+
+  await page.locator("#visible .animated").evaluateAll((elements) => {
+    for (const element of elements) element.remove();
+  });
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review animation limit"
+    },
+    anchorId: "sk-hidden-animation-volume"
+  });
+  expect(captured.scene.target).toEqual(
+    expect.objectContaining({ name: "Review animation limit" })
+  );
+});
+
+test("checks the raw animation scan cap before waiting for a frame", async ({
+  page
+}) => {
+  await page.setContent(`
+    <div id="hidden" style="display:none"></div>
+    <button type="button">Review animation scan limit</button>
+  `);
+  await page.evaluate(() => {
+    const hidden = document.querySelector("#hidden")!;
+    for (let index = 0; index < 20_001; index += 1) {
+      hidden.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: 60_000,
+        iterations: 1
+      }).pause();
+    }
+  });
+  const target = page.getByRole("button", {
+    name: "Review animation scan limit",
+    exact: true
+  });
+  const startedAt = performance.now();
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review animation scan limit"
+    },
+    anchorId: "sk-animation-scan-limit"
+  })).rejects.toMatchObject({
+    code: "CaptureTooLarge",
+    details: { category: "animation-scan-limit" }
+  });
+  expect(performance.now() - startedAt).toBeLessThan(2_000);
+});
+
+test("fails closed for each individual transform longhand", async ({ page }) => {
+  const individualTransforms = [
+    ["rotate", "18deg"],
+    ["scale", "1.04 0.94"],
+    ["translate", "12px -6px"]
+  ] as const;
+
+  for (const [property, value] of individualTransforms) {
+    await page.goto(
+      "http://127.0.0.1:4173/assurance/individual-transform.html"
+    );
+    await page.locator(".transform-glyph").evaluate(
+      (element, transform) => {
+        for (const name of ["rotate", "scale", "translate"]) {
+          (element as HTMLElement).style.setProperty(name, "none");
+        }
+        (element as HTMLElement).style.setProperty(
+          transform.property,
+          transform.value
+        );
+      },
+      { property, value }
+    );
+    const target = page.getByRole("button", {
+      name: "Review transform",
+      exact: true
+    });
+
+    await expect(captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review transform"
+      },
+      anchorId: `sk-individual-${property}`
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "individual-transform" }
+    });
+  }
+});
+
+test("fails closed for individual transforms on visible pseudo-elements", async ({
+  page
+}) => {
+  for (const pseudo of ["before", "after"] as const) {
+    await page.setContent(`
+      <style>
+        #badge::${pseudo} {
+          content: "";
+          display: inline-block;
+          width: 28px;
+          height: 28px;
+          background: #7d4be2;
+          rotate: 45deg;
+        }
+      </style>
+      <div id="badge">Status badge</div>
+      <button type="button">Review pseudo transform</button>
+    `);
+    const target = page.getByRole("button", {
+      name: "Review pseudo transform",
+      exact: true
+    });
+    await expect(captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review pseudo transform"
+      },
+      anchorId: `sk-pseudo-transform-${pseudo}`
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "individual-transform" }
+    });
+  }
+});
+
+test("fails closed for transformed pseudo-elements on boxless hosts", async ({
+  page
+}) => {
+  for (const hostStyle of [
+    "position:relative;width:0;height:0",
+    "display:contents"
+  ]) {
+    await page.setContent(`
+      <style>
+        #badge { ${hostStyle}; }
+        #badge::before {
+          content: "";
+          position: absolute;
+          inset: 40px auto auto 40px;
+          width: 40px;
+          height: 40px;
+          background: #7d4be2;
+          rotate: 45deg;
+        }
+      </style>
+      <div id="badge"></div>
+      <button type="button">Review boxless pseudo transform</button>
+    `);
+    const target = page.getByRole("button", {
+      name: "Review boxless pseudo transform",
+      exact: true
+    });
+    await expect(captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review boxless pseudo transform"
+      },
+      anchorId: "sk-boxless-pseudo-transform"
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "individual-transform" }
+    });
+  }
+});
+
+test("ignores individual transforms under a transparent ancestor", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      #transparent { opacity: 0; }
+      #transparent .rotated { rotate: 18deg; width: 40px; height: 40px; }
+    </style>
+    <div id="transparent"><div class="rotated">Hidden transform</div></div>
+    <button type="button">Review transparent transform</button>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review transparent transform",
+    exact: true
+  });
+  const captured = await captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review transparent transform"
+    },
+    anchorId: "sk-nonvisual-transform"
+  });
+  expect(captured.scene.target).toEqual(
+    expect.objectContaining({ name: "Review transparent transform" })
+  );
+});
+
+test("fails closed when an individual translate moves a pseudo into the viewport", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      #translated::before {
+        content: "";
+        position: fixed;
+        left: -9999px;
+        top: 40px;
+        width: 40px;
+        height: 40px;
+        background: #7d4be2;
+        translate: 10079px 0;
+      }
+    </style>
+    <div id="translated"></div>
+    <button type="button">Review translated pseudo</button>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review translated pseudo",
+    exact: true
+  });
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review translated pseudo"
+    },
+    anchorId: "sk-translated-pseudo"
+  })).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "individual-transform" }
+  });
+});
+
+test("does not exempt offscreen pseudo rotate or scale from fail-closed policy", async ({
+  page
+}) => {
+  for (const [property, value] of [["rotate", "45deg"], ["scale", "2"]] as const) {
+    await page.setContent(`
+      <style>
+        #offscreen::before {
+          content: "";
+          position: fixed;
+          left: -9999px;
+          top: 0;
+          width: 40px;
+          height: 40px;
+          background: #7d4be2;
+          ${property}: ${value};
+        }
+      </style>
+      <div id="offscreen"></div>
+      <button type="button">Review bounded pseudo transform</button>
+    `);
+    const target = page.getByRole("button", {
+      name: "Review bounded pseudo transform",
+      exact: true
+    });
+    await expect(captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review bounded pseudo transform"
+      },
+      anchorId: `sk-bounded-pseudo-${property}`
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "individual-transform" }
+    });
+  }
+});
+
+test("fails closed when visibility is restored on a transformed child", async ({
+  page
+}) => {
+  await page.setContent(`
+    <style>
+      #hidden-parent { visibility: hidden; }
+      #visible-child {
+        visibility: visible;
+        width: 40px;
+        height: 40px;
+        background: #7d4be2;
+        rotate: 18deg;
+      }
+    </style>
+    <div id="hidden-parent"><div id="visible-child"></div></div>
+    <button type="button">Review restored visibility</button>
+  `);
+  const target = page.getByRole("button", {
+    name: "Review restored visibility",
+    exact: true
+  });
+  await expect(captureScene(page, {
+    target,
+    captureTarget: {
+      strategy: "role",
+      role: "button",
+      name: "Review restored visibility"
+    },
+    anchorId: "sk-restored-visibility-transform"
+  })).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "individual-transform" }
+  });
+});
+
+test("fails closed for an open native popover instead of flattening its top layer", async ({
+  page
+}) => {
+  await page.goto("http://127.0.0.1:4173/assurance/native-popover.html");
+  const target = page.getByRole("button", {
+    name: "Review open menu",
+    exact: true
+  });
+
+  await expect(
+    captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review open menu"
+      },
+      anchorId: "sk-native-popover"
+    })
+  ).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "popover" }
+  });
+});
+
+test("fails closed for an indeterminate checkbox instead of saving it as unchecked", async ({
+  page
+}) => {
+  await page.goto("http://127.0.0.1:4173/assurance/indeterminate-control.html");
+  const target = page.getByRole("button", {
+    name: "Review mixed selection",
+    exact: true
+  });
+
+  await expect(
+    captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review mixed selection"
+      },
+      anchorId: "sk-indeterminate-control"
+    })
+  ).rejects.toMatchObject({
+    code: "UnsupportedSurface",
+    details: { category: "indeterminate-control" }
+  });
+});
+
+test("fails closed for each unsupported native table border model", async ({
+  page
+}) => {
+  for (const borderModel of ["collapsed", "separated-spacing"] as const) {
+    await page.goto("http://127.0.0.1:4173/assurance/data-table.html");
+    await page.locator("table").evaluateAll((tables, model) => {
+      const [collapsed, separated] = tables as HTMLTableElement[];
+      if (!collapsed || !separated) throw new Error("Expected assurance tables.");
+      collapsed.style.borderCollapse = model === "collapsed" ? "collapse" : "separate";
+      collapsed.style.borderSpacing = "2px";
+      separated.style.borderCollapse = "separate";
+      separated.style.borderSpacing = model === "separated-spacing" ? "10px 8px" : "2px";
+    }, borderModel);
+    const target = page.getByRole("button", {
+      name: "Review operations table",
+      exact: true
+    });
+
+    await expect(captureScene(page, {
+      target,
+      captureTarget: {
+        strategy: "role",
+        role: "button",
+        name: "Review operations table"
+      },
+      anchorId: `sk-data-table-${borderModel}`
+    })).rejects.toMatchObject({
+      code: "UnsupportedSurface",
+      details: { category: "table-border-model" }
+    });
+  }
+});
+
 test("preserves safe live control state through capture and the final player", async ({
   browser,
   page
@@ -1197,6 +2748,35 @@ test("classifies an invalid captureTarget before browser capture", async ({
     code: "DemoFixtureSetupFailed",
     details: { category: "capture-target-invalid" }
   });
+});
+
+test("restores the infinite-animation recovery from capture diagnostics", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "showkit-infinite-animation-"));
+  const diagnosticPath = join(directory, "diagnostic.json");
+  try {
+    await writeFile(
+      diagnosticPath,
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        code: "UnsupportedSurface",
+        exitCode: 2,
+        phase: "capture",
+        category: "infinite-animation",
+        stepProgress: []
+      }),
+      "utf8"
+    );
+    const mapped = await captureFailure("", diagnosticPath);
+    expect(mapped).toMatchObject({
+      code: "UnsupportedSurface",
+      exitCode: 2,
+      details: { category: "infinite-animation" },
+      recovery: expect.stringContaining("Pause or remove")
+    });
+    expect(mapped.message).toContain("cannot be captured deterministically");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("infers a missing captureTarget name from Playwright semantics", async ({

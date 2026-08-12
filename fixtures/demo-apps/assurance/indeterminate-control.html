@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Indeterminate control assurance</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f3efe6;
+        color: #17211b;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+
+      main {
+        width: 520px;
+        margin: 80px auto;
+        padding: 32px;
+        border: 1px solid currentColor;
+        background: white;
+      }
+
+      label {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin: 28px 0;
+      }
+
+      input {
+        width: 20px;
+        height: 20px;
+        accent-color: #7d4be2;
+      }
+
+      button {
+        min-height: 44px;
+        padding: 10px 18px;
+        border: 1px solid #55309f;
+        background: #7d4be2;
+        color: white;
+        font: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Indeterminate control assurance</h1>
+      <label><input type="checkbox"> Include archived reports</label>
+      <button type="button">Review mixed selection</button>
+    </main>
+    <script>
+      document.querySelector('input[type="checkbox"]').indeterminate = true;
+    </script>
+  </body>
+</html>
