@@ -282,6 +282,7 @@ await assert.rejects(
     }),
   /does not satisfy ShowKit's isolated read-only execution contract/
 );
+
 assert.equal(forgedProbeCount, 0);
 await rm(hostFixtureRoot, { recursive: true, force: true });
 
@@ -2331,6 +2332,7 @@ const transferAdapter = createCodexBrowserAdapter({
         return 'button "Compose"';
       },
       async evaluate(pageFunction, options) {
+        if (options?.__showkitVisualSettle === true) return true;
         if (pageFunction === frozenTransferReader) {
           assert.equal(options.captureId, activeTransferId);
           if (options.release === true) {
@@ -2500,6 +2502,7 @@ const compressedTransferAdapter = createCodexBrowserAdapter({
         return 'button "Compose"';
       },
       async evaluate(pageFunction, options) {
+        if (options?.__showkitVisualSettle === true) return true;
         return compressedTransferLocator.evaluate(
           pageFunction,
           options
@@ -2564,6 +2567,7 @@ const targetPageAdapter = createCodexBrowserAdapter({
         return 'combobox "To recipients"';
       },
       async evaluate(_pageFunction, options) {
+        if (options?.__showkitVisualSettle === true) return true;
         targetPageEvaluateCalls += 1;
         assert.deepEqual(options.scopeTarget, {
           strategy: "role",
@@ -2606,6 +2610,162 @@ await targetPageAdapter.evaluateTarget(
 );
 assert.equal(targetLocatorEvaluateCalls, 0);
 assert.equal(targetPageEvaluateCalls, 1);
+
+const captureReadinessOrder = [];
+const readinessTargetKernel = () => {};
+const readinessTerminalKernel = () => {};
+const readinessLocator = {
+  async count() {
+    return 1;
+  },
+  async isVisible() {
+    return true;
+  },
+  async evaluate() {
+    return false;
+  }
+};
+const readinessAdapter = createCodexBrowserAdapter({
+  tab: {
+    playwright: {
+      async domSnapshot() {
+        return 'button "Review ready state"';
+      },
+      async evaluate(pageFunction, options) {
+        if (options?.__showkitVisualSettle === true) {
+          captureReadinessOrder.push(`settle:${options.minimumSettleMs}`);
+          return true;
+        }
+        if (pageFunction === readinessTargetKernel) {
+          captureReadinessOrder.push("target");
+          return sceneResult("Review ready state", options);
+        }
+        if (pageFunction === readinessTerminalKernel) {
+          captureReadinessOrder.push("terminal");
+          return terminalResult();
+        }
+        throw new Error("Unexpected readiness evaluation.");
+      },
+      locator() {
+        return readinessLocator;
+      },
+      getByRole() {
+        return readinessLocator;
+      }
+    },
+    async url() {
+      return "https://app.example.test/dashboard";
+    }
+  },
+  browserSurface: "iab",
+  browserName: "Codex Browser",
+  viewport: { width: 1280, height: 720 }
+});
+const readinessTarget = {
+  strategy: "role",
+  role: "button",
+  name: "Review ready state"
+};
+await readinessAdapter.prepareTargetForCapture(readinessTarget);
+await readinessAdapter.preparePublicAssets({
+  stepIndex: 0,
+  target: readinessTarget
+});
+await readinessAdapter.evaluateTarget(
+  readinessTarget,
+  readinessTargetKernel,
+  { anchorId: "sk-review-ready-state" }
+);
+await readinessAdapter.evaluateTerminal(readinessTerminalKernel, {});
+assert.deepEqual(captureReadinessOrder, [
+  "settle:220",
+  "settle:220",
+  "target",
+  "settle:320",
+  "terminal"
+]);
+const unstableReadinessAdapter = createCodexBrowserAdapter({
+  tab: {
+    playwright: {
+      async domSnapshot() {
+        return 'button "Review unstable state"';
+      },
+      async evaluate(_pageFunction, options) {
+        if (options?.__showkitVisualSettle === true) return false;
+        throw new Error("Unstable capture must stop before extraction.");
+      },
+      locator() {
+        return readinessLocator;
+      },
+      getByRole() {
+        return readinessLocator;
+      }
+    },
+    async url() {
+      return "https://app.example.test/dashboard";
+    }
+  },
+  browserSurface: "iab",
+  browserName: "Codex Browser",
+  viewport: { width: 1280, height: 720 }
+});
+await assert.rejects(
+  () =>
+    unstableReadinessAdapter.prepareTargetForCapture({
+      strategy: "role",
+      role: "button",
+      name: "Review unstable state"
+    }),
+  (error) => {
+    assert.equal(error.code, "UnsupportedSurface");
+    assert.equal(error.exitCode, 2);
+    assert.equal(error.details?.category, "unstable-render-state");
+    return true;
+  }
+);
+
+const hangingReadinessAdapter = createCodexBrowserAdapter({
+  tab: {
+    playwright: {
+      async domSnapshot() {
+        return 'button "Review stalled state"';
+      },
+      async evaluate(_pageFunction, options) {
+        if (options?.__showkitVisualSettle === true) {
+          return new Promise(() => {});
+        }
+        throw new Error("Stalled capture must stop before extraction.");
+      },
+      locator() {
+        return readinessLocator;
+      },
+      getByRole() {
+        return readinessLocator;
+      }
+    },
+    async url() {
+      return "https://app.example.test/dashboard";
+    }
+  },
+  browserSurface: "iab",
+  browserName: "Codex Browser",
+  viewport: { width: 1280, height: 720 }
+});
+const hangingReadinessStartedAt = Date.now();
+await assert.rejects(
+  () =>
+    hangingReadinessAdapter.prepareTargetForCapture({
+      strategy: "role",
+      role: "button",
+      name: "Review stalled state"
+    }),
+  (error) => {
+    assert.equal(error.code, "UnsupportedSurface");
+    assert.equal(error.details?.category, "unstable-render-state");
+    return true;
+  }
+);
+assert.ok(Date.now() - hangingReadinessStartedAt < 7_000);
 
 let navigationUrl = "https://app.example.test/dashboard";
 let navigationClickCount = 0;
@@ -2890,7 +3050,8 @@ const disclosureAdapter = createCodexBrowserAdapter({
           ? 'button "Details" [expanded]'
           : 'button "Details"';
       },
-      async evaluate() {
+      async evaluate(_pageFunction, options) {
+        if (options?.__showkitVisualSettle === true) return true;
         return "unchanged";
       },
       async waitForTimeout() {
@@ -2943,7 +3104,8 @@ const timedOutDisclosureAdapter = createCodexBrowserAdapter({
           ? 'button "Filters" [expanded]'
           : 'button "Filters"';
       },
-      async evaluate() {
+      async evaluate(_pageFunction, options) {
+        if (options?.__showkitVisualSettle === true) return true;
         return timedOutDisclosureExpanded ? "expanded" : "collapsed";
       },
       async waitForTimeout() {},
@@ -3007,6 +3169,8 @@ process.stdout.write(
     deterministicHrefNavigation: true,
     semanticNavigationWait: true,
     capturedVisualReadiness: true,
+    initialAndTerminalVisualReadiness: true,
+    unstableVisualReadinessNamed: true,
     viewportTargetDisambiguation: true,
     delayedTargetReadiness: true,
     observedStateChangeWait: true,

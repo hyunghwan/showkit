@@ -5,6 +5,24 @@ fixes ship as a new version.
 
 ## Unreleased
 
+## 0.2.13 - 2026-08-12
+
+- Wait for visible fonts, images, DOM and layout changes, and finite animations
+  to settle before capturing a product state, while allowing an already-visible
+  semantic target to use the shorter verified quiet window. Stop on visible
+  infinite animations instead of saving a nondeterministic frame.
+- Preserve `backdrop-filter`, `background-clip`, and gradient text fill in
+  interactive HTML scenes.
+- Stop before saving visible individual transform longhands, including on
+  pseudo-elements, open native popovers, indeterminate checkboxes, and
+  unsupported native table border models instead of flattening them
+  inaccurately.
+- Added same-browser, in-memory visual comparisons for full scenes, active
+  targets, and declared layout-critical regions without writing screenshot or
+  diff files into the demo.
+- Added a 25-step per-scene performance guard and updated the installed ShowKit
+  skill compatibility range to require `@showkit/cli >=0.2.13 <0.3.0`.
+
 ## 0.2.12 - 2026-08-11
 
 - Preserved the safely revealed document and nested-scroll range as selectable

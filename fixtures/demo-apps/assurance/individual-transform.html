@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Individual transform assurance</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f3efe6;
+        color: #17211b;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+
+      main {
+        width: 520px;
+        margin: 80px auto;
+        padding: 32px;
+        border: 1px solid currentColor;
+        background: white;
+      }
+
+      .transform-glyph {
+        display: grid;
+        width: 88px;
+        height: 88px;
+        margin: 36px auto;
+        place-items: center;
+        border: 10px solid #55309f;
+        border-radius: 18px 6px 18px 6px;
+        background: #f1b742;
+        font-size: 24px;
+        font-weight: 800;
+        rotate: 18deg;
+        scale: 1.04 0.94;
+        translate: 12px -6px;
+        transform-origin: 20% 70%;
+      }
+
+      button {
+        min-height: 44px;
+        padding: 10px 18px;
+        border: 1px solid #55309f;
+        background: #7d4be2;
+        color: white;
+        font: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Individual transform assurance</h1>
+      <div class="transform-glyph">18°</div>
+      <button type="button">Review transform</button>
+    </main>
+  </body>
+</html>

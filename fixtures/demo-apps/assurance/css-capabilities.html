@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CSS capability assurance</title>
+    <style>
+      * { box-sizing: border-box; }
+
+      html,
+      body {
+        width: 1280px;
+        height: 720px;
+        margin: 0;
+      }
+
+      body {
+        overflow: hidden;
+        background: #f3efe6;
+        color: #17211b;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+
+      main {
+        width: 1040px;
+        margin: 70px auto;
+      }
+
+      h1 {
+        margin: 0 0 24px;
+        font-size: 28px;
+      }
+
+      .capability-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 24px;
+      }
+
+      .capability {
+        position: relative;
+        height: 220px;
+        overflow: hidden;
+        border: 1px solid #17211b;
+        border-radius: 18px;
+        background: #fffdf8;
+      }
+
+      .glass-sample {
+        background:
+          linear-gradient(125deg, transparent 0 35%, #f1b742 35% 52%, transparent 52%),
+          linear-gradient(35deg, #55309f 0 38%, #7d4be2 38% 62%, #2f7d6d 62%);
+      }
+
+      .glass-panel {
+        position: absolute;
+        inset: 34px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(255, 255, 255, 0.72);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.34);
+        color: #17211b;
+        font-size: 18px;
+        font-weight: 700;
+        backdrop-filter: blur(14px) saturate(1.35);
+        -webkit-backdrop-filter: blur(14px) saturate(1.35);
+      }
+
+      .gradient-sample {
+        display: grid;
+        place-items: center;
+        background: #17211b;
+      }
+
+      .gradient-sample strong {
+        color: #fffdf8;
+        background-image: linear-gradient(90deg, #f1b742, #ff7b54, #d7c4ff);
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 38px;
+        letter-spacing: -0.04em;
+      }
+
+      button {
+        min-height: 44px;
+        margin-top: 28px;
+        padding: 10px 18px;
+        border: 1px solid #55309f;
+        border-radius: 9px;
+        background: #7d4be2;
+        color: white;
+        font: inherit;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>CSS capability assurance</h1>
+      <div class="capability-grid">
+        <section class="capability glass-sample" aria-label="Backdrop filter sample">
+          <div class="glass-panel">Layered context</div>
+        </section>
+        <section class="capability gradient-sample" aria-label="Background clip sample">
+          <strong>Gradient text</strong>
+        </section>
+      </div>
+      <button type="button">Save capability review</button>
+    </main>
+  </body>
+</html>

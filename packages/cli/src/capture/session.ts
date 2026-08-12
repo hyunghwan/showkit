@@ -877,11 +877,19 @@ export class CaptureSession implements DemoController {
       !containsConfiguredSensitiveText(failure.code)
         ? failure.code
         : "InternalError";
-    const category = [
-      ...failure.message.matchAll(
-        /\[SHOWKIT-CATEGORY:([a-z0-9-]{1,80})\]/g
-      )
-    ].at(-1)?.[1];
+    const detailsCategory =
+      typeof failure.details?.category === "string" &&
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(failure.details.category) &&
+      failure.details.category.length <= 80
+        ? failure.details.category
+        : undefined;
+    const category =
+      detailsCategory ??
+      [
+        ...failure.message.matchAll(
+          /\[SHOWKIT-CATEGORY:([a-z0-9-]{1,80})\]/g
+        )
+      ].at(-1)?.[1];
     const viewport = [
       ...failure.message.matchAll(
         /\[SHOWKIT-VIEWPORT:(\d{1,4})x(\d{1,4}):(\d{1,4})x(\d{1,4})\]/g

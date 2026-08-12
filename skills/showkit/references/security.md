@@ -86,6 +86,20 @@
   slot, interactive role, control, or editable content. Stop on closed shadow
   roots, interactive or visual open shadow roots, opaque custom elements,
   WebGL, cross-origin frames, or another unsupported surface.
+- Stop on a visible individual CSS `rotate`, `scale`, or `translate` longhand,
+  including a visible `::before` or `::after`, until ShowKit can preserve its
+  untransformed box and composed transform without applying the geometry twice.
+  Report `individual-transform`; do not silently flatten it or replace it with
+  an image.
+- Stop on a visible infinite animation because its computed frame is not a
+  deterministic capture state. Ask for the animation to be paused or removed;
+  do not save an arbitrary frame.
+- Stop on an open native popover until ShowKit can preserve its top-layer state
+  and stacking semantics. Report `popover`; do not flatten it into an ordinary
+  element or replace it with an image.
+- Stop on a visible indeterminate checkbox until ShowKit can preserve its mixed
+  control state. Report `indeterminate-control`; do not save it as unchecked or
+  replace it with an image.
 - Treat canvas as unsupported except for one isolated rendered control icon.
   With confirmed visible-session asset consent, the adapter may localize a
   canvas from 4 by 4 through 64 by 64 CSS pixels when it fits wholly in the
@@ -161,6 +175,10 @@
   approved page-asset inventory. Do not rasterize an image element, transformed
   accessory, complete control, text region, or scene. If its exact bytes are
   unavailable, stop with `UnsupportedSurface`.
+- Until a native table-layout implementation passes browser-native visual
+  comparison, stop visible `border-collapse: collapse` and non-default
+  `border-spacing` with `UnsupportedSurface table-border-model`. Do not save an
+  absolute-positioned approximation whose cell-border relationships differ.
 - Never use a full-screen image or Playwright trace as demo input.
 - A source-versus-preview screenshot may exist only as temporary QA evidence
   after the same content consent required for capture. Do not add it to the
